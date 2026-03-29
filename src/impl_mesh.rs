@@ -528,9 +528,8 @@ impl ManifoldImpl {
     // -----------------------------------------------------------------------
 
     /// Reorder mesh geometry for cache efficiency using Morton codes.
-    /// Full implementation in Phase 5 (sort.rs). No-op stub here.
     pub fn sort_geometry(&mut self) {
-        // Phase 5: will sort verts and faces by Morton code for cache locality
+        crate::sort::sort_geometry(self);
     }
 
     // -----------------------------------------------------------------------
