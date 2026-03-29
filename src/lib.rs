@@ -5,3 +5,4 @@
 
 pub mod linalg;
 pub mod types;
+pub mod polygon;
