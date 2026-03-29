@@ -11,6 +11,20 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 4. **Tests first** — Port the relevant C++ tests to Rust before or alongside implementation.
 5. **Dependency ordered** — Never implement a function before its dependencies exist.
 
+## Key Architectural Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| Linear algebra | Roll our own `linalg.rs` | Must control exact f64 semantics; no `glam` |
+| Float precision | f64 throughout; f32 only at MeshGL boundary | Matches C++ double/float usage |
+| `Vec<T>` / `SharedVec<T>` | `Vec<T>` / `Arc<Vec<T>>` | Rust ownership eliminates need for async dealloc |
+| Parallelism | Sequential first; `rayon` behind `parallel` feature | Verify correctness before parallelizing |
+| Radix sort | Custom impl in `src/sort.rs` | rayon has no radix sort; needed for Morton codes |
+| Cross-section (Clipper2) | `clipper2-rust` crate | Our own Rust port; same API surface |
+| Halfedge mesh | Index-based (`Vec<Halfedge>` + usize) | Rust ownership; same pattern as clipper2-rust |
+| BVH/Collider | Direct port (radix tree + Morton codes) | Pure algorithmic; maps cleanly |
+| WASM demo | Three.js + WebGL for 3D viewer | 8 demo pages, deployed to GitHub Pages |
+
 ## C++ Codebase Size Reference
 
 | File | Lines |
