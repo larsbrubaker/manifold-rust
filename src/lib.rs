@@ -4,3 +4,4 @@
 // Porting in progress — see PORTING_PLAN.md for current status.
 
 pub mod linalg;
+pub mod types;
