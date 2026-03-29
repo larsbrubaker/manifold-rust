@@ -1,0 +1,3 @@
+[submodule "cpp-reference/manifold"]
+	path = cpp-reference/manifold
+	url = https://github.com/elalish/manifold.git

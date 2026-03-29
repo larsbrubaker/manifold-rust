@@ -1,0 +1,7 @@
+/target
+/demo/dist
+/demo/node_modules
+/demo/wasm/pkg
+*.swp
+*.swo
+.DS_Store

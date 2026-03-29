@@ -1,0 +1,32 @@
+[workspace]
+members = [".", "demo/wasm"]
+
+[package]
+name = "manifold-rust"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.70"
+authors = ["Lars Brubaker <larsbrubaker@matterhackers.com>"]
+description = "Pure Rust port of the Manifold 3D geometry library"
+license = "Apache-2.0"
+repository = "https://github.com/larsbrubaker/manifold-rust"
+homepage = "https://larsbrubaker.github.io/manifold-rust/"
+documentation = "https://docs.rs/manifold-rust/"
+readme = "README.md"
+keywords = ["3d", "geometry", "mesh", "boolean", "csg"]
+categories = ["algorithms", "graphics", "mathematics", "wasm"]
+exclude = ["demo/", "docs/", "tests/", ".github/", ".claude/", "cpp-reference/", "CLAUDE.md"]
+
+[lib]
+name = "manifold_rust"
+path = "src/lib.rs"
+
+[dependencies]
+num-traits = "0.2"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "manifold_bench"
+harness = false
