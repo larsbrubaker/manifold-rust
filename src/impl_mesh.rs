@@ -441,86 +441,9 @@ impl ManifoldImpl {
     // SetNormalsAndCoplanar (stub — implemented in Phase 9)
     // -----------------------------------------------------------------------
 
-    /// Compute face normals and assign coplanar IDs.
-    /// Full implementation in Phase 9 (smoothing.rs). This stub computes
-    /// basic face normals only.
+    /// Compute face normals, assign coplanar IDs, and calculate vertex normals.
     pub fn set_normals_and_coplanar(&mut self) {
-        let num_tri = self.num_tri();
-        self.face_normal.resize(num_tri, Vec3::new(0.0, 0.0, 1.0));
-        if self.mesh_relation.tri_ref.len() != num_tri {
-            self.mesh_relation.tri_ref.resize(num_tri, TriRef::default());
-        }
-
-        for tri in 0..num_tri {
-            let h0 = &self.halfedge[3 * tri];
-            if h0.start_vert < 0 {
-                continue;
-            }
-            let v0 = self.vert_pos[h0.start_vert as usize];
-            let v1 = self.vert_pos[h0.end_vert as usize];
-            let h1 = &self.halfedge[3 * tri + 1];
-            let v2 = self.vert_pos[h1.end_vert as usize];
-            let n = cross(v1 - v0, v2 - v0);
-            let fn_ = normalize(n);
-            self.face_normal[tri] = if fn_.x.is_nan() { Vec3::new(0.0, 0.0, 1.0) } else { fn_ };
-            self.mesh_relation.tri_ref[tri].coplanar_id = tri as i32;
-        }
-
-        // Compute vertex normals (angle-weighted)
-        self.calculate_vert_normals();
-    }
-
-    /// Compute angle-weighted vertex normals from face normals.
-    pub fn calculate_vert_normals(&mut self) {
-        let num_vert = self.num_vert();
-        self.vert_normal.clear();
-        self.vert_normal.resize(num_vert, Vec3::new(0.0, 0.0, 0.0));
-
-        // Find a starting halfedge per vertex
-        let mut vert_halfedge = vec![i32::MAX; num_vert];
-        for (i, h) in self.halfedge.iter().enumerate() {
-            if h.start_vert >= 0 {
-                let v = h.start_vert as usize;
-                if (i as i32) < vert_halfedge[v] {
-                    vert_halfedge[v] = i as i32;
-                }
-            }
-        }
-
-        for vert in 0..num_vert {
-            let first = vert_halfedge[vert];
-            if first == i32::MAX {
-                continue;
-            }
-            let mut normal = Vec3::new(0.0, 0.0, 0.0);
-            let mut current = first as usize;
-            loop {
-                let edge = &self.halfedge[current];
-                let sv = edge.start_vert as usize;
-                let ev = edge.end_vert as usize;
-                let next_e = next_halfedge(current as i32) as usize;
-                let next_ev = self.halfedge[next_e].end_vert as usize;
-                let v0 = self.vert_pos[sv];
-                let v1 = self.vert_pos[ev];
-                let v2 = self.vert_pos[next_ev];
-                let curr_edge = v1 - v0;
-                let prev_edge = v0 - v2;
-                let len1 = length2(curr_edge).sqrt();
-                let len2 = length2(prev_edge).sqrt();
-                if len1 > 0.0 && len2 > 0.0 {
-                    let ce = curr_edge * (1.0 / len1);
-                    let pe = prev_edge * (1.0 / len2);
-                    let d = -dot(pe, ce);
-                    let phi = if d >= 1.0 { 0.0 } else if d <= -1.0 { std::f64::consts::PI } else { d.acos() };
-                    normal = normal + self.face_normal[current / 3] * phi;
-                }
-                current = next_halfedge(self.halfedge[current].paired_halfedge) as usize;
-                if current == first as usize {
-                    break;
-                }
-            }
-            self.vert_normal[vert] = safe_normalize(normal);
-        }
+        crate::face_op::set_normals_and_coplanar(self);
     }
 
     // -----------------------------------------------------------------------

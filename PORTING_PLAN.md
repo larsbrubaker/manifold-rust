@@ -71,7 +71,7 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 
 ---
 
-### Phase 1: Linear Algebra & Vector Types
+### Phase 1: Linear Algebra & Vector Types ✅
 **C++ sources:** `include/manifold/linalg.h` (2590 lines), `src/vec.h` (366 lines), `include/manifold/vec_view.h` (149 lines)
 **Rust module:** `src/linalg.rs`, `src/vec.rs`
 
@@ -86,11 +86,11 @@ Key types to port:
 
 Tests: port `polygon_test.cpp` math-related tests + add unit tests for each operator.
 
-**Status:** ⬜ Not started
+**Status:** ✅ Complete — all tests pass
 
 ---
 
-### Phase 2: Core Types & Common Definitions
+### Phase 2: Core Types & Common Definitions ✅
 **C++ sources:** `include/manifold/common.h` (594 lines), `include/manifold/polygon.h` (61 lines)
 **Rust module:** `src/types.rs`
 
@@ -100,11 +100,11 @@ Key types:
 - `Box`, `Smoothness`, `OpType`
 - Error types, `Quality` settings
 
-**Status:** ⬜ Not started
+**Status:** ✅ Complete — all tests pass
 
 ---
 
-### Phase 3: Polygon Triangulation
+### Phase 3: Polygon Triangulation ✅
 **C++ sources:** `src/polygon.cpp` (1006 lines)
 **Rust module:** `src/polygon.rs`
 
@@ -117,11 +117,11 @@ Tests: port `test/polygon_test.cpp` (134 lines)
 
 **Numerical validation:** Compare triangulation output vertex-by-vertex with C++ output.
 
-**Status:** ⬜ Not started
+**Status:** ✅ Complete — all tests pass
 
 ---
 
-### Phase 4: Mesh Data Structure (Impl)
+### Phase 4: Mesh Data Structure (Impl) ✅
 **C++ sources:** `src/impl.h` (562 lines), `src/impl.cpp` (919 lines), `src/iters.h` (327 lines), `src/shared.h` (211 lines), `src/utils.h` (170 lines)
 **Rust module:** `src/impl_mesh.rs`, `src/iters.rs`
 
@@ -131,11 +131,11 @@ Key structures:
 - Vertex, face, edge connectivity
 - Bounding box computation
 
-**Status:** ⬜ Not started
+**Status:** ✅ Complete — all tests pass
 
 ---
 
-### Phase 5: Sort & Parallel Utilities
+### Phase 5: Sort & Parallel Utilities ✅
 **C++ sources:** `src/sort.cpp` (532 lines), `src/parallel.h` (1171 lines)
 **Rust module:** `src/sort.rs`
 
@@ -144,39 +144,46 @@ Note: Manifold uses Thrust (GPU) or TBB/OpenMP for parallelism. We port to:
 - Then add `rayon` for parallel passes where beneficial
 - All outputs must be deterministic and match C++ sequential results
 
-**Status:** ⬜ Not started
+**Status:** ✅ Complete — all tests pass (sequential; Morton codes, radix sort, geometry sorting)
 
 ---
 
-### Phase 6: Constructors
+### Phase 6: Constructors ✅
 **C++ sources:** `src/constructors.cpp` (545 lines)
 **Rust module:** `src/constructors.rs`
 
 Primitive mesh generators:
-- `Sphere(radius, circular_segments)`
-- `Cube(size, center)`
-- `Cylinder(height, radius_low, radius_high, circular_segments, center)`
-- `Tetrahedron()`
-- `Extrude(cross_section, height, ...)`
-- `Revolve(cross_section, ...)`
-- `LevelSet()` / `SDF`-based
+- `Sphere(radius, circular_segments)` — deferred to Phase 15 (requires Subdivide)
+- `Cube(size, center)` ✅
+- `Cylinder(height, radius_low, radius_high, circular_segments, center)` ✅
+- `Tetrahedron()` ✅
+- `Extrude(cross_section, height, ...)` ✅
+- `Revolve(cross_section, ...)` ✅
+- `LevelSet()` / `SDF`-based — deferred to Phase 16
 
 Tests: port `test/manifold_test.cpp` constructor tests.
 
-**Status:** ⬜ Not started
+**Status:** ✅ Complete — all tests pass (Sphere/LevelSet deferred to later phases)
 
 ---
 
-### Phase 7: Face & Edge Operations
+### Phase 7: Face & Edge Operations ✅
 **C++ sources:** `src/face_op.cpp` (346 lines), `src/edge_op.cpp` (972 lines)
 **Rust module:** `src/face_op.rs`, `src/edge_op.rs`
 
 Operations:
-- Face normal computation
-- Edge collapse, split, flip
-- Mesh cleanup and manifold repair
+- Face normal computation (`set_normals_and_coplanar`, `calculate_vert_normals`) ✅
+- Axis-aligned projection (`get_axis_aligned_projection`, `Proj2x3`) ✅
+- Edge collapse (`collapse_edge`), swap (`recursive_edge_swap`) ✅
+- Topology cleanup (`cleanup_topology`, `simplify_topology`) ✅
+- Pinched vert splitting (`split_pinched_verts`) ✅
+- Degenerate removal (`remove_degenerates`, `swap_degenerates`) ✅
+- Colinear edge collapse (`collapse_colinear_edges`) ✅
+- Duplicate edge repair (`dedupe_edges`, `dedupe_edge`) ✅
 
-**Status:** ⬜ Not started
+**Key porting note:** C++ `ForVert` traversal step is `NextHalfedge(halfedge_[current].pairedHalfedge)` — not `halfedge_[NextHalfedge(current)].pairedHalfedge`. Multiple loops required this correction.
+
+**Status:** ✅ Complete — all tests pass
 
 ---
 
@@ -404,14 +411,14 @@ Phase 1 (linalg)
 | Phase | Module(s) | C++ Lines | Status |
 |-------|-----------|-----------|--------|
 | 0 | Setup | — | ✅ Done |
-| 1 | linalg, vec | ~3,100 | ⬜ |
-| 2 | types, common | ~655 | ⬜ |
-| 3 | polygon | ~1,100 | ⬜ |
-| 4 | impl | ~2,000 | ⬜ |
-| 5 | sort, parallel | ~1,700 | ⬜ |
-| 6 | constructors | ~545 | ⬜ |
-| 7 | face_op, edge_op | ~1,318 | ⬜ |
-| 8 | properties | ~464 | ⬜ |
+| 1 | linalg, vec | ~3,100 | ✅ Done |
+| 2 | types, common | ~655 | ✅ Done |
+| 3 | polygon | ~1,100 | ✅ Done |
+| 4 | impl | ~2,000 | ✅ Done |
+| 5 | sort, parallel | ~1,700 | ✅ Done |
+| 6 | constructors | ~545 | ✅ Done |
+| 7 | face_op, edge_op | ~1,318 | ✅ Done |
+| 8 | properties | ~464 | ⬜ Next |
 | 9 | svd, smoothing | ~1,300 | ⬜ |
 | 10 | collider, tree2d | ~516 | ⬜ |
 | 11 | boolean3, boolean_result | ~1,420 | ⬜ |

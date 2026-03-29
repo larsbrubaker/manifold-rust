@@ -9,3 +9,5 @@ pub mod polygon;
 pub mod impl_mesh;
 pub mod sort;
 pub mod constructors;
+pub mod face_op;
+pub mod edge_op;
