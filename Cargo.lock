@@ -100,6 +100,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
+name = "clipper2-rust"
+version = "1.0.2"
+dependencies = [
+ "num-traits",
+]
+
+[[package]]
 name = "criterion"
 version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -235,6 +242,7 @@ checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
 name = "manifold-rust"
 version = "0.1.0"
 dependencies = [
+ "clipper2-rust",
  "criterion",
  "num-traits",
 ]

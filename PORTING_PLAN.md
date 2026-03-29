@@ -187,168 +187,219 @@ Operations:
 
 ---
 
-### Phase 8: Properties
+### Phase 8: Properties ✅
 **C++ sources:** `src/properties.cpp` (464 lines)
 **Rust module:** `src/properties.rs`
 
 Mesh property calculations:
-- Volume, surface area
-- Genus, is-manifold checks
-- Bounding box
-- Normal computation and propagation
+- `Property` enum (`Volume`, `SurfaceArea`) ✅
+- `get_property()` — volume and surface area with Kahan summation ✅
+- `matches_tri_normals()` — CCW winding validation ✅
+- `num_degenerate_tris()` — colinear triangle detection ✅
+- `is_convex()` — genus 0 + no concave edges ✅
+- `calculate_curvature()` — Gaussian and mean curvature per vertex ✅
+- `is_index_in_bounds()` — triangle vertex index validation ✅
+- Deferred: `is_self_intersecting()`, `min_gap()` (require collider, Phase 10)
 
-Tests: port `test/properties_test.cpp` (302 lines)
+Tests: 17 unit tests covering all implemented functions.
 
-**Status:** ⬜ Not started
+**Status:** ✅ Complete — all tests pass
 
 ---
 
-### Phase 9: SVD & Smoothing
+### Phase 9: SVD & Smoothing ✅
 **C++ sources:** `src/svd.h` (304 lines), `src/smoothing.cpp` (996 lines)
 **Rust module:** `src/svd.rs`, `src/smoothing.rs`
 
 Algorithms:
-- Singular Value Decomposition (3×3)
-- Tangent space computation
-- Smooth normal interpolation
-- Halfedge tangent vectors
+- Singular Value Decomposition (3×3) ✅
+- Spectral norm calculation ✅
+- Tangent space computation (`circular_tangent`, `tangent_from_normal`) ✅
+- Halfedge tangent generation and distribution ✅
+- Edge sharpening and quad interior marking ✅
+- Deferred: refinement interpolation helpers for subdivision-specific surface evaluation
 
-Tests: port `test/smooth_test.cpp` (390 lines)
+Tests: focused unit coverage for SVD reconstruction, singular ordering, spectral norm,
+tangent creation from normals, and sharpened tangent generation.
 
 **Numerical validation:** SVD results must match exactly — critical for smooth subdivision.
 
-**Status:** ⬜ Not started
+**Status:** ✅ Complete — Rust tests and validation workflow pass
 
 ---
 
-### Phase 10: Collider & Spatial Indexing
+### Phase 10: Collider & Spatial Indexing ✅
 **C++ sources:** `src/collider.h` (370 lines), `src/tree2d.cpp` + `tree2d.h` (146 lines)
 **Rust module:** `src/collider.rs`, `src/tree2d.rs`
 
 Algorithms:
-- Bounding volume hierarchy (BVH) for triangle collision detection
-- 2D R-tree for cross-section operations
-- Ray-triangle intersection
+- Collider query surface for triangle/box overlap checks ✅
+- Triangle-triangle distance and ray-triangle intersection ✅
+- `is_self_intersecting()` and `min_gap()` enabled in `properties` ✅
+- 2D tree query/build support for cross-section work ✅
 
-**Status:** ⬜ Not started
+**Status:** ✅ Complete — overlap queries and deferred property checks implemented
 
 ---
 
-### Phase 11: Boolean Operations (Core)
+### Phase 11: Boolean Operations (Core) ❌ NOT STARTED
 **C++ sources:** `src/boolean3.cpp` (531 lines), `src/boolean3.h`, `src/boolean_result.cpp` (889 lines)
 **Rust module:** `src/boolean3.rs`, `src/boolean_result.rs`
 
-This is the heart of the library:
-- 3D mesh intersection computation
-- Half-edge boolean result assembly
-- Union, Intersection, Difference
+**Implemented:**
+- `compose_meshes()` — disjoint mesh concatenation ✅
+- `boolean()` — trivial non-overlapping cases only (disjoint Add/Intersect/Subtract) ✅
 
-Tests: port `test/boolean_test.cpp` (744 lines), `test/boolean_complex_test.cpp` (1558 lines)
+**Not yet implemented:**
+- Edge-face intersection detection (Kernel02, Kernel11, Kernel12)
+- Symbolic perturbation shadow predicates
+- Collider-based broadphase intersection
+- Winding number computation via DisjointSets flood-fill
+- Boolean result face assembly (boolean_result.cpp — 889 lines)
+- Property interpolation via barycentric coordinates
 
-**Numerical validation:** Critical — compare intermediate intersection points with C++ output.
+**Prerequisites not yet ported:** DisjointSets ✅ (done), Collider integration with ManifoldImpl (not done)
 
-**Status:** ⬜ Not started
+Tests: port `test/boolean_test.cpp` (47 tests), `test/boolean_complex_test.cpp` (19 tests)
+
+**Status:** ❌ Only trivial non-overlapping cases — full algorithm not ported
 
 ---
 
-### Phase 12: CSG Tree
+### Phase 12: CSG Tree — Minimal
 **C++ sources:** `src/csg_tree.cpp` (764 lines), `src/csg_tree.h`
 **Rust module:** `src/csg_tree.rs`
 
-- Lazy CSG tree evaluation
-- Batch boolean operations
-- Tree simplification and caching
+**Implemented:**
+- `CsgNode::Leaf` and `CsgNode::Op` enum ✅
+- Recursive `evaluate()` via boolean3 ✅
 
-**Status:** ⬜ Not started
+**Not yet implemented:**
+- `CsgLeafNode` with lazy transform propagation
+- `CsgOpNode` with caching
+- `Compose()` for efficient disjoint mesh merging
+- `BatchBoolean()` with priority queue
+- `BatchUnion()` with bounding box partitioning
+- Explicit-stack tree flattening
+
+**Status:** ⚠️ Minimal — basic tree evaluation only, no optimizations
 
 ---
 
-### Phase 13: Public Manifold API
+### Phase 13: Public Manifold API — Partial
 **C++ sources:** `src/manifold.cpp` (976 lines), `include/manifold/manifold.h` (545 lines)
-**Rust module:** `src/manifold.rs` (public API)
+**Rust module:** `src/manifold.rs`
 
-The user-facing API:
-- `Manifold::Boolean(other, op)`
-- `Manifold::Translate(v)`, `Rotate(q)`, `Scale(v)`, `Transform(m)`
-- `Manifold::GetMesh()`, `NumVert()`, `NumTri()`, etc.
-- `Manifold::Decompose()`, `Compose()`
-- `Manifold::Status()` (error reporting)
+**Implemented:**
+- Constructors: `cube()`, `sphere()`, `cylinder()`, `tetrahedron()`, `extrude()`, `revolve()` ✅
+- Transforms: `translate()`, `scale()`, `transform()` ✅
+- Mesh I/O: `get_mesh_gl()`, `get_mesh_gl64()`, `from_mesh_gl()` ✅
+- Queries: `num_vert()`, `num_tri()`, `volume()`, `surface_area()`, `genus()`, `status()` ✅
+- Smoothing: `smooth_out()`, `smooth_by_normals()`, `calculate_normals()` ✅
+- Boolean: `union()`, `intersection()`, `difference()` (delegates to boolean3) ✅
+- Subdivision: `refine()`, `refine_to_length()`, `refine_to_tolerance()` ✅
+- Hull / Minkowski / LevelSet wrappers ✅
 
-Tests: port `test/manifold_test.cpp` (1156 lines)
+**Not yet fully correct:** Boolean operations, subdivision (midpoint only), SDF, Minkowski — all depend on incomplete lower modules
 
-**Status:** ⬜ Not started
+Tests: port `test/manifold_test.cpp` (51 tests)
+
+**Status:** ⚠️ API surface complete but correctness depends on unfinished boolean/subdivision/SDF modules
 
 ---
 
-### Phase 14: Cross Section (2D)
+### Phase 14: Cross Section (2D) ✅
 **C++ sources:** `src/cross_section/cross_section.cpp` (802 lines), `include/manifold/cross_section.h` (184 lines)
 **Rust module:** `src/cross_section.rs`
 
-2D polygon operations (uses Clipper2 internally in C++ — we use clipper2-rust):
-- Boolean operations on 2D polygons
-- Offset / Minkowski sum
-- Area, bounds
-
-Tests: port `test/cross_section_test.cpp` (265 lines)
+2D polygon operations backed by clipper2-rust:
+- Boolean operations on 2D polygons ✅
+- Offset / Minkowski sum ✅
+- Area, bounds, translation helpers ✅
 
 **Dependency:** `clipper2-rust` crate (already exists)
 
-**Status:** ⬜ Not started
+Tests: port `test/cross_section_test.cpp` (265 lines) — basic coverage present
+
+**Status:** ✅ Complete — backed by sibling `clipper2-rust`
 
 ---
 
-### Phase 15: Subdivision
+### Phase 15: Subdivision — Basic Midpoint Only
 **C++ sources:** `src/subdivision.cpp` (811 lines)
 **Rust module:** `src/subdivision.rs`
 
-- Loop subdivision
-- Refine by edge length
-- Warp functions
+**Implemented:**
+- Simple midpoint subdivision (4x triangle count per level) ✅
+- `Sphere()` built from subdivided octahedron (midpoint, not smooth) ✅
 
-**Status:** ⬜ Not started
+**Not yet implemented:**
+- `Partition` class with cached triangulations per edge-division pattern
+- Curvature-based `refine_to_tolerance()` with per-triangle subdivision level
+- Edge length-based `refine_to_length()` with per-edge division counts
+- Tangent-based Bezier vertex placement (the key to smooth surfaces)
+- Property interpolation using barycentric weights
+- Quad subdivision support
+
+**Status:** ⚠️ Basic midpoint only — does NOT match C++ smooth subdivision output
 
 ---
 
-### Phase 16: SDF Mesh Generation
+### Phase 16: SDF Mesh Generation ❌ NOT STARTED
 **C++ sources:** `src/sdf.cpp` (538 lines)
 **Rust module:** `src/sdf.rs`
 
-- Marching cubes / level-set meshing
-- `LevelSet(sdf, bounds, edge_length)`
+**Implemented:**
+- Placeholder that generates axis-aligned cubes where SDF > 0
 
-Tests: port `test/sdf_test.cpp` (214 lines)
+**Not yet implemented:**
+- Marching Tetrahedra on body-centered cubic (BCC) grid
+- ITP root-finding for precise surface location (`FindSurface`)
+- Surface detection and vertex snapping (`NearSurface`)
+- Edge crossing computation (`ComputeVerts`)
+- Tetrahedra triangulation with lookup tables (`TetTri0`, `TetTri1`)
+- Sparse grid storage (`GridVert` + hash table)
 
-**Status:** ⬜ Not started
+Tests: port `test/sdf_test.cpp` (9 tests)
+
+**Status:** ❌ Placeholder only — does NOT produce correct isosurface geometry
 
 ---
 
-### Phase 17: Minkowski & Quickhull
+### Phase 17: Minkowski & Quickhull — QuickHull Done, Minkowski Not Started
 **C++ sources:** `src/minkowski.cpp` (175 lines), `src/quickhull.cpp` (842 lines), `src/quickhull.h` (289 lines)
 **Rust module:** `src/minkowski.rs`, `src/quickhull.rs`
 
-- Minkowski sum/difference of convex meshes
-- 3D convex hull
+**Implemented:**
+- `quickhull.rs` — full 3D QuickHull convex hull algorithm ✅
+  - Initial tetrahedron construction from extreme points
+  - Iterative face extrusion with horizon edge detection
+  - Planar degenerate case handling
+  - Halfedge reordering to standard 3-per-face layout
+  - Unused vertex removal and index remapping
+- `disjoint_sets.rs` — Union-Find with path compression ✅ (needed by Phase 11)
 
-Tests: port `test/hull_test.cpp` (264 lines)
+**Not yet implemented:**
+- `minkowski.rs` — Requires Boolean3 + CSG BatchBoolean
+  - Convex-Convex: pairwise vertex sums → hull
+  - Non-Convex + Convex: per-triangle vertex sums → hull → BatchBoolean
+  - Non-Convex + Non-Convex: per-face-pair sums → hull → BatchBoolean
 
-**Status:** ⬜ Not started
+Tests: port `test/hull_test.cpp` (13 tests) — basic coverage present
+
+**Status:** ✅ QuickHull done / ❌ Minkowski not started (blocked on Boolean3)
 
 ---
 
-### Phase 18: WASM Demo
+### Phase 18: WASM Demo — Scaffolding Only
 **Target:** Interactive demo site at `https://larsbrubaker.github.io/manifold-rust/`
 
-Demo pages (mirroring clipper2-rust demo style):
-1. Basic boolean operations (union, intersection, difference of primitives)
-2. CSG tree demo (complex multi-step operations)
-3. Smooth subdivision showcase
-4. SDF mesh generation
-5. Cross-section extrude/revolve
-6. Convex hull
-7. Performance benchmark in browser
-8. Interactive 3D viewer (Three.js or Babylon.js)
+Implemented WASM exports:
+- Primitive summaries (`cube`, `sphere`, `cylinder`) ✅
+- Boolean summaries (`union_cubes`, `intersect_cubes`, `difference_cubes`) — wired but boolean ops are incomplete
+- Cross-section/extrude summary (`extrude_circle`) ✅
 
-**Status:** ⬜ Not started (begins after Phase 13 at minimum)
+**Status:** ⚠️ Scaffolding present — boolean demo results will be wrong until Phase 11 is complete
 
 ---
 
@@ -418,14 +469,16 @@ Phase 1 (linalg)
 | 5 | sort, parallel | ~1,700 | ✅ Done |
 | 6 | constructors | ~545 | ✅ Done |
 | 7 | face_op, edge_op | ~1,318 | ✅ Done |
-| 8 | properties | ~464 | ⬜ Next |
-| 9 | svd, smoothing | ~1,300 | ⬜ |
-| 10 | collider, tree2d | ~516 | ⬜ |
-| 11 | boolean3, boolean_result | ~1,420 | ⬜ |
-| 12 | csg_tree | ~764 | ⬜ |
-| 13 | manifold API | ~1,521 | ⬜ |
-| 14 | cross_section | ~986 | ⬜ |
-| 15 | subdivision | ~811 | ⬜ |
-| 16 | sdf | ~538 | ⬜ |
-| 17 | minkowski, quickhull | ~1,306 | ⬜ |
-| 18 | WASM demo | — | ⬜ |
+| 8 | properties | ~464 | ✅ Done |
+| 9 | svd, smoothing | ~1,300 | ✅ Done |
+| 10 | collider, tree2d | ~516 | ✅ Done |
+| 11 | boolean3, boolean_result | ~1,420 | ❌ Not started (trivial cases only) |
+| 12 | csg_tree | ~764 | ⚠️ Minimal (basic eval only) |
+| 13 | manifold API | ~1,521 | ⚠️ API surface done, correctness depends on Phase 11 |
+| 14 | cross_section | ~986 | ✅ Done (via clipper2-rust) |
+| 15 | subdivision | ~811 | ⚠️ Basic midpoint only (no Bezier/curvature) |
+| 16 | sdf | ~538 | ❌ Not started (placeholder) |
+| 17 | quickhull | ~1,131 | ✅ Done |
+| 17 | minkowski | ~175 | ❌ Not started (blocked on Phase 11) |
+| 17 | disjoint_sets | ~125 | ✅ Done (prereq for Phase 11) |
+| 18 | WASM demo | — | ⚠️ Scaffolding (booleans incorrect) |

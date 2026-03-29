@@ -539,6 +539,66 @@ pub struct MeshGLP<P: Copy + Default, I: Copy + Default = u32> {
     pub tolerance: P,
 }
 
+impl MeshGLP<f32, u32> {
+    pub fn num_vert(&self) -> usize {
+        if self.num_prop == 0 { 0 } else { self.vert_properties.len() / self.num_prop as usize }
+    }
+
+    pub fn num_tri(&self) -> usize {
+        self.tri_verts.len() / 3
+    }
+
+    pub fn get_vert_pos(&self, v: usize) -> [f32; 3] {
+        let offset = v * self.num_prop as usize;
+        [self.vert_properties[offset], self.vert_properties[offset + 1], self.vert_properties[offset + 2]]
+    }
+
+    pub fn get_tri_verts(&self, t: usize) -> [u32; 3] {
+        let offset = 3 * t;
+        [self.tri_verts[offset], self.tri_verts[offset + 1], self.tri_verts[offset + 2]]
+    }
+
+    pub fn get_tangent(&self, h: usize) -> [f32; 4] {
+        let offset = 4 * h;
+        [
+            self.halfedge_tangent[offset],
+            self.halfedge_tangent[offset + 1],
+            self.halfedge_tangent[offset + 2],
+            self.halfedge_tangent[offset + 3],
+        ]
+    }
+}
+
+impl MeshGLP<f64, u64> {
+    pub fn num_vert(&self) -> usize {
+        if self.num_prop == 0 { 0 } else { self.vert_properties.len() / self.num_prop as usize }
+    }
+
+    pub fn num_tri(&self) -> usize {
+        self.tri_verts.len() / 3
+    }
+
+    pub fn get_vert_pos(&self, v: usize) -> [f64; 3] {
+        let offset = v * self.num_prop as usize;
+        [self.vert_properties[offset], self.vert_properties[offset + 1], self.vert_properties[offset + 2]]
+    }
+
+    pub fn get_tri_verts(&self, t: usize) -> [u64; 3] {
+        let offset = 3 * t;
+        [self.tri_verts[offset], self.tri_verts[offset + 1], self.tri_verts[offset + 2]]
+    }
+
+    pub fn get_tangent(&self, h: usize) -> [f64; 4] {
+        let offset = 4 * h;
+        [
+            self.halfedge_tangent[offset],
+            self.halfedge_tangent[offset + 1],
+            self.halfedge_tangent[offset + 2],
+            self.halfedge_tangent[offset + 3],
+        ]
+    }
+}
+
 /// Single-precision mesh (standard for graphics).
 pub type MeshGL = MeshGLP<f32, u32>;
 

@@ -23,6 +23,7 @@ path = "src/lib.rs"
 
 [dependencies]
 num-traits = "0.2"
+clipper2_rust = { package = "clipper2-rust", path = "../clipper2-rust" }
 
 [dev-dependencies]
 criterion = "0.5"

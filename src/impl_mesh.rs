@@ -55,6 +55,7 @@ fn max_epsilon(min_epsilon: f64, bbox: &BBox) -> f64 {
 // ---------------------------------------------------------------------------
 
 /// Internal halfedge mesh representation, mirroring `Manifold::Impl` in C++.
+#[derive(Clone)]
 pub struct ManifoldImpl {
     pub bbox: BBox,
     pub epsilon: f64,

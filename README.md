@@ -38,6 +38,28 @@ cargo build
 cargo test
 ```
 
+Restore the upstream C++ reference before doing exact-match validation:
+
+```bash
+git submodule update --init --recursive
+```
+
+Build and compare against the C++ reference with:
+
+```powershell
+./validate-reference.ps1
+```
+
+You can also run a narrower validation slice by phase, for example:
+
+```powershell
+./validate-reference.ps1 -Phase phase8
+```
+
+This configures and builds `cpp-reference/manifold`, runs the matching C++
+reference tests, and then runs the corresponding Rust tests for the selected
+phase.
+
 For the WASM demo:
 ```bash
 cd demo
