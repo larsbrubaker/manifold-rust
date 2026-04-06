@@ -14,6 +14,7 @@ export class ThreeViewer {
   private showWireframe = false;
   private animId = 0;
   private disposed = false;
+  private hasFramed = false;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -91,7 +92,10 @@ export class ThreeViewer {
       this.addWireframe(geom);
     }
 
-    this.frameCamera(geom);
+    if (!this.hasFramed) {
+      this.frameCamera(geom);
+      this.hasFramed = true;
+    }
   }
 
   private addWireframe(geom: THREE.BufferGeometry) {
