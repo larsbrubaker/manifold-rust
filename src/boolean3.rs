@@ -866,4 +866,81 @@ mod tests {
             vol
         );
     }
+
+    /// Union of two identical cubes at offset 0 (fully overlapping / degenerate)
+    #[test]
+    fn test_boolean_union_same_position() {
+        let a = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(0.0, 0.0, 0.0))));
+        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(0.0, 0.0, 0.0))));
+        let result = boolean(&a, &b, OpType::Add);
+        let vol = result.get_property(Property::Volume).abs();
+        assert!(
+            (vol - 1.0).abs() < 0.1,
+            "Union of identical cubes should have volume ~1.0, got {}",
+            vol
+        );
+    }
+
+    /// Intersection at offset=1.0 (cubes touching at a face)
+    #[test]
+    fn test_boolean_intersect_touching() {
+        let a = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(0.0, 0.0, 0.0))));
+        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(1.0, 0.0, 0.0))));
+        let result = boolean(&a, &b, OpType::Intersect);
+        // Touching cubes have zero-volume intersection
+        let vol = result.get_property(Property::Volume).abs();
+        assert!(
+            vol < 0.01,
+            "Intersection of touching cubes should have ~0 volume, got {}",
+            vol
+        );
+    }
+
+    /// Intersection of non-overlapping cubes should return empty
+    #[test]
+    fn test_boolean_intersect_disjoint_returns_empty() {
+        let a = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(0.0, 0.0, 0.0))));
+        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(5.0, 0.0, 0.0))));
+        let result = boolean(&a, &b, OpType::Intersect);
+        assert!(result.is_empty(), "Intersection of disjoint cubes should be empty");
+    }
+
+    /// Union with small overlap (offset 0.9)
+    #[test]
+    fn test_boolean_union_small_overlap() {
+        let a = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(0.0, 0.0, 0.0))));
+        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(0.9, 0.0, 0.0))));
+        let result = boolean(&a, &b, OpType::Add);
+        let expected_vol = 2.0 - 0.1; // overlap = 0.1 * 1 * 1
+        assert!(!result.is_empty(), "Union should not be empty");
+        let vol = result.get_property(Property::Volume).abs();
+        assert!(
+            (vol - expected_vol).abs() < 0.1,
+            "Union volume should be ~{:.3}, got {}",
+            expected_vol,
+            vol
+        );
+    }
+
+    /// Intersection at various offsets
+    #[test]
+    fn test_boolean_intersect_various_offsets() {
+        for &offset in &[0.0, 0.1, 0.3, 0.5, 0.7, 0.9, 1.0, 1.5] {
+            let a = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(0.0, 0.0, 0.0))));
+            let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(offset, 0.0, 0.0))));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                boolean(&a, &b, OpType::Intersect)
+            }));
+            match result {
+                Ok(r) => {
+                    let vol = r.get_property(Property::Volume).abs();
+                    eprintln!("Intersect offset={}: vol={:.4} verts={} tris={} empty={}",
+                        offset, vol, r.num_vert(), r.num_tri(), r.is_empty());
+                }
+                Err(e) => {
+                    eprintln!("Intersect offset={}: PANIC {:?}", offset, e.downcast_ref::<String>());
+                }
+            }
+        }
+    }
 }

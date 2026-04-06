@@ -172,7 +172,7 @@ pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usi
     if start_orb < 0 {
         return false;
     }
-    let start = start_orb as usize;
+    let mut start = start_orb as usize;
     let mut current = tri1edge[2];
 
     if !short_edge && !mesh.mesh_relation.tri_ref.is_empty() {
@@ -292,6 +292,7 @@ pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usi
         for k in 0..scratch.len() {
             if vert == mesh.halfedge[scratch[k]].end_vert {
                 form_loop(mesh, scratch[k], current);
+                start = next_edge;
                 scratch.truncate(k);
                 current = next_edge;
                 formed_loop = true;
