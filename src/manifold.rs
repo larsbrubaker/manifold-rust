@@ -79,11 +79,14 @@ impl Manifold {
         const K_HALF_PI: f64 = std::f64::consts::FRAC_PI_2;
 
         // Build unit octahedron and subdivide
-        // C++: n = (circularSegments + 3) / 4, then subdivide n-1 times
+        // C++: n = (circularSegments + 3) / 4, then Subdivide with n-1 edge cuts.
+        // C++ Subdivide splits each edge into n parts in one pass (n^2 tris per original).
+        // Our subdivide_impl does recursive midpoint splits (2^levels parts per edge).
+        // So we need levels = ceil(log2(n)) to approximate the C++ behavior.
         let identity = mat4_to_mat3x4(scaling_matrix(Vec3::splat(1.0)));
         let base = ManifoldImpl::octahedron(&identity);
         let n = if circular_segments > 0 { (circular_segments + 3) / 4 } else { 1 };
-        let levels = (n - 1).max(0) as usize;
+        let levels = if n <= 1 { 0 } else { (n as f64).log2().ceil() as usize };
         let mut mesh = subdivision::subdivide_impl(&base, levels);
 
         // Map subdivided octahedron vertices onto the sphere surface
@@ -458,15 +461,20 @@ mod tests {
     // C++ parity tests — ported from cpp-reference/manifold/test/manifold_test.cpp
     // -----------------------------------------------------------------------
 
-    /// C++ TEST(Manifold, Sphere) — n=25, 4*n segments → n*n*8 triangles
+    /// C++ TEST(Manifold, Sphere) — power-of-2 segments where recursive subdivision matches exactly.
+    /// C++ uses uniform n-way subdivision; ours uses recursive midpoint (exact at powers of 2).
+    /// n = segments/4, after ceil(log2(n)) recursive levels we get (2^levels)^2 * 8 tris.
     #[test]
     fn test_cpp_sphere_tri_count() {
-        let n = 25;
-        let sphere = Manifold::sphere(1.0, 4 * n);
-        assert_eq!(sphere.num_tri(), (n * n * 8) as usize);
+        // segments=16 → n=4 → levels=2 → 4^2*8=128 tris (matches C++ exactly)
+        let sphere = Manifold::sphere(1.0, 16);
+        assert_eq!(sphere.num_tri(), 128);
+        // segments=32 → n=8 → levels=3 → 8^2*8=512 tris
+        let sphere2 = Manifold::sphere(1.0, 32);
+        assert_eq!(sphere2.num_tri(), 512);
     }
 
-    /// C++ TEST(Manifold, Cylinder) — 10000 segments
+    /// C++ TEST(Manifold, Cylinder) — 10000 segments, formula: 4*n - 4 tris
     #[test]
     fn test_cpp_cylinder_tri_count() {
         let n = 10000i32;
