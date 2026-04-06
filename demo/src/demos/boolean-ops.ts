@@ -12,9 +12,6 @@ export function init(container: HTMLElement): () => void {
       <div class="demo-header">
         <h2>Boolean Operations</h2>
         <p>Union, intersection, and difference of two unit cubes with adjustable X offset.</p>
-        <p class="demo-note"><em>Note: Full boolean operations are in progress (Phase 11).
-        Currently only disjoint (non-overlapping, offset &gt; 1.0) cases produce correct results.
-        Overlapping cases will show an error until the boolean algorithm is ported.</em></p>
       </div>
       <div class="demo-layout">
         <div class="demo-canvas-area" id="viewer-container"></div>
@@ -28,7 +25,7 @@ export function init(container: HTMLElement): () => void {
   const viewer = new ThreeViewer(viewerEl);
 
   let op: BoolOp = 'union';
-  let offset = 1.5; // default to non-overlapping so demo works out of the box
+  let offset = 0.5; // overlapping by default to showcase boolean operations
 
   const readout = createReadout();
   const errorBox = document.createElement('div');
@@ -47,7 +44,7 @@ export function init(container: HTMLElement): () => void {
 
   function showError() {
     errorBox.style.display = 'block';
-    errorBox.innerHTML = '<strong>Overlapping boolean not yet implemented.</strong><br>Move the offset slider above 1.0 for disjoint cases, or check back after Phase 11 is complete.';
+    errorBox.innerHTML = '<strong>Boolean operation failed.</strong><br>Try adjusting the offset.';
     updateReadout(readout, []);
   }
 

@@ -810,10 +810,14 @@ pub fn collapse_colinear_edges(mesh: &mut ManifoldImpl, first_new_vert: i32) {
         }
 
         if flagged.is_empty() { break; }
+        let mut num_collapsed = 0;
         for &i in &flagged {
             scratch.clear();
-            collapse_edge(mesh, i, &mut scratch);
+            if collapse_edge(mesh, i, &mut scratch) {
+                num_collapsed += 1;
+            }
         }
+        if num_collapsed == 0 { break; }
     }
 }
 

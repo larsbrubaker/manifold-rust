@@ -118,6 +118,10 @@ impl Collider {
         self.leaf_bbox.len()
     }
 
+    pub fn leaf_bbox(&self) -> &[BBox] {
+        &self.leaf_bbox
+    }
+
     pub fn morton_code(position: Vec3, bbox: &BBox) -> u32 {
         morton_code(position, bbox)
     }

@@ -4,8 +4,11 @@
 // src/impl.cpp (SetNormalsAndCoplanar, CalculateVertNormals), and the
 // GetAxisAlignedProjection utility from src/shared.h.
 
-use crate::linalg::{Vec2, Vec3, cross, dot, normalize, length2};
-use crate::types::next_halfedge;
+use std::collections::BTreeMap;
+
+use crate::linalg::{Vec2, Vec3, IVec3, cross, dot, normalize, length2};
+use crate::polygon::{ccw, triangulate_idx};
+use crate::types::{next_halfedge, Halfedge, PolyVert, PolygonsIdx, TriRef};
 use crate::impl_mesh::ManifoldImpl;
 
 // -----------------------------------------------------------------------
@@ -249,6 +252,381 @@ pub fn calculate_vert_normals(mesh: &mut ManifoldImpl) {
 
         let len = length2(normal).sqrt();
         mesh.vert_normal[vert] = if len > 0.0 { normal / len } else { Vec3::new(0.0, 0.0, 0.0) };
+    }
+}
+
+// -----------------------------------------------------------------------
+// GetBarycentric — barycentric coordinates of point in triangle
+// -----------------------------------------------------------------------
+
+/// Compute barycentric coordinates of `v` with respect to triangle `tri_pos`.
+/// Returns [u, v, w] where vertex i has weight uvw[i].
+/// Returns exact 1.0 for vertices within `tolerance` of a triangle vertex,
+/// and exact 0.0 for points within tolerance of an edge.
+///
+/// Mirrors `GetBarycentric` in `src/shared.h`.
+pub fn get_barycentric(v: Vec3, tri_pos: [Vec3; 3], tolerance: f64) -> Vec3 {
+    let edges = [
+        tri_pos[2] - tri_pos[1],
+        tri_pos[0] - tri_pos[2],
+        tri_pos[1] - tri_pos[0],
+    ];
+    let d2 = [
+        dot(edges[0], edges[0]),
+        dot(edges[1], edges[1]),
+        dot(edges[2], edges[2]),
+    ];
+    let long_side = if d2[0] > d2[1] && d2[0] > d2[2] {
+        0
+    } else if d2[1] > d2[2] {
+        1
+    } else {
+        2
+    };
+    let cross_p = cross(edges[0], edges[1]);
+    let area2 = dot(cross_p, cross_p);
+    let tol2 = tolerance * tolerance;
+
+    let mut uvw = Vec3::splat(0.0);
+    for i in 0..3 {
+        let dv = v - tri_pos[i];
+        if dot(dv, dv) < tol2 {
+            uvw = Vec3::splat(0.0);
+            match i {
+                0 => uvw.x = 1.0,
+                1 => uvw.y = 1.0,
+                _ => uvw.z = 1.0,
+            }
+            return uvw;
+        }
+    }
+
+    if d2[long_side] < tol2 {
+        // Degenerate point
+        return Vec3::new(1.0, 0.0, 0.0);
+    } else if area2 > d2[long_side] * tol2 {
+        // Triangle case
+        for i in 0..3 {
+            let j = (i + 1) % 3;
+            let cross_pv = cross(edges[i], v - tri_pos[j]);
+            let area2v = dot(cross_pv, cross_pv);
+            let val = if area2v < d2[i] * tol2 {
+                0.0
+            } else {
+                dot(cross_pv, cross_p)
+            };
+            match i {
+                0 => uvw.x = val,
+                1 => uvw.y = val,
+                _ => uvw.z = val,
+            }
+        }
+        let sum = uvw.x + uvw.y + uvw.z;
+        uvw = uvw / sum;
+        return uvw;
+    } else {
+        // Line case
+        let next_v = (long_side + 1) % 3;
+        let alpha = dot(v - tri_pos[next_v], edges[long_side]) / d2[long_side];
+        uvw = Vec3::splat(0.0);
+        let last_v = (next_v + 1) % 3;
+        match next_v {
+            0 => uvw.x = 1.0 - alpha,
+            1 => uvw.y = 1.0 - alpha,
+            _ => uvw.z = 1.0 - alpha,
+        }
+        match last_v {
+            0 => uvw.x = alpha,
+            1 => uvw.y = alpha,
+            _ => uvw.z = alpha,
+        }
+        return uvw;
+    }
+}
+
+// -----------------------------------------------------------------------
+// AssembleHalfedges — group halfedges into polygon loops
+// -----------------------------------------------------------------------
+
+/// Given a slice of halfedges (from a polygonal face), group them into polygon
+/// loops by following start_vert → end_vert chains. Returns a vec of polygon
+/// loops, where each loop is a vec of halfedge indices (offset by
+/// `start_halfedge_idx`).
+///
+/// Mirrors `AssembleHalfedges` in `src/face_op.cpp`.
+pub fn assemble_halfedges(
+    halfedges: &[Halfedge],
+    start_halfedge_idx: i32,
+) -> Vec<Vec<i32>> {
+    // Build multimap: start_vert → local edge index
+    let mut vert_edge: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
+    for (i, he) in halfedges.iter().enumerate() {
+        vert_edge.entry(he.start_vert).or_default().push(i);
+    }
+
+    let mut polys: Vec<Vec<i32>> = Vec::new();
+    let mut start_edge: usize = 0;
+    let mut this_edge: usize = start_edge;
+
+    loop {
+        if this_edge == start_edge {
+            // Find next unvisited edge
+            if vert_edge.is_empty() {
+                break;
+            }
+            let (&_vert, edges) = vert_edge.iter().next().unwrap();
+            start_edge = edges[0];
+            this_edge = start_edge;
+            polys.push(Vec::new());
+        }
+        polys.last_mut().unwrap().push(start_halfedge_idx + this_edge as i32);
+        let end_vert = halfedges[this_edge].end_vert;
+        let edges = vert_edge.get_mut(&end_vert).expect("non-manifold edge");
+        // Remove the first occurrence
+        let pos = 0; // take first available
+        this_edge = edges.remove(pos);
+        if edges.is_empty() {
+            vert_edge.remove(&end_vert);
+        }
+    }
+    polys
+}
+
+/// Project polygon loops into 2D using projection matrix and vertex positions.
+///
+/// Mirrors `ProjectPolygons` in `src/face_op.cpp`.
+pub fn project_polygons(
+    polys: &[Vec<i32>],
+    halfedge: &[Halfedge],
+    vert_pos: &[Vec3],
+    projection: &Proj2x3,
+) -> PolygonsIdx {
+    let mut polygons: PolygonsIdx = Vec::new();
+    for poly in polys {
+        let mut simple_poly = Vec::new();
+        for &edge in poly {
+            let vert = halfedge[edge as usize].start_vert;
+            simple_poly.push(PolyVert {
+                pos: projection.apply(vert_pos[vert as usize]),
+                idx: edge,
+            });
+        }
+        polygons.push(simple_poly);
+    }
+    polygons
+}
+
+// -----------------------------------------------------------------------
+// Face2Tri — triangulate polygonal faces into triangle halfedges
+// -----------------------------------------------------------------------
+
+/// Triangulates the faces represented by `face_edge` (polygon boundaries in
+/// `self.halfedge`) and `halfedge_ref` (per-halfedge TriRef). After this call,
+/// `self.halfedge` is reorganized into proper triangles and `self.mesh_relation.tri_ref`
+/// is populated.
+///
+/// Mirrors `Manifold::Impl::Face2Tri` in `src/face_op.cpp`.
+pub fn face2tri(mesh: &mut ManifoldImpl, face_edge: &[i32], halfedge_ref: &[TriRef]) {
+    let mut tri_verts: Vec<IVec3> = Vec::new();
+    let mut tri_normal: Vec<Vec3> = Vec::new();
+    let mut tri_ref: Vec<TriRef> = Vec::new();
+
+    let num_faces = face_edge.len() - 1;
+
+    for face in 0..num_faces {
+        let first_edge = face_edge[face] as usize;
+        let last_edge = face_edge[face + 1] as usize;
+        let num_edge = last_edge - first_edge;
+        if num_edge == 0 {
+            continue;
+        }
+        debug_assert!(num_edge >= 3, "face has less than three edges");
+        let normal = mesh.face_normal[face];
+        let ref_tri = halfedge_ref[first_edge];
+
+        if num_edge == 3 {
+            // Single triangle — just sort edges into correct winding order
+            let mut tri_edge = [first_edge as i32, first_edge as i32 + 1, first_edge as i32 + 2];
+            let mut tri = [
+                mesh.halfedge[first_edge].start_vert,
+                mesh.halfedge[first_edge + 1].start_vert,
+                mesh.halfedge[first_edge + 2].start_vert,
+            ];
+            let ends = [
+                mesh.halfedge[first_edge].end_vert,
+                mesh.halfedge[first_edge + 1].end_vert,
+                mesh.halfedge[first_edge + 2].end_vert,
+            ];
+            if ends[0] == tri[2] {
+                tri_edge.swap(1, 2);
+                tri.swap(1, 2);
+            }
+            tri_verts.push(IVec3::new(tri[0], tri[1], tri[2]));
+            tri_normal.push(normal);
+            tri_ref.push(ref_tri);
+        } else if num_edge == 4 {
+            // Quad — split into two triangles
+            let projection = get_axis_aligned_projection(normal);
+            let tri_ccw = |t: [i32; 3]| -> bool {
+                ccw(
+                    projection.apply(mesh.vert_pos[mesh.halfedge[t[0] as usize].start_vert as usize]),
+                    projection.apply(mesh.vert_pos[mesh.halfedge[t[1] as usize].start_vert as usize]),
+                    projection.apply(mesh.vert_pos[mesh.halfedge[t[2] as usize].start_vert as usize]),
+                    mesh.epsilon,
+                ) >= 0
+            };
+
+            let quad = assemble_halfedges(
+                &mesh.halfedge[first_edge..last_edge],
+                first_edge as i32,
+            );
+            let quad = &quad[0]; // Should be exactly one loop
+
+            let tris0 = [
+                [quad[0], quad[1], quad[2]],
+                [quad[0], quad[2], quad[3]],
+            ];
+            let tris1 = [
+                [quad[1], quad[2], quad[3]],
+                [quad[0], quad[1], quad[3]],
+            ];
+
+            let choice = if !(tri_ccw(tris0[0]) && tri_ccw(tris0[1])) {
+                1
+            } else if tri_ccw(tris1[0]) && tri_ccw(tris1[1]) {
+                let diag0 = mesh.vert_pos[mesh.halfedge[quad[0] as usize].start_vert as usize]
+                    - mesh.vert_pos[mesh.halfedge[quad[2] as usize].start_vert as usize];
+                let diag1 = mesh.vert_pos[mesh.halfedge[quad[1] as usize].start_vert as usize]
+                    - mesh.vert_pos[mesh.halfedge[quad[3] as usize].start_vert as usize];
+                if length2(diag0) > length2(diag1) { 1 } else { 0 }
+            } else {
+                0
+            };
+
+            let chosen = if choice == 0 { &tris0 } else { &tris1 };
+            for tri in chosen {
+                tri_verts.push(IVec3::new(
+                    mesh.halfedge[tri[0] as usize].start_vert,
+                    mesh.halfedge[tri[1] as usize].start_vert,
+                    mesh.halfedge[tri[2] as usize].start_vert,
+                ));
+                tri_normal.push(normal);
+                tri_ref.push(ref_tri);
+            }
+        } else {
+            // General polygon — use full triangulator
+            let projection = get_axis_aligned_projection(normal);
+            let polys_loops = assemble_halfedges(
+                &mesh.halfedge[first_edge..last_edge],
+                first_edge as i32,
+            );
+            let polys = project_polygons(&polys_loops, &mesh.halfedge, &mesh.vert_pos, &projection);
+            let tris = triangulate_idx(&polys, mesh.epsilon, true);
+            for tri in &tris {
+                tri_verts.push(IVec3::new(
+                    mesh.halfedge[tri.x as usize].start_vert,
+                    mesh.halfedge[tri.y as usize].start_vert,
+                    mesh.halfedge[tri.z as usize].start_vert,
+                ));
+                tri_normal.push(normal);
+                tri_ref.push(ref_tri);
+            }
+        }
+    }
+
+    // Rebuild halfedge array from triangulated faces
+    let num_tri = tri_verts.len();
+    let mut new_halfedge = vec![
+        Halfedge {
+            start_vert: -1,
+            end_vert: -1,
+            paired_halfedge: -1,
+            prop_vert: -1,
+        };
+        num_tri * 3
+    ];
+
+    for (t, tri) in tri_verts.iter().enumerate() {
+        let verts = [tri.x, tri.y, tri.z];
+        for j in 0..3 {
+            new_halfedge[3 * t + j].start_vert = verts[j];
+            new_halfedge[3 * t + j].end_vert = verts[(j + 1) % 3];
+        }
+    }
+
+    // Pair up halfedges
+    // Build map: (start, end) → halfedge index
+    let mut edge_map: std::collections::HashMap<(i32, i32), usize> = std::collections::HashMap::new();
+    for i in 0..new_halfedge.len() {
+        let he = &new_halfedge[i];
+        if he.start_vert < 0 {
+            continue;
+        }
+        let key = (he.end_vert, he.start_vert); // look for opposite
+        if let Some(&pair_idx) = edge_map.get(&key) {
+            new_halfedge[i].paired_halfedge = pair_idx as i32;
+            new_halfedge[pair_idx].paired_halfedge = i as i32;
+            edge_map.remove(&key);
+        } else {
+            edge_map.insert((he.start_vert, he.end_vert), i);
+        }
+    }
+
+    mesh.halfedge = new_halfedge;
+    mesh.face_normal = tri_normal;
+    mesh.mesh_relation.tri_ref = tri_ref;
+}
+
+// -----------------------------------------------------------------------
+// ReorderHalfedges — canonical ordering within each triangle
+// -----------------------------------------------------------------------
+
+/// Reorders halfedges within each face so the one with the smallest start_vert
+/// is first, then fixes paired_halfedge references.
+///
+/// Mirrors `Manifold::Impl::ReorderHalfedges` in `src/sort.cpp`.
+pub fn reorder_halfedges(mesh: &mut ManifoldImpl) {
+    let num_tri = mesh.halfedge.len() / 3;
+
+    // Step 1: rotate each triangle so smallest start_vert is first
+    for tri in 0..num_tri {
+        let base = tri * 3;
+        let face = [
+            mesh.halfedge[base],
+            mesh.halfedge[base + 1],
+            mesh.halfedge[base + 2],
+        ];
+        if face[0].start_vert < 0 {
+            continue;
+        }
+        let mut index = 0;
+        for i in 1..3 {
+            if face[i].start_vert < face[index].start_vert {
+                index = i;
+            }
+        }
+        for i in 0..3 {
+            mesh.halfedge[base + i] = face[(index + i) % 3];
+        }
+    }
+
+    // Step 2: fix paired_halfedge references
+    for tri in 0..num_tri {
+        for i in 0..3 {
+            let base = tri * 3 + i;
+            let curr = mesh.halfedge[base];
+            if curr.start_vert < 0 {
+                break; // skip collapsed triangle
+            }
+            let opp_face = curr.paired_halfedge as usize / 3;
+            let mut index = -1i32;
+            for j in 0..3 {
+                if curr.start_vert == mesh.halfedge[opp_face * 3 + j].end_vert {
+                    index = j as i32;
+                }
+            }
+            mesh.halfedge[base].paired_halfedge = opp_face as i32 * 3 + index;
+        }
     }
 }
 

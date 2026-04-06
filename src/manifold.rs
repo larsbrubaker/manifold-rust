@@ -16,7 +16,7 @@ use crate::boolean3;
 use crate::cross_section::CrossSection;
 use crate::constructors;
 use crate::impl_mesh::ManifoldImpl;
-use crate::linalg::{mat4_to_mat3x4, scaling_matrix, translation_matrix, IVec3, Mat3x4, Vec2, Vec3};
+use crate::linalg::{mat4_to_mat3x4, normalize, scaling_matrix, translation_matrix, IVec3, Mat3x4, Vec2, Vec3};
 use crate::minkowski;
 use crate::quickhull;
 use crate::sdf;
@@ -72,10 +72,33 @@ impl Manifold {
     }
 
     pub fn sphere(radius: f64, circular_segments: i32) -> Self {
-        let transform = mat4_to_mat3x4(scaling_matrix(Vec3::splat(radius)));
-        let base = ManifoldImpl::octahedron(&transform);
+        const K_HALF_PI: f64 = std::f64::consts::FRAC_PI_2;
+
+        // Build unit octahedron and subdivide
+        let identity = mat4_to_mat3x4(scaling_matrix(Vec3::splat(1.0)));
+        let base = ManifoldImpl::octahedron(&identity);
         let levels = ((circular_segments.max(4) as f64).log2().floor() as usize).saturating_sub(1);
-        Self::from_impl(subdivision::subdivide_impl(&base, levels))
+        let mut mesh = subdivision::subdivide_impl(&base, levels);
+
+        // Map subdivided octahedron vertices onto the sphere surface
+        // (matches C++: v = cos(π/2 * (1 - v)); v = radius * normalize(v))
+        for v in mesh.vert_pos.iter_mut() {
+            let mapped = Vec3::new(
+                (K_HALF_PI * (1.0 - v.x)).cos(),
+                (K_HALF_PI * (1.0 - v.y)).cos(),
+                (K_HALF_PI * (1.0 - v.z)).cos(),
+            );
+            let n = normalize(mapped);
+            *v = if n.x.is_nan() { Vec3::splat(0.0) } else { Vec3::new(n.x * radius, n.y * radius, n.z * radius) };
+        }
+
+        // Rebuild mesh metadata after vertex positions changed
+        mesh.calculate_bbox();
+        mesh.set_epsilon(-1.0, false);
+        mesh.sort_geometry();
+        mesh.set_normals_and_coplanar();
+
+        Self::from_impl(mesh)
     }
 
     pub fn extrude(cross_section: &Polygons, height: f64, n_divisions: i32, twist_degrees: f64, scale_top: Vec2) -> Self {
@@ -409,5 +432,34 @@ mod tests {
         ]);
         assert_eq!(hull.num_vert(), 8);
         assert_eq!(hull.num_tri(), 12);
+    }
+
+    #[test]
+    fn test_sphere_is_round() {
+        let m = Manifold::sphere(1.0, 24);
+        // Unit sphere: volume should be ~4π/3 ≈ 4.189
+        let vol = m.volume();
+        let expected = 4.0 * std::f64::consts::PI / 3.0;
+        assert!(
+            (vol - expected).abs() < 0.15,
+            "Sphere volume should be ~{:.3}, got {:.3}",
+            expected,
+            vol
+        );
+        // All vertices should be approximately at radius 1.0
+        let mesh = m.get_mesh_gl(0);
+        let num_prop = mesh.num_prop as usize;
+        let vert_count = if num_prop > 0 { mesh.vert_properties.len() / num_prop } else { 0 };
+        for i in 0..vert_count {
+            let x = mesh.vert_properties[i * num_prop] as f64;
+            let y = mesh.vert_properties[i * num_prop + 1] as f64;
+            let z = mesh.vert_properties[i * num_prop + 2] as f64;
+            let r = (x * x + y * y + z * z).sqrt();
+            assert!(
+                (r - 1.0).abs() < 0.01,
+                "Vertex {} at ({:.3},{:.3},{:.3}) has radius {:.4}, expected ~1.0",
+                i, x, y, z, r
+            );
+        }
     }
 }
