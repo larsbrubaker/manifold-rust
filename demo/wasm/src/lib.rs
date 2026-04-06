@@ -254,3 +254,133 @@ pub fn difference_mesh(offset_x: f64) -> MeshData {
     let result = a.difference(&b);
     mesh_data_from(&result)
 }
+
+// ---------------------------------------------------------------------------
+// Menger Sponge — recursive boolean subtraction
+// ---------------------------------------------------------------------------
+
+fn menger_sponge_impl(depth: i32) -> Manifold {
+    let mut result = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true);
+    if depth == 0 {
+        return result;
+    }
+    let mut holes = Vec::new();
+    let size = 1.0 / 3.0;
+    // Cross-shaped holes through all 3 axes
+    for axis in 0..3 {
+        for i in [-1.0, 0.0, 1.0] {
+            for j in [-1.0, 0.0, 1.0] {
+                if (i == 0.0) && (j == 0.0) { continue; }
+                if (i != 0.0) && (j != 0.0) { continue; }
+                let pos = match axis {
+                    0 => Vec3::new(0.0, i * size, j * size),
+                    1 => Vec3::new(i * size, 0.0, j * size),
+                    _ => Vec3::new(i * size, j * size, 0.0),
+                };
+                let hole_size = match axis {
+                    0 => Vec3::new(1.1, size, size),
+                    1 => Vec3::new(size, 1.1, size),
+                    _ => Vec3::new(size, size, 1.1),
+                };
+                holes.push(Manifold::cube(hole_size, true).translate(pos));
+            }
+        }
+    }
+    for hole in holes {
+        result = result.difference(&hole);
+    }
+    if depth > 1 {
+        // Recursive: scale down and place 20 sub-cubes (8 corners + 12 edges, skip face-centers + center)
+        let child = menger_sponge_impl(depth - 1);
+        let mut pieces = Vec::new();
+        for x in [-1.0, 0.0, 1.0] {
+            for y in [-1.0, 0.0, 1.0] {
+                for z in [-1.0, 0.0, 1.0] {
+                    let zeros = (x == 0.0) as i32 + (y == 0.0) as i32 + (z == 0.0) as i32;
+                    if zeros >= 2 { continue; } // skip center and face-centers
+                    pieces.push(child.clone().scale(Vec3::splat(size)).translate(Vec3::new(x * size, y * size, z * size)));
+                }
+            }
+        }
+        result = pieces.iter().skip(1).fold(pieces[0].clone(), |acc, p| acc.union(p));
+    }
+    result
+}
+
+#[wasm_bindgen]
+pub fn menger_sponge_mesh(depth: i32) -> MeshData {
+    let m = menger_sponge_impl(depth.clamp(0, 2));
+    mesh_data_from(&m)
+}
+
+// ---------------------------------------------------------------------------
+// Boolean Gallery — sphere-sphere, sphere-cube, cylinder-sphere
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen]
+pub fn boolean_gallery_mesh(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64) -> MeshData {
+    let a = match shape_a {
+        0 => Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true),
+        1 => Manifold::sphere(0.6, 32),
+        2 => Manifold::cylinder(1.0, 0.5, 0.5, 32).translate(Vec3::new(0.0, 0.0, -0.5)),
+        _ => Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true),
+    };
+    let b = match shape_b {
+        0 => Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true),
+        1 => Manifold::sphere(0.6, 32),
+        2 => Manifold::cylinder(1.0, 0.5, 0.5, 32).translate(Vec3::new(0.0, 0.0, -0.5)),
+        _ => Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true),
+    };
+    let b = b.translate(Vec3::new(offset_x, offset_y, offset_z));
+    let result = match op {
+        0 => a.union(&b),
+        1 => a.intersection(&b),
+        2 => a.difference(&b),
+        _ => a.union(&b),
+    };
+    mesh_data_from(&result)
+}
+
+// ---------------------------------------------------------------------------
+// Refined / Smooth shapes
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen]
+pub fn refined_shape_mesh(shape: i32, refine_level: i32) -> MeshData {
+    let base = match shape {
+        0 => Manifold::tetrahedron(),
+        1 => Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true),
+        2 => Manifold::cylinder(1.0, 0.5, 0.5, 8).translate(Vec3::new(0.0, 0.0, -0.5)),
+        _ => Manifold::tetrahedron(),
+    };
+    let refined = base.refine(refine_level.clamp(1, 5));
+    mesh_data_from(&refined)
+}
+
+// ---------------------------------------------------------------------------
+// Extrude with twist
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen]
+pub fn extrude_twist_mesh(radius: f64, segments: i32, height: f64, twist_degrees: f64, n_divisions: i32, scale_top: f64) -> MeshData {
+    let cs = CrossSection::circle(radius, segments);
+    let m = Manifold::extrude(&cs.to_polygons(), height, n_divisions, twist_degrees, Vec2::new(scale_top, scale_top));
+    mesh_data_from(&m)
+}
+
+// ---------------------------------------------------------------------------
+// Revolve with partial angle
+// ---------------------------------------------------------------------------
+
+#[wasm_bindgen]
+pub fn revolve_partial_mesh(profile: i32, segments: i32, degrees: f64) -> MeshData {
+    let cs = match profile {
+        0 => CrossSection::circle(0.3, 16),
+        1 => CrossSection::square(0.5),
+        _ => CrossSection::circle(0.3, 16),
+    };
+    // Offset the profile from the axis
+    let cs = cs.translate(Vec2::new(0.7, 0.0));
+    let m = Manifold::revolve(&cs.to_polygons(), segments, degrees);
+    mesh_data_from(&m)
+}

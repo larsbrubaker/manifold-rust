@@ -80,3 +80,23 @@ export function intersectMesh(offsetX: number): MeshData {
 export function differenceMesh(offsetX: number): MeshData {
   return toMeshData(getWasm().difference_mesh(offsetX));
 }
+
+export function mengerSpongeMesh(depth: number): MeshData {
+  return toMeshData(getWasm().menger_sponge_mesh(depth));
+}
+
+export function booleanGalleryMesh(shapeA: number, shapeB: number, op: number, ox: number, oy: number, oz: number): MeshData {
+  return toMeshData(getWasm().boolean_gallery_mesh(shapeA, shapeB, op, ox, oy, oz));
+}
+
+export function refinedShapeMesh(shape: number, refineLevel: number): MeshData {
+  return toMeshData(getWasm().refined_shape_mesh(shape, refineLevel));
+}
+
+export function extrudeTwistMesh(radius: number, segments: number, height: number, twistDegrees: number, nDivisions: number, scaleTop: number): MeshData {
+  return toMeshData(getWasm().extrude_twist_mesh(radius, segments, height, twistDegrees, nDivisions, scaleTop));
+}
+
+export function revolvePartialMesh(profile: number, segments: number, degrees: number): MeshData {
+  return toMeshData(getWasm().revolve_partial_mesh(profile, segments, degrees));
+}

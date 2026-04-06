@@ -82,6 +82,7 @@ export class ThreeViewer {
       roughness: 0.5,
       metalness: 0.1,
       side: THREE.DoubleSide,
+      flatShading: true,
     });
     this.solidMesh = new THREE.Mesh(geom, mat);
     this.scene.add(this.solidMesh);

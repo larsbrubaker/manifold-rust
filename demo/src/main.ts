@@ -9,6 +9,11 @@ const demoModules: Record<string, () => Promise<{ init: DemoInit }>> = {
   'extrude-revolve': () => import('./demos/extrude-revolve.ts' as any),
   'boolean-ops': () => import('./demos/boolean-ops.ts' as any),
   'convex-hull': () => import('./demos/convex-hull.ts' as any),
+  'boolean-gallery': () => import('./demos/boolean-gallery.ts' as any),
+  'menger-sponge': () => import('./demos/menger-sponge.ts' as any),
+  'extrude-twist': () => import('./demos/extrude-twist.ts' as any),
+  'revolve-partial': () => import('./demos/revolve-partial.ts' as any),
+  'smooth-shapes': () => import('./demos/smooth-shapes.ts' as any),
   'properties': () => import('./demos/properties.ts' as any),
   'about': () => import('./demos/about.ts' as any),
 };
@@ -92,6 +97,31 @@ function renderHome(container: HTMLElement) {
           <span class="card-icon">&#9651;</span>
           <h3>Convex Hull</h3>
           <p>Generate convex hulls from random 3D point clouds using the QuickHull algorithm.</p>
+        </a>
+        <a href="#/boolean-gallery" class="feature-card">
+          <span class="card-icon">&#9726;</span>
+          <h3>Boolean Gallery</h3>
+          <p>Mix and match cubes, spheres, and cylinders with union, intersection, and difference in 3D.</p>
+        </a>
+        <a href="#/menger-sponge" class="feature-card">
+          <span class="card-icon">&#10022;</span>
+          <h3>Menger Sponge</h3>
+          <p>Recursive boolean subtraction creates this classic fractal at adjustable depth levels.</p>
+        </a>
+        <a href="#/extrude-twist" class="feature-card">
+          <span class="card-icon">&#10697;</span>
+          <h3>Extrude + Twist</h3>
+          <p>Extrude circular profiles with twist rotation and taper scaling for spiral shapes.</p>
+        </a>
+        <a href="#/revolve-partial" class="feature-card">
+          <span class="card-icon">&#10227;</span>
+          <h3>Partial Revolve</h3>
+          <p>Revolve 2D profiles by partial angles to create torus arcs, rings, and curved solids.</p>
+        </a>
+        <a href="#/smooth-shapes" class="feature-card">
+          <span class="card-icon">&#9674;</span>
+          <h3>Subdivision</h3>
+          <p>Subdivide base shapes with adjustable refinement levels for smoother, denser meshes.</p>
         </a>
         <a href="#/properties" class="feature-card">
           <span class="card-icon">&#9881;</span>
