@@ -594,9 +594,24 @@ impl ManifoldImpl {
 
         let invert = m3.determinant() < 0.0;
         if invert {
-            // Flip triangle winding
+            // Flip triangle winding — matches C++ FlipTris
             for tri in 0..result.num_tri() {
-                result.halfedge.swap(3 * tri + 1, 3 * tri + 2);
+                // Swap first and third halfedge within tri
+                result.halfedge.swap(3 * tri, 3 * tri + 2);
+                // For each halfedge: swap startVert/endVert and remap pairedHalfedge
+                for i in 0..3 {
+                    let idx = 3 * tri + i;
+                    let h = &mut result.halfedge[idx];
+                    std::mem::swap(&mut h.start_vert, &mut h.end_vert);
+                    // FlipHalfedge: within the paired tri, mirror the edge index
+                    let paired = h.paired_halfedge;
+                    if paired >= 0 {
+                        let p = paired as usize;
+                        let p_tri = p / 3;
+                        let p_vert = 2 - (p - 3 * p_tri);
+                        h.paired_halfedge = (3 * p_tri + p_vert) as i32;
+                    }
+                }
             }
         }
 

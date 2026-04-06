@@ -16,7 +16,7 @@ use crate::boolean3;
 use crate::cross_section::CrossSection;
 use crate::constructors;
 use crate::impl_mesh::ManifoldImpl;
-use crate::linalg::{mat4_to_mat3x4, normalize, scaling_matrix, translation_matrix, IVec3, Mat3x4, Vec2, Vec3};
+use crate::linalg::{mat4_to_mat3x4, normalize, rotation_matrix, rotation_quat_axis_angle, scaling_matrix, translation_matrix, IVec3, Mat3x4, Vec2, Vec3};
 use crate::minkowski;
 use crate::quickhull;
 use crate::sdf;
@@ -37,6 +37,10 @@ impl Default for Manifold {
 impl Manifold {
     pub fn new() -> Self {
         Self { imp: ManifoldImpl::new() }
+    }
+
+    pub fn empty() -> Self {
+        Self::new()
     }
 
     pub fn from_impl(imp: ManifoldImpl) -> Self {
@@ -75,9 +79,11 @@ impl Manifold {
         const K_HALF_PI: f64 = std::f64::consts::FRAC_PI_2;
 
         // Build unit octahedron and subdivide
+        // C++: n = (circularSegments + 3) / 4, then subdivide n-1 times
         let identity = mat4_to_mat3x4(scaling_matrix(Vec3::splat(1.0)));
         let base = ManifoldImpl::octahedron(&identity);
-        let levels = ((circular_segments.max(4) as f64).log2().floor() as usize).saturating_sub(1);
+        let n = if circular_segments > 0 { (circular_segments + 3) / 4 } else { 1 };
+        let levels = (n - 1).max(0) as usize;
         let mut mesh = subdivision::subdivide_impl(&base, levels);
 
         // Map subdivided octahedron vertices onto the sphere surface
@@ -220,6 +226,8 @@ impl Manifold {
     pub fn status(&self) -> Error { self.imp.status }
     pub fn volume(&self) -> f64 { self.imp.get_property(crate::properties::Property::Volume).abs() }
     pub fn surface_area(&self) -> f64 { self.imp.get_property(crate::properties::Property::SurfaceArea) }
+    pub fn matches_tri_normals(&self) -> bool { self.imp.matches_tri_normals() }
+    pub fn num_degenerate_tris(&self) -> i32 { self.imp.num_degenerate_tris() }
     pub fn genus(&self) -> i32 {
         let chi = self.num_vert() as i32 - self.imp.num_edge() as i32 + self.num_tri() as i32;
         1 - chi / 2
@@ -227,6 +235,18 @@ impl Manifold {
 
     pub fn translate(&self, v: Vec3) -> Self {
         let t = mat4_to_mat3x4(translation_matrix(v));
+        Self::from_impl(self.imp.transform(&t))
+    }
+
+    /// Rotate by Euler angles in degrees: first about X, then Y, then Z.
+    pub fn rotate(&self, x_degrees: f64, y_degrees: f64, z_degrees: f64) -> Self {
+        let to_rad = std::f64::consts::PI / 180.0;
+        let qx = rotation_quat_axis_angle(Vec3::new(1.0, 0.0, 0.0), x_degrees * to_rad);
+        let qy = rotation_quat_axis_angle(Vec3::new(0.0, 1.0, 0.0), y_degrees * to_rad);
+        let qz = rotation_quat_axis_angle(Vec3::new(0.0, 0.0, 1.0), z_degrees * to_rad);
+        use crate::linalg::qmul;
+        let q = qmul(qz, qmul(qy, qx));
+        let t = mat4_to_mat3x4(rotation_matrix(q));
         Self::from_impl(self.imp.transform(&t))
     }
 
@@ -432,6 +452,57 @@ mod tests {
         ]);
         assert_eq!(hull.num_vert(), 8);
         assert_eq!(hull.num_tri(), 12);
+    }
+
+    // -----------------------------------------------------------------------
+    // C++ parity tests — ported from cpp-reference/manifold/test/manifold_test.cpp
+    // -----------------------------------------------------------------------
+
+    /// C++ TEST(Manifold, Sphere) — n=25, 4*n segments → n*n*8 triangles
+    #[test]
+    fn test_cpp_sphere_tri_count() {
+        let n = 25;
+        let sphere = Manifold::sphere(1.0, 4 * n);
+        assert_eq!(sphere.num_tri(), (n * n * 8) as usize);
+    }
+
+    /// C++ TEST(Manifold, Cylinder) — 10000 segments
+    #[test]
+    fn test_cpp_cylinder_tri_count() {
+        let n = 10000i32;
+        let cyl = Manifold::cylinder(2.0, 2.0, 2.0, n);
+        assert_eq!(cyl.num_tri(), (4 * n - 4) as usize);
+    }
+
+    /// C++ TEST(Manifold, Revolve3) — revolve a circle to make a sphere
+    #[test]
+    fn test_cpp_revolve3() {
+        let circle = crate::cross_section::CrossSection::circle(1.0, 32);
+        let sphere = Manifold::revolve(&circle.to_polygons(), 32, 360.0);
+        let k_pi = std::f64::consts::PI;
+        assert!((sphere.volume() - 4.0 / 3.0 * k_pi).abs() < 0.1);
+        assert!((sphere.surface_area() - 4.0 * k_pi).abs() < 0.15);
+    }
+
+    /// C++ TEST(Manifold, Transform)
+    #[test]
+    fn test_cpp_transform() {
+        let cube = Manifold::cube(Vec3::splat(1.0), false);
+        let translated = cube.translate(Vec3::new(1.0, 2.0, 3.0));
+        assert_eq!(translated.num_vert(), 8);
+        assert_eq!(translated.num_tri(), 12);
+        assert!((translated.volume() - 1.0).abs() < 1e-10);
+    }
+
+    /// C++ TEST(Manifold, MirrorUnion) — cube union with its mirror
+    #[test]
+    fn test_cpp_mirror_union() {
+        let cube = Manifold::cube(Vec3::new(5.0, 5.0, 5.0), false)
+            .translate(Vec3::new(0.0, 0.0, -3.0));
+        let mirrored = cube.scale(Vec3::new(1.0, 1.0, -1.0));
+        let result = cube.union(&mirrored);
+        assert_eq!(result.genus(), 0);
+        assert!((result.volume() - 5.0 * 5.0 * 6.0).abs() < 1e-5);
     }
 
     #[test]

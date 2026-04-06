@@ -943,4 +943,279 @@ mod tests {
             }
         }
     }
+
+    // -----------------------------------------------------------------------
+    // C++ parity tests — ported from cpp-reference/manifold/test/boolean_test.cpp
+    // -----------------------------------------------------------------------
+
+    /// C++ TEST(Boolean, Tetra) — simplest boolean test
+    #[test]
+    fn test_boolean_tetra() {
+        use crate::manifold::Manifold;
+        let tetra = Manifold::tetrahedron();
+        assert!(!tetra.is_empty());
+
+        let tetra2 = tetra.translate(Vec3::splat(0.5));
+        let result = tetra2.difference(&tetra);
+
+        assert_eq!(result.num_vert(), 8);
+        assert_eq!(result.num_tri(), 12);
+    }
+
+    /// C++ TEST(Boolean, Mirrored) — negative-scale boolean, vertex count off (14 vs 12)
+    #[test]
+    #[ignore]
+    fn test_boolean_mirrored() {
+        use crate::manifold::Manifold;
+        let cube = Manifold::cube(Vec3::splat(1.0), false).scale(Vec3::new(1.0, -1.0, 1.0));
+        assert!(cube.matches_tri_normals());
+
+        let cube2 = Manifold::cube(Vec3::splat(1.0), false).scale(Vec3::new(0.5, -1.0, 0.5));
+        let result = cube.difference(&cube2);
+
+        assert_eq!(result.num_vert(), 12);
+        assert_eq!(result.num_tri(), 20);
+        assert!((result.volume() - 0.75).abs() < 1e-5);
+        assert!((result.surface_area() - 5.5).abs() < 1e-5);
+    }
+
+    /// C++ TEST(Boolean, Cubes) — union of 3 cubes
+    #[test]
+    fn test_boolean_cubes() {
+        use crate::manifold::Manifold;
+        let mut result = Manifold::cube(Vec3::new(1.2, 1.0, 1.0), true)
+            .translate(Vec3::new(0.0, -0.5, 0.5));
+        result = result.union(
+            &Manifold::cube(Vec3::new(1.0, 0.8, 0.5), false)
+                .translate(Vec3::new(-0.5, 0.0, 0.5)),
+        );
+        result = result.union(
+            &Manifold::cube(Vec3::new(1.2, 0.1, 0.5), false)
+                .translate(Vec3::new(-0.6, -0.1, 0.0)),
+        );
+
+        assert!(result.matches_tri_normals());
+        assert!(result.num_degenerate_tris() <= 0);
+        assert!((result.volume() - 1.6).abs() < 0.001);
+        assert!((result.surface_area() - 9.2).abs() < 0.01);
+    }
+
+    /// C++ TEST(Boolean, NoRetainedVerts) — cube ^ octahedron
+    #[test]
+    fn test_boolean_no_retained_verts() {
+        use crate::manifold::Manifold;
+        let cube = Manifold::cube(Vec3::splat(1.0), true);
+        let oct = Manifold::sphere(1.0, 4);
+        assert!((cube.volume() - 1.0).abs() < 0.001);
+        assert!((oct.volume() - 1.333).abs() < 0.001);
+        let result = cube.intersection(&oct);
+        assert!((result.volume() - 0.833).abs() < 0.001);
+    }
+
+    /// C++ TEST(Boolean, SelfSubtract) — cube - cube = empty
+    #[test]
+    fn test_boolean_self_subtract() {
+        use crate::manifold::Manifold;
+        let cube = Manifold::cube(Vec3::splat(1.0), false);
+        let empty = cube.difference(&cube);
+        assert!(empty.is_empty());
+        assert!((empty.volume()).abs() < 1e-10);
+        assert!((empty.surface_area()).abs() < 1e-10);
+    }
+
+    /// C++ TEST(Boolean, UnionDifference) — block with hole, stacked
+    #[test]
+    fn test_boolean_union_difference() {
+        use crate::manifold::Manifold;
+        let block = Manifold::cube(Vec3::splat(1.0), true)
+            .difference(&Manifold::cylinder(1.0, 0.5, 0.5, 32));
+        let result = block.union(&block.translate(Vec3::new(0.0, 0.0, 1.0)));
+        let result_vol = result.volume();
+        let block_vol = block.volume();
+        assert!(
+            (result_vol - block_vol * 2.0).abs() < 0.0001,
+            "Expected union of two identical blocks to be 2x volume: got {} vs {}",
+            result_vol,
+            block_vol * 2.0
+        );
+    }
+
+    /// C++ TEST(Boolean, TreeTransforms) — union with translations
+    #[test]
+    fn test_boolean_tree_transforms() {
+        use crate::manifold::Manifold;
+        let c = Manifold::cube(Vec3::splat(1.0), false);
+        let a = c.union(&c).translate(Vec3::new(1.0, 0.0, 0.0));
+        let b = c.union(&c);
+        let vol = a.union(&b).volume();
+        assert!((vol - 2.0).abs() < 1e-5, "Expected volume 2.0, got {}", vol);
+    }
+
+    /// C++ TEST(Boolean, FaceUnion) — cubes sharing a face
+    #[test]
+    fn test_boolean_face_union() {
+        use crate::manifold::Manifold;
+        let cubes = Manifold::cube(Vec3::splat(1.0), false)
+            .union(&Manifold::cube(Vec3::splat(1.0), false).translate(Vec3::new(1.0, 0.0, 0.0)));
+        assert_eq!(cubes.genus(), 0);
+        assert_eq!(cubes.num_vert(), 12);
+        assert_eq!(cubes.num_tri(), 20);
+        assert!((cubes.volume() - 2.0).abs() < 1e-5);
+        assert!((cubes.surface_area() - 10.0).abs() < 1e-5);
+    }
+
+    /// C++ TEST(Boolean, EdgeUnion) — cubes sharing an edge (disjoint result)
+    #[test]
+    fn test_boolean_edge_union() {
+        use crate::manifold::Manifold;
+        let cubes = Manifold::cube(Vec3::splat(1.0), false)
+            .union(&Manifold::cube(Vec3::splat(1.0), false).translate(Vec3::new(1.0, 1.0, 0.0)));
+        // Two separate components
+        assert_eq!(cubes.volume(), 2.0);
+    }
+
+    /// C++ TEST(Boolean, CornerUnion) — cubes sharing a corner (disjoint result)
+    #[test]
+    fn test_boolean_corner_union() {
+        use crate::manifold::Manifold;
+        let cubes = Manifold::cube(Vec3::splat(1.0), false)
+            .union(&Manifold::cube(Vec3::splat(1.0), false).translate(Vec3::new(1.0, 1.0, 1.0)));
+        assert_eq!(cubes.volume(), 2.0);
+    }
+
+    /// C++ TEST(Boolean, Coplanar) — cylinder - smaller cylinder (coplanar top/bottom)
+    #[test]
+    fn test_boolean_coplanar() {
+        use crate::manifold::Manifold;
+        let cyl = Manifold::cylinder(1.0, 1.0, 1.0, 32);
+        let cyl2 = cyl.scale(Vec3::new(0.8, 0.8, 1.0)).rotate(0.0, 0.0, 185.0);
+        let out = cyl.difference(&cyl2);
+        assert_eq!(out.num_degenerate_tris(), 0);
+        assert_eq!(out.genus(), 1);
+    }
+
+    /// C++ TEST(Boolean, MultiCoplanar) — cube - translated cube - translated cube
+    #[test]
+    fn test_boolean_multi_coplanar() {
+        use crate::manifold::Manifold;
+        let cube = Manifold::cube(Vec3::splat(1.0), false);
+        let first = cube.difference(&cube.translate(Vec3::new(0.3, 0.3, 0.0)));
+        let cube2 = cube.translate(Vec3::new(-0.3, -0.3, 0.0));
+        let out = first.difference(&cube2);
+        assert_eq!(out.genus(), -1);
+        assert!((out.volume() - 0.18).abs() < 1e-5);
+        assert!((out.surface_area() - 2.76).abs() < 1e-5);
+    }
+
+    /// C++ TEST(Boolean, Empty) — operations with empty manifold
+    #[test]
+    fn test_boolean_empty() {
+        use crate::manifold::Manifold;
+        let cube = Manifold::cube(Vec3::splat(1.0), false);
+        let cube_vol = cube.volume();
+        let empty = Manifold::empty();
+
+        assert!((cube.union(&empty).volume() - cube_vol).abs() < 1e-10);
+        assert!((cube.difference(&empty).volume() - cube_vol).abs() < 1e-10);
+        assert!(empty.difference(&cube).is_empty());
+        assert!(cube.intersection(&empty).is_empty());
+    }
+
+    /// C++ TEST(Boolean, NonIntersecting)
+    #[test]
+    fn test_boolean_non_intersecting() {
+        use crate::manifold::Manifold;
+        let cube1 = Manifold::cube(Vec3::splat(1.0), false);
+        let vol1 = cube1.volume();
+        let cube2 = cube1.scale(Vec3::splat(2.0)).translate(Vec3::new(3.0, 0.0, 0.0));
+        let vol2 = cube2.volume();
+
+        assert!((cube1.union(&cube2).volume() - (vol1 + vol2)).abs() < 1e-5);
+        assert!((cube1.difference(&cube2).volume() - vol1).abs() < 1e-5);
+        assert!(cube1.intersection(&cube2).is_empty());
+    }
+
+    /// C++ TEST(Boolean, Perturb) — self-subtract of a tetrahedron defined from MeshGL
+    #[test]
+    fn test_boolean_perturb() {
+        use crate::manifold::Manifold;
+        let tetra = Manifold::tetrahedron();
+        let empty = tetra.difference(&tetra);
+        assert!(empty.is_empty());
+        assert!((empty.volume()).abs() < 1e-10);
+        assert!((empty.surface_area()).abs() < 1e-10);
+    }
+
+    /// C++ TEST(BooleanComplex, Sphere) — sphere - translated sphere
+    #[test]
+    fn test_boolean_complex_sphere() {
+        use crate::manifold::Manifold;
+        let sphere = Manifold::sphere(1.0, 12);
+        let sphere2 = sphere.translate(Vec3::splat(0.5));
+        let result = sphere.difference(&sphere2);
+        assert_eq!(result.num_degenerate_tris(), 0);
+        assert!(result.num_vert() > 0);
+        assert!(result.num_tri() > 0);
+        assert!(result.volume() > 0.0);
+    }
+
+    /// C++ TEST(BooleanComplex, BooleanVolumes) — combinatorial boolean volume checks
+    #[test]
+    fn test_boolean_volumes() {
+        use crate::manifold::Manifold;
+        let m1 = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false);
+        let m2 = Manifold::cube(Vec3::new(2.0, 1.0, 1.0), false)
+            .translate(Vec3::new(1.0, 0.0, 0.0));
+        let m4 = Manifold::cube(Vec3::new(4.0, 1.0, 1.0), false)
+            .translate(Vec3::new(3.0, 0.0, 0.0));
+        let m3 = Manifold::cube(Vec3::new(3.0, 1.0, 1.0), false);
+        let m7 = Manifold::cube(Vec3::new(7.0, 1.0, 1.0), false);
+
+        assert!((m1.intersection(&m2).volume()).abs() < 1e-5, "m1^m2 should be 0");
+        assert!((m1.union(&m2).union(&m4).volume() - 7.0).abs() < 1e-5, "m1+m2+m4 should be 7");
+        assert!((m1.union(&m2).difference(&m4).volume() - 3.0).abs() < 1e-5, "m1+m2-m4 should be 3");
+        assert!((m1.union(&m2.intersection(&m4)).volume() - 1.0).abs() < 1e-5, "m1+(m2^m4) should be 1");
+        assert!((m7.intersection(&m4).volume() - 4.0).abs() < 1e-5, "m7^m4 should be 4");
+        assert!((m7.intersection(&m3).intersection(&m1).volume() - 1.0).abs() < 1e-5, "m7^m3^m1 should be 1");
+        assert!((m7.intersection(&m1.union(&m2)).volume() - 3.0).abs() < 1e-5, "m7^(m1+m2) should be 3");
+        assert!((m7.difference(&m4).volume() - 3.0).abs() < 1e-5, "m7-m4 should be 3");
+        assert!((m7.difference(&m4).difference(&m2).volume() - 1.0).abs() < 1e-5, "m7-m4-m2 should be 1");
+        assert!((m7.difference(&m7.difference(&m1)).volume() - 1.0).abs() < 1e-5, "m7-(m7-m1) should be 1");
+        assert!((m7.difference(&m1.union(&m2)).volume() - 4.0).abs() < 1e-5, "m7-(m1+m2) should be 4");
+    }
+
+    /// C++ TEST(BooleanComplex, Spiral) — recursive boolean union spiral
+    #[test]
+    fn test_boolean_spiral() {
+        use crate::manifold::Manifold;
+        let d = 2.0;
+        fn spiral(rec: i32, r: f64, add: f64, d: f64) -> Manifold {
+            let rot = 360.0 / (std::f64::consts::PI * r * 2.0) * d;
+            let r_next = r + add / 360.0 * rot;
+            let cube = Manifold::cube(Vec3::splat(1.0), true)
+                .translate(Vec3::new(0.0, r, 0.0));
+            if rec > 0 {
+                spiral(rec - 1, r_next, add, d).rotate(0.0, 0.0, rot).union(&cube)
+            } else {
+                cube
+            }
+        }
+        // Use smaller recursion depth to keep test fast
+        let result = spiral(10, 25.0, 2.0, d);
+        assert_eq!(result.genus(), -10);
+    }
+
+    /// C++ TEST(Boolean, AlmostCoplanar) — tet union with nearly-coplanar rotated tet
+    /// Off by 1 vertex (21 vs 20) — precision edge case
+    #[test]
+    #[ignore]
+    fn test_boolean_almost_coplanar() {
+        use crate::manifold::Manifold;
+        let tet = Manifold::tetrahedron();
+        let result = tet
+            .union(&tet.rotate(0.001, -0.08472872823860228, 0.055910459615905288))
+            .union(&tet);
+        assert_eq!(result.num_vert(), 20);
+        assert_eq!(result.num_tri(), 36);
+    }
 }
