@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Manifold for Rust — Interactive 3D Demos</title>
+  <link rel="stylesheet" href="./styles/main.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+    }
+  }
+  </script>
+</head>
+<body>
+  <button id="menu-toggle" class="menu-toggle" aria-label="Toggle navigation">
+    <span></span><span></span><span></span>
+  </button>
+  <div id="sidebar-overlay" class="sidebar-overlay"></div>
+
+  <nav id="sidebar">
+    <div class="sidebar-header">
+      <h1 class="logo">Manifold<span class="logo-accent">.rs</span></h1>
+      <p class="tagline">Interactive 3D Geometry Demos</p>
+    </div>
+    <ul class="nav-list">
+      <li><a href="#/" class="nav-link active" data-route="home">
+        <span class="nav-icon">&#9670;</span> Home
+      </a></li>
+      <li class="nav-section">Geometry</li>
+      <li><a href="#/primitives" class="nav-link" data-route="primitives">
+        <span class="nav-icon">&#11200;</span> Primitives
+      </a></li>
+      <li><a href="#/extrude-revolve" class="nav-link" data-route="extrude-revolve">
+        <span class="nav-icon">&#10548;</span> Extrude &amp; Revolve
+      </a></li>
+      <li><a href="#/boolean-ops" class="nav-link" data-route="boolean-ops">
+        <span class="nav-icon">&#9649;</span> Boolean Operations
+      </a></li>
+      <li><a href="#/convex-hull" class="nav-link" data-route="convex-hull">
+        <span class="nav-icon">&#9651;</span> Convex Hull
+      </a></li>
+      <li class="nav-section">Analysis</li>
+      <li><a href="#/properties" class="nav-link" data-route="properties">
+        <span class="nav-icon">&#9881;</span> Properties
+      </a></li>
+      <li class="nav-section">About</li>
+      <li><a href="#/about" class="nav-link" data-route="about">
+        <span class="nav-icon">&#128214;</span> About This Project
+      </a></li>
+    </ul>
+    <div class="sidebar-footer">
+      <p><a href="https://github.com/larsbrubaker/manifold-rust" target="_blank">Source on GitHub</a></p>
+      <p>Rust port of <a href="https://github.com/elalish/manifold" target="_blank">Manifold</a></p>
+      <p class="license">Apache-2.0 License</p>
+    </div>
+  </nav>
+
+  <main id="main-content">
+    <!-- Content dynamically injected by router -->
+  </main>
+
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

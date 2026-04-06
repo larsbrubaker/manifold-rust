@@ -101,7 +101,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "clipper2-rust"
-version = "1.0.2"
+version = "1.0.1"
 dependencies = [
  "num-traits",
 ]
@@ -251,6 +251,7 @@ dependencies = [
 name = "manifold-wasm"
 version = "0.1.0"
 dependencies = [
+ "js-sys",
  "manifold-rust",
  "wasm-bindgen",
 ]

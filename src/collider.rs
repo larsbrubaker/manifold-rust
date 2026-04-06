@@ -64,6 +64,56 @@ impl Collider {
         }
     }
 
+    /// Function-based collision query. For each query index 0..n, calls
+    /// `query_box_fn(i)` to generate a bounding box on the fly, then tests it
+    /// against all leaf boxes. Non-empty overlaps are reported via `record`.
+    /// This is the API used by Boolean3: edge bounding boxes are generated
+    /// from halfedge indices without pre-materializing an array.
+    pub fn collisions_fn<F, R>(
+        &self,
+        query_box_fn: F,
+        n: usize,
+        mut record: R,
+    ) where
+        F: Fn(usize) -> BBox,
+        R: FnMut(usize, usize),
+    {
+        for query_idx in 0..n {
+            let query = query_box_fn(query_idx);
+            if query.is_empty() {
+                continue;
+            }
+            for (leaf_idx, leaf) in self.leaf_bbox.iter().enumerate() {
+                if query.does_overlap_box(leaf) {
+                    record(query_idx, leaf_idx);
+                }
+            }
+        }
+    }
+
+    /// Point-based collision query. For each query index in 0..n, calls
+    /// `point_fn(i)` to get a point, wraps it in a zero-volume box, and tests
+    /// against all leaf boxes. Used by Winding03 for vertex queries.
+    pub fn collisions_point<F, R>(
+        &self,
+        point_fn: F,
+        n: usize,
+        mut record: R,
+    ) where
+        F: Fn(usize) -> Vec3,
+        R: FnMut(usize, usize),
+    {
+        for query_idx in 0..n {
+            let pt = point_fn(query_idx);
+            let query = BBox::from_point(pt);
+            for (leaf_idx, leaf) in self.leaf_bbox.iter().enumerate() {
+                if query.does_overlap_box(leaf) {
+                    record(query_idx, leaf_idx);
+                }
+            }
+        }
+    }
+
     pub fn leaf_count(&self) -> usize {
         self.leaf_bbox.len()
     }

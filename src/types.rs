@@ -123,6 +123,16 @@ impl Box {
         }
     }
 
+    /// A box containing a single point.
+    pub fn from_point(p: Vec3) -> Self {
+        Box { min: p, max: p }
+    }
+
+    /// True when the box has no volume (min > max on any axis).
+    pub fn is_empty(&self) -> bool {
+        self.min.x > self.max.x || self.min.y > self.max.y || self.min.z > self.max.z
+    }
+
     pub fn size(&self) -> Vec3 {
         self.max - self.min
     }
