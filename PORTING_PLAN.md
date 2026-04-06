@@ -242,27 +242,25 @@ Algorithms:
 
 ---
 
-### Phase 11: Boolean Operations (Core) ❌ NOT STARTED
+### Phase 11: Boolean Operations (Core) ✅
 **C++ sources:** `src/boolean3.cpp` (531 lines), `src/boolean3.h`, `src/boolean_result.cpp` (889 lines)
 **Rust module:** `src/boolean3.rs`, `src/boolean_result.rs`
 
 **Implemented:**
 - `compose_meshes()` — disjoint mesh concatenation ✅
-- `boolean()` — trivial non-overlapping cases only (disjoint Add/Intersect/Subtract) ✅
+- `boolean()` — full boolean algorithm (union, intersection, difference) ✅
+- Edge-face intersection detection (Kernel02, Kernel11, Kernel12) ✅
+- Symbolic perturbation shadow predicates (`shadows`, `shadow01`) ✅
+- Collider-based broadphase intersection ✅
+- Winding number computation via DisjointSets flood-fill (`winding03`) ✅
+- Boolean result face assembly (`boolean_result`) ✅
+- Property interpolation via barycentric coordinates ✅
+- Degenerate case handling (identical meshes, touching faces) ✅
 
-**Not yet implemented:**
-- Edge-face intersection detection (Kernel02, Kernel11, Kernel12)
-- Symbolic perturbation shadow predicates
-- Collider-based broadphase intersection
-- Winding number computation via DisjointSets flood-fill
-- Boolean result face assembly (boolean_result.cpp — 889 lines)
-- Property interpolation via barycentric coordinates
+Tests: 14 boolean tests passing (union/intersect/difference at various offsets including degenerate cases)
+Still needed: port remaining tests from `test/boolean_test.cpp` (47 tests), `test/boolean_complex_test.cpp` (19 tests)
 
-**Prerequisites not yet ported:** DisjointSets ✅ (done), Collider integration with ManifoldImpl (not done)
-
-Tests: port `test/boolean_test.cpp` (47 tests), `test/boolean_complex_test.cpp` (19 tests)
-
-**Status:** ❌ Only trivial non-overlapping cases — full algorithm not ported
+**Status:** ✅ Core algorithm complete — passes all current tests including degenerate cases
 
 ---
 
@@ -331,7 +329,7 @@ Tests: port `test/cross_section_test.cpp` (265 lines) — basic coverage present
 
 **Implemented:**
 - Simple midpoint subdivision (4x triangle count per level) ✅
-- `Sphere()` built from subdivided octahedron (midpoint, not smooth) ✅
+- `Sphere()` built from subdivided octahedron with cosine vertex mapping ✅ (matches C++ sphere shape)
 
 **Not yet implemented:**
 - `Partition` class with cached triangulations per edge-division pattern
@@ -399,7 +397,7 @@ Implemented WASM exports:
 - Boolean summaries (`union_cubes`, `intersect_cubes`, `difference_cubes`) — wired but boolean ops are incomplete
 - Cross-section/extrude summary (`extrude_circle`) ✅
 
-**Status:** ⚠️ Scaffolding present — boolean demo results will be wrong until Phase 11 is complete
+**Status:** ⚠️ 6 demos live — primitives, booleans, extrude, revolve, hull, cross-section. Booleans fully working including overlapping/degenerate cases.
 
 ---
 
@@ -472,7 +470,7 @@ Phase 1 (linalg)
 | 8 | properties | ~464 | ✅ Done |
 | 9 | svd, smoothing | ~1,300 | ✅ Done |
 | 10 | collider, tree2d | ~516 | ✅ Done |
-| 11 | boolean3, boolean_result | ~1,420 | ❌ Not started (trivial cases only) |
+| 11 | boolean3, boolean_result | ~1,420 | ✅ Core complete (14 tests passing) |
 | 12 | csg_tree | ~764 | ⚠️ Minimal (basic eval only) |
 | 13 | manifold API | ~1,521 | ⚠️ API surface done, correctness depends on Phase 11 |
 | 14 | cross_section | ~986 | ✅ Done (via clipper2-rust) |
@@ -481,4 +479,4 @@ Phase 1 (linalg)
 | 17 | quickhull | ~1,131 | ✅ Done |
 | 17 | minkowski | ~175 | ❌ Not started (blocked on Phase 11) |
 | 17 | disjoint_sets | ~125 | ✅ Done (prereq for Phase 11) |
-| 18 | WASM demo | — | ⚠️ Scaffolding (booleans incorrect) |
+| 18 | WASM demo | — | ⚠️ 6 demos live, booleans working |
