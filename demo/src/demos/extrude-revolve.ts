@@ -3,6 +3,9 @@
 import { ThreeViewer } from '../three-viewer.ts';
 import { createSlider, createDropdown, createCheckbox, createReadout, updateReadout } from '../controls.ts';
 import { extrudeMesh, revolveMesh, type MeshData } from '../wasm.ts';
+import { loadSetting, saveSetting } from '../settings.ts';
+
+const DEMO = 'extrude-revolve';
 
 type Mode = 'extrude' | 'revolve';
 
@@ -24,11 +27,11 @@ export function init(container: HTMLElement): () => void {
   const controlsEl = document.getElementById('controls')!;
   const viewer = new ThreeViewer(viewerEl);
 
-  let mode: Mode = 'extrude';
-  let radius = 0.5;
-  let segments = 32;
-  let extrudeHeight = 2;
-  let revolveDegrees = 360;
+  let mode: Mode = loadSetting(DEMO, 'mode', 'extrude') as Mode;
+  let radius = loadSetting(DEMO, 'radius', 0.5);
+  let segments = loadSetting(DEMO, 'segments', 32);
+  let extrudeHeight = loadSetting(DEMO, 'extrudeHeight', 2);
+  let revolveDegrees = loadSetting(DEMO, 'revolveDegrees', 360);
 
   const readout = createReadout();
 
@@ -58,18 +61,18 @@ export function init(container: HTMLElement): () => void {
     controlsEl.appendChild(createDropdown('Mode', [
       { value: 'extrude', text: 'Extrude' },
       { value: 'revolve', text: 'Revolve' },
-    ], mode, (v) => { mode = v as Mode; buildControls(); update(); }));
+    ], mode, (v) => { saveSetting(DEMO, 'mode', v); mode = v as Mode; buildControls(); update(); }));
 
-    controlsEl.appendChild(createSlider('Radius ', 0.1, 2, radius, 0.1, v => { radius = v; update(); }));
-    controlsEl.appendChild(createSlider('Segments ', 4, 64, segments, 4, v => { segments = v; update(); }));
+    controlsEl.appendChild(createSlider('Radius ', 0.1, 2, radius, 0.1, v => { saveSetting(DEMO, 'radius', v); radius = v; update(); }));
+    controlsEl.appendChild(createSlider('Segments ', 4, 64, segments, 4, v => { saveSetting(DEMO, 'segments', v); segments = v; update(); }));
 
     if (mode === 'extrude') {
-      controlsEl.appendChild(createSlider('Height ', 0.1, 5, extrudeHeight, 0.1, v => { extrudeHeight = v; update(); }));
+      controlsEl.appendChild(createSlider('Height ', 0.1, 5, extrudeHeight, 0.1, v => { saveSetting(DEMO, 'extrudeHeight', v); extrudeHeight = v; update(); }));
     } else {
-      controlsEl.appendChild(createSlider('Degrees ', 30, 360, revolveDegrees, 30, v => { revolveDegrees = v; update(); }));
+      controlsEl.appendChild(createSlider('Degrees ', 30, 360, revolveDegrees, 30, v => { saveSetting(DEMO, 'revolveDegrees', v); revolveDegrees = v; update(); }));
     }
 
-    controlsEl.appendChild(createCheckbox('Wireframe', false, (v) => viewer.setWireframe(v)));
+    controlsEl.appendChild(createCheckbox('Wireframe', loadSetting(DEMO, 'wireframe', false), (v) => { saveSetting(DEMO, 'wireframe', v); viewer.setWireframe(v); }));
     controlsEl.appendChild(readout);
   }
 

@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Manifold for Rust — Interactive 3D Demos</title>
+  <link rel="icon" type="image/svg+xml" href="./public/favicon.svg">
   <link rel="stylesheet" href="./styles/main.css">
   <script type="importmap">
   {
@@ -30,14 +31,8 @@
         <span class="nav-icon">&#9670;</span> Home
       </a></li>
       <li class="nav-section">Geometry</li>
-      <li><a href="#/primitives" class="nav-link" data-route="primitives">
-        <span class="nav-icon">&#11200;</span> Primitives
-      </a></li>
       <li><a href="#/extrude-revolve" class="nav-link" data-route="extrude-revolve">
         <span class="nav-icon">&#10548;</span> Extrude &amp; Revolve
-      </a></li>
-      <li><a href="#/boolean-ops" class="nav-link" data-route="boolean-ops">
-        <span class="nav-icon">&#9649;</span> Boolean Operations
       </a></li>
       <li><a href="#/convex-hull" class="nav-link" data-route="convex-hull">
         <span class="nav-icon">&#9651;</span> Convex Hull
@@ -62,12 +57,17 @@
       <li><a href="#/properties" class="nav-link" data-route="properties">
         <span class="nav-icon">&#9881;</span> Properties
       </a></li>
+      <li class="nav-section">Tests</li>
+      <li><a href="#/test-gallery" class="nav-link" data-route="test-gallery">
+        <span class="nav-icon">&#9879;</span> Test Gallery
+      </a></li>
       <li class="nav-section">About</li>
       <li><a href="#/about" class="nav-link" data-route="about">
         <span class="nav-icon">&#128214;</span> About This Project
       </a></li>
     </ul>
     <div class="sidebar-footer">
+      <button id="capture-thumbs-btn" class="capture-btn" style="display:none">Update Thumbnails</button>
       <p><a href="https://github.com/larsbrubaker/manifold-rust" target="_blank">Source on GitHub</a></p>
       <p>Rust port of <a href="https://github.com/elalish/manifold" target="_blank">Manifold</a></p>
       <p class="license">Apache-2.0 License</p>

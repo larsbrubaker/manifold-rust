@@ -3,6 +3,9 @@
 import { ThreeViewer } from '../three-viewer.ts';
 import { createSlider, createDropdown, createCheckbox, createReadout, updateReadout } from '../controls.ts';
 import { refinedShapeMesh, type MeshData } from '../wasm.ts';
+import { loadSetting, saveSetting } from '../settings.ts';
+
+const DEMO = 'smooth-shapes';
 
 const SHAPES = [
   { value: '0', text: 'Tetrahedron' },
@@ -28,8 +31,8 @@ export function init(container: HTMLElement): () => void {
   const controlsEl = document.getElementById('controls')!;
   const viewer = new ThreeViewer(viewerEl);
 
-  let shape = 0;
-  let refineLevel = 1;
+  let shape = loadSetting(DEMO, 'shape', 0);
+  let refineLevel = loadSetting(DEMO, 'refineLevel', 1);
   const readout = createReadout();
 
   function showReadout(data: MeshData) {
@@ -48,9 +51,9 @@ export function init(container: HTMLElement): () => void {
     showReadout(data);
   }
 
-  controlsEl.appendChild(createDropdown('Base Shape', SHAPES, String(shape), v => { shape = parseInt(v); update(); }));
-  controlsEl.appendChild(createSlider('Refine Level ', 1, 5, refineLevel, 1, v => { refineLevel = v; update(); }));
-  controlsEl.appendChild(createCheckbox('Wireframe', false, v => viewer.setWireframe(v)));
+  controlsEl.appendChild(createDropdown('Base Shape', SHAPES, String(shape), v => { saveSetting(DEMO, 'shape', v); shape = parseInt(v); update(); }));
+  controlsEl.appendChild(createSlider('Refine Level ', 1, 5, refineLevel, 1, v => { saveSetting(DEMO, 'refineLevel', v); refineLevel = v; update(); }));
+  controlsEl.appendChild(createCheckbox('Wireframe', loadSetting(DEMO, 'wireframe', false), v => { saveSetting(DEMO, 'wireframe', v); viewer.setWireframe(v); }));
   controlsEl.appendChild(readout);
 
   update();

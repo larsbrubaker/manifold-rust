@@ -3,6 +3,9 @@
 import { ThreeViewer } from '../three-viewer.ts';
 import { createSlider, createDropdown, createCheckbox, createReadout, updateReadout } from '../controls.ts';
 import { revolvePartialMesh, type MeshData } from '../wasm.ts';
+import { loadSetting, saveSetting } from '../settings.ts';
+
+const DEMO = 'revolve-partial';
 
 const PROFILES = [
   { value: '0', text: 'Circle' },
@@ -27,9 +30,9 @@ export function init(container: HTMLElement): () => void {
   const controlsEl = document.getElementById('controls')!;
   const viewer = new ThreeViewer(viewerEl);
 
-  let profile = 0;
-  let segments = 32;
-  let degrees = 270;
+  let profile = loadSetting(DEMO, 'profile', 0);
+  let segments = loadSetting(DEMO, 'segments', 32);
+  let degrees = loadSetting(DEMO, 'degrees', 270);
 
   const readout = createReadout();
 
@@ -49,10 +52,10 @@ export function init(container: HTMLElement): () => void {
     showReadout(data);
   }
 
-  controlsEl.appendChild(createDropdown('Profile', PROFILES, String(profile), v => { profile = parseInt(v); update(); }));
-  controlsEl.appendChild(createSlider('Segments ', 4, 64, segments, 4, v => { segments = v; update(); }));
-  controlsEl.appendChild(createSlider('Degrees ', 10, 360, degrees, 10, v => { degrees = v; update(); }));
-  controlsEl.appendChild(createCheckbox('Wireframe', false, v => viewer.setWireframe(v)));
+  controlsEl.appendChild(createDropdown('Profile', PROFILES, String(profile), v => { saveSetting(DEMO, 'profile', v); profile = parseInt(v); update(); }));
+  controlsEl.appendChild(createSlider('Segments ', 4, 64, segments, 4, v => { saveSetting(DEMO, 'segments', v); segments = v; update(); }));
+  controlsEl.appendChild(createSlider('Degrees ', 10, 360, degrees, 10, v => { saveSetting(DEMO, 'degrees', v); degrees = v; update(); }));
+  controlsEl.appendChild(createCheckbox('Wireframe', loadSetting(DEMO, 'wireframe', false), v => { saveSetting(DEMO, 'wireframe', v); viewer.setWireframe(v); }));
   controlsEl.appendChild(readout);
 
   update();

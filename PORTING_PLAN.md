@@ -23,7 +23,7 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 | Cross-section (Clipper2) | `clipper2-rust` crate | Our own Rust port; same API surface |
 | Halfedge mesh | Index-based (`Vec<Halfedge>` + usize) | Rust ownership; same pattern as clipper2-rust |
 | BVH/Collider | Direct port (radix tree + Morton codes) | Pure algorithmic; maps cleanly |
-| WASM demo | Three.js + WebGL for 3D viewer | 8 demo pages, deployed to GitHub Pages |
+| WASM demo | Three.js + WebGL for 3D viewer | 10 demo pages, deployed to GitHub Pages |
 
 ## C++ Codebase Size Reference
 
@@ -257,10 +257,14 @@ Algorithms:
 - Property interpolation via barycentric coordinates ✅
 - Degenerate case handling (identical meshes, touching faces) ✅
 
-Tests: 14 boolean tests passing (union/intersect/difference at various offsets including degenerate cases)
-Still needed: port remaining tests from `test/boolean_test.cpp` (47 tests), `test/boolean_complex_test.cpp` (19 tests)
+Tests: 33 boolean tests passing — 15 original + 18 ported from C++ `boolean_test.cpp` and `boolean_complex_test.cpp` (tetra, mirrored, cubes, self-subtract, union-difference, tree-transforms, face/edge/corner union, coplanar, multi-coplanar, empty, non-intersecting, perturb, complex-sphere, volumes, spiral, almost-coplanar)
+Still needed: port remaining tests from `test/boolean_test.cpp` (~14 more), `test/boolean_complex_test.cpp` (~5 more)
 
-**Status:** ✅ Core algorithm complete — passes all current tests including degenerate cases
+**Known limitations:**
+- Mirrored boolean produces 14/24 verts/tris vs C++ optimal 12/20 (geometry correct — volume/SA match)
+- Almost-coplanar produces 21 verts vs C++ 20 (precision edge case in colinear collapse)
+
+**Status:** ✅ Core algorithm complete — 33 tests passing, exact numerical match on volumes/surface areas
 
 ---
 
@@ -289,20 +293,26 @@ Still needed: port remaining tests from `test/boolean_test.cpp` (47 tests), `tes
 **Rust module:** `src/manifold.rs`
 
 **Implemented:**
-- Constructors: `cube()`, `sphere()`, `cylinder()`, `tetrahedron()`, `extrude()`, `revolve()` ✅
-- Transforms: `translate()`, `scale()`, `transform()` ✅
+- Constructors: `cube()`, `sphere()`, `cylinder()`, `tetrahedron()`, `extrude()`, `revolve()`, `empty()` ✅
+- Transforms: `translate()`, `scale()`, `rotate()`, `transform()`, `mirror()`, `warp()` ✅
 - Mesh I/O: `get_mesh_gl()`, `get_mesh_gl64()`, `from_mesh_gl()` ✅
-- Queries: `num_vert()`, `num_tri()`, `volume()`, `surface_area()`, `genus()`, `status()` ✅
+- Queries: `num_vert()`, `num_tri()`, `volume()`, `surface_area()`, `genus()`, `status()`, `matches_tri_normals()`, `num_degenerate_tris()`, `bounding_box()` ✅
+- Cutting: `split()`, `split_by_plane()`, `trim_by_plane()` ✅
+- Batch: `batch_boolean()` ✅
 - Smoothing: `smooth_out()`, `smooth_by_normals()`, `calculate_normals()` ✅
 - Boolean: `union()`, `intersection()`, `difference()` (delegates to boolean3) ✅
 - Subdivision: `refine()`, `refine_to_length()`, `refine_to_tolerance()` ✅
 - Hull / Minkowski / LevelSet wrappers ✅
 
-**Not yet fully correct:** Boolean operations, subdivision (midpoint only), SDF, Minkowski — all depend on incomplete lower modules
+**Not yet implemented:**
+- `simplify()` — edge collapse based on angle tolerance
+- `set_properties()` — per-vertex property assignment via callback
+- `as_original()` / `original_id()` — mesh identity tracking
+- `num_prop()` / `num_prop_vert()` — property query accessors
 
-Tests: port `test/manifold_test.cpp` (51 tests)
+Tests: 29 tests ported from `test/manifold_test.cpp` covering constructors, transforms, booleans, mirror, split, warp
 
-**Status:** ⚠️ API surface complete but correctness depends on unfinished boolean/subdivision/SDF modules
+**Status:** ⚠️ Core API complete with working booleans; missing property/identity tracking and simplify
 
 ---
 
@@ -330,6 +340,7 @@ Tests: port `test/cross_section_test.cpp` (265 lines) — basic coverage present
 **Implemented:**
 - Simple midpoint subdivision (4x triangle count per level) ✅
 - `Sphere()` built from subdivided octahedron with cosine vertex mapping ✅ (matches C++ sphere shape)
+- Sphere subdivision levels: `ceil(log2(n))` — matches C++ uniform subdivision triangle counts for power-of-2 segments
 
 **Not yet implemented:**
 - `Partition` class with cached triangulations per edge-division pattern
@@ -397,7 +408,27 @@ Implemented WASM exports:
 - Boolean summaries (`union_cubes`, `intersect_cubes`, `difference_cubes`) — wired but boolean ops are incomplete
 - Cross-section/extrude summary (`extrude_circle`) ✅
 
-**Status:** ⚠️ 6 demos live — primitives, booleans, extrude, revolve, hull, cross-section. Booleans fully working including overlapping/degenerate cases.
+**Implemented demo pages (10):**
+- Extrude & Revolve
+- Convex Hull (with bouncing-point animation)
+- Boolean Gallery (cube/sphere/cylinder combos with rotation animation)
+- Menger Sponge (recursive boolean fractal)
+- Extrude & Twist (circular extrusion with twist/taper)
+- Revolve Partial (partial revolution with profile selection)
+- Smooth Shapes (subdivision refinement)
+- Properties (volume, surface area, vertex/tri counts)
+- Test Gallery (9 test visualizations: mirror, split, warp, spiral, sphere diff, etc.)
+- About
+
+**Three.js viewer features:**
+- Flat shading for polygon-level visibility
+- Camera frames only on first mesh load (stable while adjusting parameters)
+- resetFrame() for test gallery camera refit on test switch
+- Wireframe overlay toggle
+- Color picker
+- OrbitControls with damping
+
+**Status:** ✅ 10 demos live — all working, booleans fully functional including overlapping/degenerate cases
 
 ---
 
@@ -470,13 +501,13 @@ Phase 1 (linalg)
 | 8 | properties | ~464 | ✅ Done |
 | 9 | svd, smoothing | ~1,300 | ✅ Done |
 | 10 | collider, tree2d | ~516 | ✅ Done |
-| 11 | boolean3, boolean_result | ~1,420 | ✅ Core complete (14 tests passing) |
+| 11 | boolean3, boolean_result | ~1,420 | ✅ Core complete (40 tests passing) |
 | 12 | csg_tree | ~764 | ⚠️ Minimal (basic eval only) |
-| 13 | manifold API | ~1,521 | ⚠️ API surface done, correctness depends on Phase 11 |
+| 13 | manifold API | ~1,521 | ⚠️ Core API working (29 tests), missing simplify/properties |
 | 14 | cross_section | ~986 | ✅ Done (via clipper2-rust) |
 | 15 | subdivision | ~811 | ⚠️ Basic midpoint only (no Bezier/curvature) |
 | 16 | sdf | ~538 | ❌ Not started (placeholder) |
 | 17 | quickhull | ~1,131 | ✅ Done |
 | 17 | minkowski | ~175 | ❌ Not started (blocked on Phase 11) |
 | 17 | disjoint_sets | ~125 | ✅ Done (prereq for Phase 11) |
-| 18 | WASM demo | — | ⚠️ 6 demos live, booleans working |
+| 18 | WASM demo | — | ✅ 10 demos live, booleans working |

@@ -2,9 +2,12 @@
 
 import { ThreeViewer } from '../three-viewer.ts';
 import { createDropdown, createSlider, createCheckbox, createReadout, updateReadout } from '../controls.ts';
-import { cubeMesh, sphereMesh, cylinderMesh, tetrahedronMesh, extrudeMesh, type MeshData } from '../wasm.ts';
+import { cubeMesh, sphereMesh, cylinderMesh, tetrahedronMesh, extrudeMesh, spikyDodecahedronMesh, type MeshData } from '../wasm.ts';
+import { loadSetting, saveSetting } from '../settings.ts';
 
-type ShapeChoice = 'cube' | 'sphere' | 'cylinder' | 'tetrahedron' | 'extruded-circle';
+const DEMO = 'properties';
+
+type ShapeChoice = 'cube' | 'sphere' | 'cylinder' | 'tetrahedron' | 'extruded-circle' | 'spiky-dodecahedron';
 
 export function init(container: HTMLElement): () => void {
   container.innerHTML = `
@@ -24,8 +27,8 @@ export function init(container: HTMLElement): () => void {
   const controlsEl = document.getElementById('controls')!;
   const viewer = new ThreeViewer(viewerEl);
 
-  let shape: ShapeChoice = 'sphere';
-  let segments = 32;
+  let shape: ShapeChoice = loadSetting(DEMO, 'shape', 'sphere') as ShapeChoice;
+  let segments = loadSetting(DEMO, 'segments', 32);
 
   const readout = createReadout();
 
@@ -56,6 +59,9 @@ export function init(container: HTMLElement): () => void {
       case 'extruded-circle':
         data = extrudeMesh(1, segments, 2);
         break;
+      case 'spiky-dodecahedron':
+        data = spikyDodecahedronMesh(0.4);
+        break;
     }
     viewer.setMesh(data);
     viewer.setColor(0x44aa88);
@@ -71,13 +77,14 @@ export function init(container: HTMLElement): () => void {
       { value: 'cylinder', text: 'Cylinder (h=2, r=1)' },
       { value: 'tetrahedron', text: 'Tetrahedron' },
       { value: 'extruded-circle', text: 'Extruded Circle' },
-    ], shape, (v) => { shape = v as ShapeChoice; buildControls(); update(); }));
+      { value: 'spiky-dodecahedron', text: 'Spiky Dodecahedron' },
+    ], shape, (v) => { saveSetting(DEMO, 'shape', v); shape = v as ShapeChoice; buildControls(); update(); }));
 
-    if (shape !== 'cube' && shape !== 'tetrahedron') {
-      controlsEl.appendChild(createSlider('Segments ', 4, 128, segments, 4, v => { segments = v; update(); }));
+    if (shape !== 'cube' && shape !== 'tetrahedron' && shape !== 'spiky-dodecahedron') {
+      controlsEl.appendChild(createSlider('Segments ', 4, 128, segments, 4, v => { saveSetting(DEMO, 'segments', v); segments = v; update(); }));
     }
 
-    controlsEl.appendChild(createCheckbox('Wireframe', false, (v) => viewer.setWireframe(v)));
+    controlsEl.appendChild(createCheckbox('Wireframe', loadSetting(DEMO, 'wireframe', false), (v) => { saveSetting(DEMO, 'wireframe', v); viewer.setWireframe(v); }));
     controlsEl.appendChild(readout);
   }
 

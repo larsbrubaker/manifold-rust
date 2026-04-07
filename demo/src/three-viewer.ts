@@ -9,7 +9,8 @@ export class ThreeViewer {
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private controls: OrbitControls;
-  private solidMesh: THREE.Mesh | null = null;
+  private backMesh: THREE.Mesh | null = null;
+  private frontMesh: THREE.Mesh | null = null;
   private wireMesh: THREE.LineSegments | null = null;
   private showWireframe = false;
   private animId = 0;
@@ -17,7 +18,7 @@ export class ThreeViewer {
   private hasFramed = false;
 
   constructor(container: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true });
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
     this.renderer.setPixelRatio(window.devicePixelRatio);
     this.renderer.setClearColor(0xf0f0f0);
     container.appendChild(this.renderer.domElement);
@@ -78,15 +79,96 @@ export class ThreeViewer {
     geom.setAttribute('normal', new THREE.BufferAttribute(data.normals, 3));
     geom.setIndex(new THREE.BufferAttribute(data.indices, 1));
 
-    const mat = new THREE.MeshStandardMaterial({
-      color: 0x4488cc,
-      roughness: 0.5,
-      metalness: 0.1,
-      side: THREE.DoubleSide,
-      flatShading: true,
-    });
-    this.solidMesh = new THREE.Mesh(geom, mat);
-    this.scene.add(this.solidMesh);
+    const hasColors = data.has_colors && data.colors;
+    let isTransparent = false;
+
+    if (hasColors) {
+      // Colors are RGBA (4 floats per vertex), split into RGB + alpha
+      const colorsRGBA = data.colors!;
+      const vertCount = colorsRGBA.length / 4;
+      const rgb = new Float32Array(vertCount * 3);
+      for (let i = 0; i < vertCount; i++) {
+        rgb[i * 3] = colorsRGBA[i * 4];
+        rgb[i * 3 + 1] = colorsRGBA[i * 4 + 1];
+        rgb[i * 3 + 2] = colorsRGBA[i * 4 + 2];
+        if (colorsRGBA[i * 4 + 3] < 0.999) isTransparent = true;
+      }
+      geom.setAttribute('color', new THREE.BufferAttribute(rgb, 3));
+    }
+
+    if (isTransparent) {
+      // Per-vertex alpha via separate attribute + shader patch
+      const colorsRGBA = data.colors!;
+      const vertCount = colorsRGBA.length / 4;
+      const alphas = new Float32Array(vertCount);
+      for (let i = 0; i < vertCount; i++) {
+        alphas[i] = colorsRGBA[i * 4 + 3];
+      }
+      geom.setAttribute('aAlpha', new THREE.BufferAttribute(alphas, 1));
+
+      // Shader patch: pass per-vertex alpha through to fragment, multiply gl_FragColor.a
+      const patchAlpha = (mat: THREE.MeshStandardMaterial) => {
+        mat.onBeforeCompile = (shader) => {
+          // Vertex: declare attribute + varying, assign in main
+          shader.vertexShader = 'attribute float aAlpha;\nvarying float vAlpha;\n' + shader.vertexShader;
+          shader.vertexShader = shader.vertexShader.replace(
+            '#include <begin_vertex>',
+            '#include <begin_vertex>\nvAlpha = aAlpha;'
+          );
+          // Fragment: declare varying, multiply final alpha
+          shader.fragmentShader = 'varying float vAlpha;\n' + shader.fragmentShader;
+          shader.fragmentShader = shader.fragmentShader.replace(
+            '#include <dithering_fragment>',
+            '#include <dithering_fragment>\ngl_FragColor.a *= vAlpha;'
+          );
+        };
+      };
+
+      // Two-pass rendering for correct transparency:
+      // Pass 1 (renderOrder 0): back faces, no depth write — so back faces show behind transparent front faces
+      const backMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        roughness: 0.5,
+        metalness: 0.1,
+        side: THREE.BackSide,
+        flatShading: true,
+        transparent: true,
+        depthWrite: false,
+      });
+      patchAlpha(backMat);
+      this.backMesh = new THREE.Mesh(geom, backMat);
+      this.backMesh.renderOrder = 0;
+      this.scene.add(this.backMesh);
+
+      // Pass 2 (renderOrder 1): front faces, depth write on — opaque fragments block, transparent blend
+      const frontMat = new THREE.MeshStandardMaterial({
+        color: 0xffffff,
+        vertexColors: true,
+        roughness: 0.5,
+        metalness: 0.1,
+        side: THREE.FrontSide,
+        flatShading: true,
+        transparent: true,
+        depthWrite: true,
+      });
+      patchAlpha(frontMat);
+      this.frontMesh = new THREE.Mesh(geom, frontMat);
+      this.frontMesh.renderOrder = 1;
+      this.scene.add(this.frontMesh);
+    } else {
+      // Opaque single-pass
+      const mat = new THREE.MeshStandardMaterial({
+        color: hasColors ? 0xffffff : 0x4488cc,
+        vertexColors: !!hasColors,
+        roughness: 0.5,
+        metalness: 0.1,
+        side: THREE.DoubleSide,
+        flatShading: true,
+      });
+      this.frontMesh = new THREE.Mesh(geom, mat);
+      this.scene.add(this.frontMesh);
+    }
 
     if (this.showWireframe) {
       this.addWireframe(geom);
@@ -112,29 +194,44 @@ export class ThreeViewer {
       this.wireMesh.geometry.dispose();
       this.wireMesh = null;
     }
-    if (show && this.solidMesh) {
-      this.addWireframe(this.solidMesh.geometry);
+    const mesh = this.frontMesh || this.backMesh;
+    if (show && mesh) {
+      this.addWireframe(mesh.geometry);
     }
   }
 
   setColor(color: number) {
-    if (this.solidMesh) {
-      (this.solidMesh.material as THREE.MeshStandardMaterial).color.set(color);
+    if (this.frontMesh) {
+      const mat = this.frontMesh.material as THREE.MeshStandardMaterial;
+      if (!mat.vertexColors) {
+        mat.color.set(color);
+      }
     }
   }
 
   private clearMesh() {
-    if (this.solidMesh) {
-      this.scene.remove(this.solidMesh);
-      this.solidMesh.geometry.dispose();
-      (this.solidMesh.material as THREE.Material).dispose();
-      this.solidMesh = null;
+    const sharedGeom = this.backMesh && this.frontMesh && this.backMesh.geometry === this.frontMesh.geometry;
+    if (this.backMesh) {
+      this.scene.remove(this.backMesh);
+      if (!sharedGeom) this.backMesh.geometry.dispose();
+      (this.backMesh.material as THREE.Material).dispose();
+      this.backMesh = null;
+    }
+    if (this.frontMesh) {
+      this.scene.remove(this.frontMesh);
+      this.frontMesh.geometry.dispose();
+      (this.frontMesh.material as THREE.Material).dispose();
+      this.frontMesh = null;
     }
     if (this.wireMesh) {
       this.scene.remove(this.wireMesh);
       this.wireMesh.geometry.dispose();
       this.wireMesh = null;
     }
+  }
+
+  resetFrame() {
+    this.hasFramed = false;
   }
 
   private frameCamera(geom: THREE.BufferGeometry) {

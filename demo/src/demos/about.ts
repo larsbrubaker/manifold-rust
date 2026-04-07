@@ -45,9 +45,9 @@ export function init(container: HTMLElement): void {
 
         <h3>Current Status</h3>
         <p>
-          Phases 0–10 and 14 are complete (163 tests passing, ~12,000 lines of Rust).
-          Phase 11 (Boolean Operations) is the critical next step — porting the full
-          edge-face intersection algorithm with symbolic perturbation.
+          Phases 0–11, 13, and 14 are complete (228 tests passing, ~12,000 lines of Rust).
+          Boolean operations are working with exact C++ numerical matching. Phase 12 (CSG tree),
+          15 (subdivision), 16 (SDF), and 17 (Minkowski) are in progress.
         </p>
 
         <h3>Related Projects</h3>

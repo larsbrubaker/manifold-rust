@@ -19,6 +19,8 @@ export interface MeshData {
   positions: Float32Array;
   normals: Float32Array;
   indices: Uint32Array;
+  has_colors: boolean;
+  colors: Float32Array | null; // RGBA interleaved (4 floats per vertex)
   num_vert: number;
   num_tri: number;
   volume: number;
@@ -30,6 +32,8 @@ function toMeshData(raw: any): MeshData {
     positions: raw.positions,
     normals: raw.normals,
     indices: raw.indices,
+    has_colors: raw.has_colors ?? false,
+    colors: raw.has_colors ? raw.colors : null,
     num_vert: raw.num_vert,
     num_tri: raw.num_tri,
     volume: raw.volume,
@@ -55,6 +59,10 @@ export function cylinderMesh(height: number, radiusLow: number, radiusHigh: numb
 
 export function tetrahedronMesh(): MeshData {
   return toMeshData(getWasm().tetrahedron_mesh());
+}
+
+export function spikyDodecahedronMesh(spikeHeight: number): MeshData {
+  return toMeshData(getWasm().spiky_dodecahedron_mesh(spikeHeight));
 }
 
 export function extrudeMesh(radius: number, segments: number, height: number): MeshData {
@@ -89,6 +97,10 @@ export function booleanGalleryMesh(shapeA: number, shapeB: number, op: number, o
   return toMeshData(getWasm().boolean_gallery_mesh(shapeA, shapeB, op, ox, oy, oz));
 }
 
+export function booleanGalleryMeshRotated(shapeA: number, shapeB: number, op: number, ox: number, oy: number, oz: number, rx: number, ry: number, rz: number): MeshData {
+  return toMeshData(getWasm().boolean_gallery_mesh_rotated(shapeA, shapeB, op, ox, oy, oz, rx, ry, rz));
+}
+
 export function refinedShapeMesh(shape: number, refineLevel: number): MeshData {
   return toMeshData(getWasm().refined_shape_mesh(shape, refineLevel));
 }
@@ -99,4 +111,37 @@ export function extrudeTwistMesh(radius: number, segments: number, height: numbe
 
 export function revolvePartialMesh(profile: number, segments: number, degrees: number): MeshData {
   return toMeshData(getWasm().revolve_partial_mesh(profile, segments, degrees));
+}
+
+// Test Gallery visualizations
+export function testMirrorUnionMesh(): MeshData {
+  return toMeshData(getWasm().test_mirror_union_mesh());
+}
+
+export function testSplitByPlaneMesh(half: number): MeshData {
+  return toMeshData(getWasm().test_split_by_plane_mesh(half));
+}
+
+export function testVugMesh(): MeshData {
+  return toMeshData(getWasm().test_vug_mesh());
+}
+
+export function testWarpMesh(): MeshData {
+  return toMeshData(getWasm().test_warp_mesh());
+}
+
+export function testSpiralMesh(): MeshData {
+  return toMeshData(getWasm().test_spiral_mesh());
+}
+
+export function testSphereDiffMesh(): MeshData {
+  return toMeshData(getWasm().test_sphere_diff_mesh());
+}
+
+export function testCubesUnionMesh(): MeshData {
+  return toMeshData(getWasm().test_cubes_union_mesh());
+}
+
+export function testBatchSubtractMesh(): MeshData {
+  return toMeshData(getWasm().test_batch_subtract_mesh());
 }

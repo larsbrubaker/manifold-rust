@@ -3,6 +3,9 @@
 import { ThreeViewer } from '../three-viewer.ts';
 import { createSlider, createCheckbox, createReadout, updateReadout } from '../controls.ts';
 import { extrudeTwistMesh, type MeshData } from '../wasm.ts';
+import { loadSetting, saveSetting } from '../settings.ts';
+
+const DEMO = 'extrude-twist';
 
 export function init(container: HTMLElement): () => void {
   container.innerHTML = `
@@ -22,12 +25,12 @@ export function init(container: HTMLElement): () => void {
   const controlsEl = document.getElementById('controls')!;
   const viewer = new ThreeViewer(viewerEl);
 
-  let radius = 0.5;
-  let segments = 32;
-  let height = 2.0;
-  let twistDegrees = 180;
-  let nDivisions = 20;
-  let scaleTop = 0.5;
+  let radius = loadSetting(DEMO, 'radius', 0.5);
+  let segments = loadSetting(DEMO, 'segments', 32);
+  let height = loadSetting(DEMO, 'height', 2.0);
+  let twistDegrees = loadSetting(DEMO, 'twistDegrees', 180);
+  let nDivisions = loadSetting(DEMO, 'nDivisions', 20);
+  let scaleTop = loadSetting(DEMO, 'scaleTop', 0.5);
 
   const readout = createReadout();
 
@@ -47,13 +50,13 @@ export function init(container: HTMLElement): () => void {
     showReadout(data);
   }
 
-  controlsEl.appendChild(createSlider('Radius ', 0.1, 1.5, radius, 0.1, v => { radius = v; update(); }));
-  controlsEl.appendChild(createSlider('Segments ', 4, 64, segments, 4, v => { segments = v; update(); }));
-  controlsEl.appendChild(createSlider('Height ', 0.5, 5.0, height, 0.5, v => { height = v; update(); }));
-  controlsEl.appendChild(createSlider('Twist (deg) ', 0, 720, twistDegrees, 10, v => { twistDegrees = v; update(); }));
-  controlsEl.appendChild(createSlider('Divisions ', 1, 50, nDivisions, 1, v => { nDivisions = v; update(); }));
-  controlsEl.appendChild(createSlider('Scale Top ', 0.1, 2.0, scaleTop, 0.1, v => { scaleTop = v; update(); }));
-  controlsEl.appendChild(createCheckbox('Wireframe', false, v => viewer.setWireframe(v)));
+  controlsEl.appendChild(createSlider('Radius ', 0.1, 1.5, radius, 0.1, v => { saveSetting(DEMO, 'radius', v); radius = v; update(); }));
+  controlsEl.appendChild(createSlider('Segments ', 4, 64, segments, 4, v => { saveSetting(DEMO, 'segments', v); segments = v; update(); }));
+  controlsEl.appendChild(createSlider('Height ', 0.5, 5.0, height, 0.5, v => { saveSetting(DEMO, 'height', v); height = v; update(); }));
+  controlsEl.appendChild(createSlider('Twist (deg) ', 0, 720, twistDegrees, 10, v => { saveSetting(DEMO, 'twistDegrees', v); twistDegrees = v; update(); }));
+  controlsEl.appendChild(createSlider('Divisions ', 1, 50, nDivisions, 1, v => { saveSetting(DEMO, 'nDivisions', v); nDivisions = v; update(); }));
+  controlsEl.appendChild(createSlider('Scale Top ', 0.1, 2.0, scaleTop, 0.1, v => { saveSetting(DEMO, 'scaleTop', v); scaleTop = v; update(); }));
+  controlsEl.appendChild(createCheckbox('Wireframe', loadSetting(DEMO, 'wireframe', false), v => { saveSetting(DEMO, 'wireframe', v); viewer.setWireframe(v); }));
   controlsEl.appendChild(readout);
 
   update();

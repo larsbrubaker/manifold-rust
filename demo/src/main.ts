@@ -5,9 +5,7 @@ import { initWasm } from './wasm.ts';
 // Demo page modules (lazy loaded)
 type DemoInit = (container: HTMLElement) => (() => void) | void;
 const demoModules: Record<string, () => Promise<{ init: DemoInit }>> = {
-  'primitives': () => import('./demos/primitives.ts' as any),
   'extrude-revolve': () => import('./demos/extrude-revolve.ts' as any),
-  'boolean-ops': () => import('./demos/boolean-ops.ts' as any),
   'convex-hull': () => import('./demos/convex-hull.ts' as any),
   'boolean-gallery': () => import('./demos/boolean-gallery.ts' as any),
   'menger-sponge': () => import('./demos/menger-sponge.ts' as any),
@@ -15,6 +13,7 @@ const demoModules: Record<string, () => Promise<{ init: DemoInit }>> = {
   'revolve-partial': () => import('./demos/revolve-partial.ts' as any),
   'smooth-shapes': () => import('./demos/smooth-shapes.ts' as any),
   'properties': () => import('./demos/properties.ts' as any),
+  'test-gallery': () => import('./demos/test-gallery.ts' as any),
   'about': () => import('./demos/about.ts' as any),
 };
 
@@ -78,55 +77,50 @@ function renderHome(container: HTMLElement) {
         </p>
       </div>
       <div class="feature-grid">
-        <a href="#/primitives" class="feature-card">
-          <span class="card-icon">&#11200;</span>
-          <h3>Primitives</h3>
-          <p>Cubes, spheres, cylinders, and tetrahedra with interactive parameter controls and real-time 3D preview.</p>
-        </a>
         <a href="#/extrude-revolve" class="feature-card">
-          <span class="card-icon">&#10548;</span>
+          <div class="card-thumb" style="background-image:url(public/thumbs/extrude-revolve.jpg)"></div>
           <h3>Extrude &amp; Revolve</h3>
           <p>Turn 2D cross-sections into 3D solids by extrusion or revolution with adjustable parameters.</p>
         </a>
-        <a href="#/boolean-ops" class="feature-card">
-          <span class="card-icon">&#9649;</span>
-          <h3>Boolean Operations</h3>
-          <p>Union, intersection, and difference of 3D meshes. See how overlapping geometries combine.</p>
-        </a>
         <a href="#/convex-hull" class="feature-card">
-          <span class="card-icon">&#9651;</span>
+          <div class="card-thumb" style="background-image:url(public/thumbs/convex-hull.jpg)"></div>
           <h3>Convex Hull</h3>
           <p>Generate convex hulls from random 3D point clouds using the QuickHull algorithm.</p>
         </a>
         <a href="#/boolean-gallery" class="feature-card">
-          <span class="card-icon">&#9726;</span>
+          <div class="card-thumb" style="background-image:url(public/thumbs/boolean-gallery.jpg)"></div>
           <h3>Boolean Gallery</h3>
           <p>Mix and match cubes, spheres, and cylinders with union, intersection, and difference in 3D.</p>
         </a>
         <a href="#/menger-sponge" class="feature-card">
-          <span class="card-icon">&#10022;</span>
+          <div class="card-thumb" style="background-image:url(public/thumbs/menger-sponge.jpg)"></div>
           <h3>Menger Sponge</h3>
           <p>Recursive boolean subtraction creates this classic fractal at adjustable depth levels.</p>
         </a>
         <a href="#/extrude-twist" class="feature-card">
-          <span class="card-icon">&#10697;</span>
+          <div class="card-thumb" style="background-image:url(public/thumbs/extrude-twist.jpg)"></div>
           <h3>Extrude + Twist</h3>
           <p>Extrude circular profiles with twist rotation and taper scaling for spiral shapes.</p>
         </a>
         <a href="#/revolve-partial" class="feature-card">
-          <span class="card-icon">&#10227;</span>
+          <div class="card-thumb" style="background-image:url(public/thumbs/revolve-partial.jpg)"></div>
           <h3>Partial Revolve</h3>
           <p>Revolve 2D profiles by partial angles to create torus arcs, rings, and curved solids.</p>
         </a>
         <a href="#/smooth-shapes" class="feature-card">
-          <span class="card-icon">&#9674;</span>
+          <div class="card-thumb" style="background-image:url(public/thumbs/smooth-shapes.jpg)"></div>
           <h3>Subdivision</h3>
           <p>Subdivide base shapes with adjustable refinement levels for smoother, denser meshes.</p>
         </a>
         <a href="#/properties" class="feature-card">
-          <span class="card-icon">&#9881;</span>
+          <div class="card-thumb" style="background-image:url(public/thumbs/properties.jpg)"></div>
           <h3>Properties</h3>
           <p>Measure volume, surface area, vertex and triangle counts for any generated mesh.</p>
+        </a>
+        <a href="#/test-gallery" class="feature-card">
+          <div class="card-thumb" style="background-image:url(public/thumbs/test-gallery.jpg)"></div>
+          <h3>Test Gallery</h3>
+          <p>Browse WASM visualizations of key tests: mirror, split, warp, spiral, boolean precision, and more.</p>
         </a>
         <a href="#/about" class="feature-card" style="border-color: var(--accent); background: var(--accent-light);">
           <span class="card-icon">&#128214;</span>
@@ -153,7 +147,7 @@ function renderHome(container: HTMLElement) {
             <div class="stat-label">Lines of Rust</div>
           </div>
           <div class="stat">
-            <div class="stat-value">163</div>
+            <div class="stat-value">228</div>
             <div class="stat-label">Tests Passing</div>
           </div>
           <div class="stat">
@@ -207,3 +201,75 @@ async function navigate(route: string) {
 
 window.addEventListener('hashchange', () => navigate(getRoute()));
 navigate(getRoute());
+
+// ===================== Thumbnail Capture (localhost only) =====================
+
+const DEMO_ROUTES = [
+  'extrude-revolve', 'convex-hull', 'boolean-gallery', 'menger-sponge',
+  'extrude-twist', 'revolve-partial', 'smooth-shapes', 'properties', 'test-gallery',
+];
+
+function isLocalhost(): boolean {
+  return location.hostname === 'localhost' || location.hostname === '127.0.0.1';
+}
+
+async function captureAllThumbnails() {
+  const btn = document.getElementById('capture-thumbs-btn')!;
+  btn.classList.add('capturing');
+  btn.setAttribute('disabled', 'true');
+
+  const originalRoute = getRoute();
+  const results: string[] = [];
+
+  for (const route of DEMO_ROUTES) {
+    btn.textContent = `Capturing ${route}...`;
+    window.location.hash = `#/${route}`;
+    await navigate(route);
+
+    // Wait for WASM + Three.js to render
+    await new Promise(r => setTimeout(r, 2000));
+
+    const canvas = document.querySelector('#viewer-container canvas') as HTMLCanvasElement | null;
+    if (!canvas) {
+      results.push(`${route}: no canvas found`);
+      continue;
+    }
+
+    // Capture at 320x240
+    const tmp = document.createElement('canvas');
+    tmp.width = 320;
+    tmp.height = 240;
+    const ctx = tmp.getContext('2d')!;
+    ctx.drawImage(canvas, 0, 0, 320, 240);
+    const dataUrl = tmp.toDataURL('image/jpeg', 0.85);
+
+    try {
+      const resp = await fetch('/api/save-thumb', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: route, data: dataUrl }),
+      });
+      const json = await resp.json();
+      results.push(`${route}: ${json.size} bytes`);
+    } catch (e) {
+      results.push(`${route}: upload failed - ${e}`);
+    }
+  }
+
+  // Navigate back to original route
+  window.location.hash = originalRoute === 'home' ? '#/' : `#/${originalRoute}`;
+  await navigate(originalRoute);
+
+  btn.classList.remove('capturing');
+  btn.removeAttribute('disabled');
+  btn.textContent = 'Update Thumbnails';
+
+  console.log('Thumbnail capture complete:', results);
+}
+
+// Show button only on localhost
+if (isLocalhost()) {
+  const btn = document.getElementById('capture-thumbs-btn')!;
+  btn.style.display = 'block';
+  btn.addEventListener('click', captureAllThumbnails);
+}

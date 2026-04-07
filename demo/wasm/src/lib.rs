@@ -61,6 +61,7 @@ pub struct MeshData {
     positions: Vec<f32>,
     normals: Vec<f32>,
     indices: Vec<u32>,
+    colors: Option<Vec<f32>>,
     num_vert: u32,
     num_tri: u32,
     volume: f64,
@@ -82,6 +83,16 @@ impl MeshData {
     #[wasm_bindgen(getter)]
     pub fn indices(&self) -> Uint32Array {
         Uint32Array::from(&self.indices[..])
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn has_colors(&self) -> bool {
+        self.colors.is_some()
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn colors(&self) -> Option<Float32Array> {
+        self.colors.as_ref().map(|c| Float32Array::from(&c[..]))
     }
 
     #[wasm_bindgen(getter)]
@@ -158,10 +169,37 @@ fn mesh_data_from(m: &Manifold) -> MeshData {
         }
     }
 
+    // Extract per-vertex colors from properties [3..7] if present (RGBA)
+    let colors = if num_prop >= 7 {
+        let mut cols = Vec::with_capacity(vert_count * 4);
+        for i in 0..vert_count {
+            let base = i * num_prop;
+            cols.push(gl.vert_properties[base + 3]); // R
+            cols.push(gl.vert_properties[base + 4]); // G
+            cols.push(gl.vert_properties[base + 5]); // B
+            cols.push(gl.vert_properties[base + 6]); // A
+        }
+        Some(cols)
+    } else if num_prop >= 6 {
+        // RGB only, add alpha=1.0
+        let mut cols = Vec::with_capacity(vert_count * 4);
+        for i in 0..vert_count {
+            let base = i * num_prop;
+            cols.push(gl.vert_properties[base + 3]);
+            cols.push(gl.vert_properties[base + 4]);
+            cols.push(gl.vert_properties[base + 5]);
+            cols.push(1.0);
+        }
+        Some(cols)
+    } else {
+        None
+    };
+
     MeshData {
         positions,
         normals,
         indices: gl.tri_verts,
+        colors,
         num_vert: vert_count as u32,
         num_tri: tri_count as u32,
         volume: m.volume(),
@@ -203,6 +241,12 @@ pub fn cylinder_mesh(height: f64, radius_low: f64, radius_high: f64, circular_se
 #[wasm_bindgen]
 pub fn tetrahedron_mesh() -> MeshData {
     let m = Manifold::tetrahedron();
+    mesh_data_from(&m)
+}
+
+#[wasm_bindgen]
+pub fn spiky_dodecahedron_mesh(spike_height: f64) -> MeshData {
+    let m = make_spiky_dodecahedron(spike_height);
     mesh_data_from(&m)
 }
 
@@ -317,21 +361,113 @@ pub fn menger_sponge_mesh(depth: i32) -> MeshData {
 // Boolean Gallery — sphere-sphere, sphere-cube, cylinder-sphere
 // ---------------------------------------------------------------------------
 
+fn make_spiky_dodecahedron(spike_height: f64) -> Manifold {
+    use manifold_rust::types::MeshGL;
+
+    // Golden ratio
+    let phi: f64 = (1.0 + 5.0_f64.sqrt()) / 2.0;
+    let inv_phi = 1.0 / phi;
+
+    // 20 vertices of a regular dodecahedron (scaled to ~unit size)
+    let scale = 0.5;
+    let raw_verts: [(f64, f64, f64); 20] = [
+        // Cube vertices (±1, ±1, ±1)
+        ( 1.0,  1.0,  1.0), ( 1.0,  1.0, -1.0), ( 1.0, -1.0,  1.0), ( 1.0, -1.0, -1.0),
+        (-1.0,  1.0,  1.0), (-1.0,  1.0, -1.0), (-1.0, -1.0,  1.0), (-1.0, -1.0, -1.0),
+        // (0, ±1/φ, ±φ)
+        (0.0,  inv_phi,  phi), (0.0,  inv_phi, -phi), (0.0, -inv_phi,  phi), (0.0, -inv_phi, -phi),
+        // (±1/φ, ±φ, 0)
+        ( inv_phi,  phi, 0.0), (-inv_phi,  phi, 0.0), ( inv_phi, -phi, 0.0), (-inv_phi, -phi, 0.0),
+        // (±φ, 0, ±1/φ)
+        ( phi, 0.0,  inv_phi), ( phi, 0.0, -inv_phi), (-phi, 0.0,  inv_phi), (-phi, 0.0, -inv_phi),
+    ];
+
+    // 12 pentagonal faces (vertex indices, counterclockwise when viewed from outside)
+    let faces: [[usize; 5]; 12] = [
+        [0, 8, 10, 2, 16],   [0, 16, 17, 1, 12],  [0, 12, 13, 4, 8],
+        [1, 17, 3, 11, 9],   [1, 9, 5, 13, 12],   [2, 10, 6, 15, 14],
+        [2, 14, 3, 17, 16],  [4, 13, 5, 19, 18],   [4, 18, 6, 10, 8],
+        [5, 9, 11, 7, 19],   [6, 18, 19, 7, 15],   [3, 14, 15, 7, 11],
+    ];
+
+    let verts: Vec<(f64, f64, f64)> = raw_verts.iter().map(|&(x, y, z)| (x * scale, y * scale, z * scale)).collect();
+
+    // Build mesh: 20 original verts + 12 spike verts = 32 verts, 60 triangles
+    let mut positions: Vec<f32> = Vec::with_capacity(32 * 3);
+    let mut tri_verts: Vec<u32> = Vec::with_capacity(60 * 3);
+
+    // Add original vertices
+    for &(x, y, z) in &verts {
+        positions.extend([x as f32, y as f32, z as f32]);
+    }
+
+    // For each face, compute center, push spike vertex, create 5 triangles
+    for face in &faces {
+        let cx: f64 = face.iter().map(|&i| verts[i].0).sum::<f64>() / 5.0;
+        let cy: f64 = face.iter().map(|&i| verts[i].1).sum::<f64>() / 5.0;
+        let cz: f64 = face.iter().map(|&i| verts[i].2).sum::<f64>() / 5.0;
+        let len = (cx * cx + cy * cy + cz * cz).sqrt();
+        // Spike outward along face normal (center direction from origin)
+        let nx = cx / len;
+        let ny = cy / len;
+        let nz = cz / len;
+        let spike_idx = (positions.len() / 3) as u32;
+        positions.extend([
+            (cx + nx * spike_height) as f32,
+            (cy + ny * spike_height) as f32,
+            (cz + nz * spike_height) as f32,
+        ]);
+        // 5 triangles fanning from spike to face edges
+        for j in 0..5 {
+            let a = face[j] as u32;
+            let b = face[(j + 1) % 5] as u32;
+            tri_verts.extend([spike_idx, a, b]);
+        }
+    }
+
+    let mut mesh = MeshGL::default();
+    mesh.num_prop = 3;
+    mesh.vert_properties = positions;
+    mesh.tri_verts = tri_verts;
+    Manifold::from_mesh_gl(&mesh)
+}
+
+fn make_shape(id: i32) -> Manifold {
+    match id {
+        0 => Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true),
+        1 => Manifold::sphere(0.6, 32),
+        2 => Manifold::cylinder(1.0, 0.5, 0.5, 32).translate(Vec3::new(0.0, 0.0, -0.5)),
+        3 => make_spiky_dodecahedron(0.4),
+        _ => Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true),
+    }
+}
+
+fn color_shape(m: &Manifold, r: f64, g: f64, b: f64, a: f64) -> Manifold {
+    // Internal num_prop is extra properties beyond xyz.
+    // 4 extra = RGBA color channels, stored at property indices 0,1,2,3.
+    // get_mesh_gl prepends xyz, so output has 7 props: xyz + rgba.
+    m.set_properties(4, move |new_prop, _pos, _old| {
+        new_prop[0] = r;
+        new_prop[1] = g;
+        new_prop[2] = b;
+        new_prop[3] = a;
+    })
+}
+
 #[wasm_bindgen]
 pub fn boolean_gallery_mesh(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64) -> MeshData {
-    let a = match shape_a {
-        0 => Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true),
-        1 => Manifold::sphere(0.6, 32),
-        2 => Manifold::cylinder(1.0, 0.5, 0.5, 32).translate(Vec3::new(0.0, 0.0, -0.5)),
-        _ => Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true),
-    };
-    let b = match shape_b {
-        0 => Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true),
-        1 => Manifold::sphere(0.6, 32),
-        2 => Manifold::cylinder(1.0, 0.5, 0.5, 32).translate(Vec3::new(0.0, 0.0, -0.5)),
-        _ => Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true),
-    };
-    let b = b.translate(Vec3::new(offset_x, offset_y, offset_z));
+    boolean_gallery_mesh_rotated(shape_a, shape_b, op, offset_x, offset_y, offset_z, 0.0, 0.0, 0.0)
+}
+
+#[wasm_bindgen]
+pub fn boolean_gallery_mesh_rotated(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64) -> MeshData {
+    let a = make_shape(shape_a);
+    let b = make_shape(shape_b);
+    // Assign distinct colors: shape A = blue (opaque), shape B = off-red (translucent)
+    let a = color_shape(&a, 0.27, 0.53, 0.80, 1.0);   // #4488cc blue, fully opaque
+    let b = color_shape(&b, 0.85, 0.25, 0.25, 0.6);   // off-red, alpha 0.6
+    // Rotate shape B about its offset center, then translate
+    let b = b.rotate(rot_x, rot_y, rot_z).translate(Vec3::new(offset_x, offset_y, offset_z));
     let result = match op {
         0 => a.union(&b),
         1 => a.intersection(&b),
@@ -383,4 +519,103 @@ pub fn revolve_partial_mesh(profile: i32, segments: i32, degrees: f64) -> MeshDa
     let cs = cs.translate(Vec2::new(0.7, 0.0));
     let m = Manifold::revolve(&cs.to_polygons(), segments, degrees);
     mesh_data_from(&m)
+}
+
+// ---------------------------------------------------------------------------
+// Test Gallery — visualizations of key test cases
+// ---------------------------------------------------------------------------
+
+/// Mirror Union: cube A at origin + cube B translated, then mirrored across (1,1,0) plane
+#[wasm_bindgen]
+pub fn test_mirror_union_mesh() -> MeshData {
+    let a = Manifold::cube(Vec3::new(5.0, 5.0, 5.0), true);
+    let b = Manifold::cube(Vec3::new(5.0, 5.0, 5.0), true)
+        .translate(Vec3::new(2.5, 2.5, 2.5));
+    let b_mirrored = b.mirror(Vec3::new(1.0, 1.0, 0.0));
+    let result = a.union(&b).union(&b_mirrored);
+    mesh_data_from(&result)
+}
+
+/// Split by Plane: cube rotated and split at z=1
+#[wasm_bindgen]
+pub fn test_split_by_plane_mesh(half: i32) -> MeshData {
+    let cube = Manifold::cube(Vec3::new(2.0, 2.0, 2.0), true)
+        .translate(Vec3::new(0.0, 1.0, 0.0))
+        .rotate(90.0, 0.0, 0.0);
+    let (top, bottom) = cube.split_by_plane(Vec3::new(0.0, 0.0, 1.0), 1.0);
+    if half == 0 { mesh_data_from(&top) } else { mesh_data_from(&bottom) }
+}
+
+/// Vug (cavity): outer cube with inner cube subtracted
+#[wasm_bindgen]
+pub fn test_vug_mesh() -> MeshData {
+    let outer = Manifold::cube(Vec3::new(4.0, 4.0, 4.0), true);
+    let inner = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false);
+    let vug = outer.difference(&inner);
+    // Split to show the cavity inside
+    let (top, _) = vug.split_by_plane(Vec3::new(0.0, 0.0, 1.0), -0.5);
+    mesh_data_from(&top)
+}
+
+/// Warp: extruded square with parabolic displacement x += z^2
+#[wasm_bindgen]
+pub fn test_warp_mesh() -> MeshData {
+    let square = CrossSection::square(1.0);
+    let m = Manifold::extrude(&square.to_polygons(), 2.0, 10, 0.0, Vec2::new(1.0, 1.0))
+        .warp(|v| { v.x += v.z * v.z; });
+    mesh_data_from(&m)
+}
+
+/// Spiral: recursive spiral of cubes
+#[wasm_bindgen]
+pub fn test_spiral_mesh() -> MeshData {
+    fn spiral(rec: i32, r: f64, add: f64, d: f64) -> Manifold {
+        let rot = 360.0 / (std::f64::consts::PI * r * 2.0) * d;
+        let r_next = r + add / 360.0 * rot;
+        let cube = Manifold::cube(Vec3::splat(1.0), true)
+            .translate(Vec3::new(0.0, r, 0.0));
+        if rec > 0 {
+            spiral(rec - 1, r_next, add, d).rotate(0.0, 0.0, rot).union(&cube)
+        } else {
+            cube
+        }
+    }
+    let result = spiral(10, 25.0, 2.0, 2.0)
+        .scale(Vec3::splat(0.1)); // Scale down from ~50 units to ~5 for viewer
+    mesh_data_from(&result)
+}
+
+/// Sphere Difference: sphere with spherical cap removed
+#[wasm_bindgen]
+pub fn test_sphere_diff_mesh() -> MeshData {
+    let s1 = Manifold::sphere(1.0, 32);
+    let s2 = Manifold::sphere(1.0, 32).translate(Vec3::new(0.5, 0.5, 0.5));
+    let result = s1.difference(&s2);
+    mesh_data_from(&result)
+}
+
+/// Overlapping Cubes: three cubes at different offsets, all unioned
+#[wasm_bindgen]
+pub fn test_cubes_union_mesh() -> MeshData {
+    let a = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true);
+    let b = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true)
+        .translate(Vec3::new(0.3, 0.3, 0.0));
+    let c = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true)
+        .translate(Vec3::new(-0.3, 0.3, 0.3));
+    let result = a.union(&b).union(&c);
+    mesh_data_from(&result)
+}
+
+/// Batch Boolean: flat slab with three cylinder holes punched through
+#[wasm_bindgen]
+pub fn test_batch_subtract_mesh() -> MeshData {
+    let slab = Manifold::cube(Vec3::new(10.0, 10.0, 1.0), true);
+    let c1 = Manifold::cylinder(2.0, 0.5, 0.5, 32)
+        .translate(Vec3::new(-3.0, -3.0, 0.0));
+    let c2 = Manifold::cylinder(2.0, 0.5, 0.5, 32)
+        .translate(Vec3::new(3.0, 3.0, 0.0));
+    let c3 = Manifold::cylinder(2.0, 0.5, 0.5, 32)
+        .translate(Vec3::new(0.0, 0.0, 0.0));
+    let result = slab.difference(&c1).difference(&c2).difference(&c3);
+    mesh_data_from(&result)
 }
