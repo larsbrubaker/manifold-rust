@@ -225,15 +225,80 @@ impl Manifold {
 
     pub fn num_vert(&self) -> usize { self.imp.num_vert() }
     pub fn num_tri(&self) -> usize { self.imp.num_tri() }
+    pub fn num_edge(&self) -> usize { self.imp.num_edge() }
+    pub fn num_prop(&self) -> usize { self.imp.num_prop }
+    pub fn num_prop_vert(&self) -> usize { self.imp.num_prop_vert() }
     pub fn is_empty(&self) -> bool { self.imp.is_empty() }
     pub fn status(&self) -> Error { self.imp.status }
     pub fn volume(&self) -> f64 { self.imp.get_property(crate::properties::Property::Volume).abs() }
     pub fn surface_area(&self) -> f64 { self.imp.get_property(crate::properties::Property::SurfaceArea) }
     pub fn matches_tri_normals(&self) -> bool { self.imp.matches_tri_normals() }
     pub fn num_degenerate_tris(&self) -> i32 { self.imp.num_degenerate_tris() }
+    pub fn get_tolerance(&self) -> f64 { self.imp.epsilon }
+
+    /// Port of C++ Manifold::Genus()
     pub fn genus(&self) -> i32 {
         let chi = self.num_vert() as i32 - self.imp.num_edge() as i32 + self.num_tri() as i32;
         1 - chi / 2
+    }
+
+    /// Port of C++ Manifold::OriginalID()
+    pub fn original_id(&self) -> i32 {
+        self.imp.mesh_relation.original_id
+    }
+
+    /// Port of C++ Manifold::AsOriginal()
+    /// Removes all mesh relations and recreates as an original mesh.
+    pub fn as_original(&self) -> Self {
+        let mut out = self.imp.clone();
+        out.initialize_original();
+        out.set_normals_and_coplanar();
+        Self::from_impl(out)
+    }
+
+    /// Port of C++ Manifold::ReserveIDs()
+    pub fn reserve_ids(n: u32) -> u32 {
+        crate::impl_mesh::reserve_ids(n)
+    }
+
+    /// Port of C++ Manifold::SetTolerance()
+    pub fn set_tolerance(&self, tolerance: f64) -> Self {
+        let mut out = self.imp.clone();
+        if tolerance >= out.epsilon {
+            out.epsilon = tolerance;
+            // When tolerance increases, simplify the mesh
+            crate::edge_op::simplify_topology(&mut out, 0);
+            out.sort_geometry();
+            out.set_normals_and_coplanar();
+        }
+        Self::from_impl(out)
+    }
+
+    /// Port of C++ Manifold::Simplify()
+    pub fn simplify(&self, tolerance: f64) -> Self {
+        let mut out = self.imp.clone();
+        let old_epsilon = out.epsilon;
+        if tolerance > 0.0 {
+            out.epsilon = tolerance;
+        }
+        crate::edge_op::simplify_topology(&mut out, 0);
+        out.sort_geometry();
+        out.set_normals_and_coplanar();
+        out.epsilon = old_epsilon; // restore original tolerance
+        Self::from_impl(out)
+    }
+
+    /// Port of C++ Manifold::WarpBatch()
+    pub fn warp_batch<F: Fn(&mut [Vec3])>(&self, warp_fn: F) -> Self {
+        if self.is_empty() {
+            return self.clone();
+        }
+        let mut out = self.imp.clone();
+        warp_fn(&mut out.vert_pos);
+        out.calculate_bbox();
+        out.sort_geometry();
+        out.set_normals_and_coplanar();
+        Self::from_impl(out)
     }
 
     pub fn translate(&self, v: Vec3) -> Self {
@@ -424,32 +489,12 @@ impl Manifold {
         Self::from_impl(out)
     }
 
-    pub fn calculate_normals(&self, normal_idx: usize) -> Self {
+    /// Port of C++ Manifold::CalculateNormals()
+    /// Fills in vertex properties for normals. Edges sharper than
+    /// min_sharp_angle (degrees) get separate normals on each side.
+    pub fn calculate_normals(&self, normal_idx: usize, min_sharp_angle: f64) -> Self {
         let mut out = self.imp.clone();
-        let prop_rows = out.num_prop_vert();
-        if out.num_prop < normal_idx + 3 {
-            let mut new_props = vec![0.0; prop_rows * (normal_idx + 3)];
-            for row in 0..prop_rows {
-                for p in 0..out.num_prop {
-                    new_props[row * (normal_idx + 3) + p] = out.properties[row * out.num_prop + p];
-                }
-            }
-            out.properties = new_props;
-            out.num_prop = normal_idx + 3;
-        }
-
-        let mut prop_seen = vec![false; prop_rows];
-        for edge in &out.halfedge {
-            let prop = edge.prop_vert as usize;
-            if !prop_seen[prop] {
-                prop_seen[prop] = true;
-                let normal = out.vert_normal[edge.start_vert as usize];
-                let base = prop * out.num_prop + normal_idx;
-                out.properties[base] = normal.x;
-                out.properties[base + 1] = normal.y;
-                out.properties[base + 2] = normal.z;
-            }
-        }
+        out.set_normals(normal_idx as i32, min_sharp_angle);
         Self::from_impl(out)
     }
 
@@ -466,24 +511,79 @@ impl Manifold {
         Self::from_impl(out)
     }
 
+    /// Port of C++ Manifold::Refine(int n)
+    /// Splits every edge into n pieces, sub-triangulating each face.
     pub fn refine(&self, n: i32) -> Self {
-        if n <= 0 {
+        if n <= 1 || self.imp.is_empty() {
             return self.clone();
         }
-        Self::from_impl(subdivision::subdivide_impl(&self.imp, n as usize))
+        let mut out = self.imp.clone();
+        let _vert_bary = out.subdivide(&|_vec, _t0, _t1| n - 1, false);
+        out.calculate_bbox();
+        out.set_epsilon(-1.0, false);
+        out.sort_geometry();
+        out.set_normals_and_coplanar();
+        Self::from_impl(out)
     }
 
+    /// Port of C++ Manifold::RefineToLength(double length)
     pub fn refine_to_length(&self, length: f64) -> Self {
         if length <= 0.0 || self.imp.is_empty() {
             return self.clone();
         }
-        let scale = self.imp.bbox.size().x.max(self.imp.bbox.size().y).max(self.imp.bbox.size().z);
-        let levels = ((scale / length).max(1.0).log2().ceil() as usize).min(5);
-        Self::from_impl(subdivision::subdivide_impl(&self.imp, levels))
+        let mut out = self.imp.clone();
+        let _vert_bary = out.subdivide(
+            &|edge_vec, _t0, _t1| {
+                let edge_len = (edge_vec.x * edge_vec.x + edge_vec.y * edge_vec.y
+                    + edge_vec.z * edge_vec.z)
+                    .sqrt();
+                ((edge_len / length).ceil() as i32 - 1).max(0)
+            },
+            true,
+        );
+        out.calculate_bbox();
+        out.set_epsilon(-1.0, false);
+        out.sort_geometry();
+        out.set_normals_and_coplanar();
+        Self::from_impl(out)
     }
 
+    /// Port of C++ Manifold::RefineToTolerance(double tolerance)
     pub fn refine_to_tolerance(&self, tolerance: f64) -> Self {
-        self.refine_to_length(tolerance * 2.0)
+        if tolerance <= 0.0 || self.imp.is_empty() {
+            return self.clone();
+        }
+        // Similar to C++ — uses tolerance with tangent-based divisions
+        let mut out = self.imp.clone();
+        let _vert_bary = out.subdivide(
+            &|edge_vec, tangent0, tangent1| {
+                use crate::linalg::Vec4;
+                let edge_len = (edge_vec.x * edge_vec.x + edge_vec.y * edge_vec.y
+                    + edge_vec.z * edge_vec.z)
+                    .sqrt();
+                if edge_len == 0.0 {
+                    return 0;
+                }
+                // Approximate curvature from tangent deviation
+                let t0_len = (tangent0.x * tangent0.x + tangent0.y * tangent0.y
+                    + tangent0.z * tangent0.z)
+                    .sqrt();
+                let t1_len = (tangent1.x * tangent1.x + tangent1.y * tangent1.y
+                    + tangent1.z * tangent1.z)
+                    .sqrt();
+                if t0_len == 0.0 && t1_len == 0.0 {
+                    return 0; // flat edge
+                }
+                let max_sag = (t0_len + t1_len) * 0.5;
+                ((max_sag / tolerance).sqrt().ceil() as i32 - 1).max(0)
+            },
+            true,
+        );
+        out.calculate_bbox();
+        out.set_epsilon(-1.0, false);
+        out.sort_geometry();
+        out.set_normals_and_coplanar();
+        Self::from_impl(out)
     }
 
     pub fn compose(parts: &[Self]) -> Self {
@@ -496,11 +596,16 @@ impl Manifold {
     }
 
     pub fn level_set<F: Fn(Vec3) -> f64>(sdf_fn: F, bounds: crate::types::Box, edge_length: f64) -> Self {
-        Self::from_impl(sdf::level_set(sdf_fn, bounds, edge_length))
+        Self::from_impl(sdf::level_set(sdf_fn, bounds, edge_length, 0.0, -1.0))
     }
 
     pub fn hull(points: &[Vec3]) -> Self {
         Self::from_impl(quickhull::convex_hull(points))
+    }
+
+    /// Compute the convex hull of this manifold's vertices.
+    pub fn convex_hull(&self) -> Self {
+        Self::from_impl(quickhull::convex_hull(&self.imp.vert_pos))
     }
 
     pub fn minkowski_sum(&self, other: &Self) -> Self {
@@ -565,7 +670,8 @@ mod tests {
     #[test]
     fn test_refine_increases_triangles() {
         let m = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false);
-        let r = m.refine(1);
+        // n=2 means split each edge into 2 pieces → 4× triangles
+        let r = m.refine(2);
         assert_eq!(r.num_tri(), m.num_tri() * 4);
     }
 
@@ -1110,5 +1216,791 @@ mod tests {
                 "Union failed at rotation angle {angle}"
             );
         }
+    }
+
+    #[test]
+    fn test_set_properties_roundtrip() {
+        // Verify set_properties correctly assigns per-vertex properties
+        let cube = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true);
+        let colored = cube.set_properties(3, |props, _pos, _old| {
+            props[0] = 1.0; // R
+            props[1] = 0.0; // G
+            props[2] = 0.0; // B
+        });
+        let gl = colored.get_mesh_gl(0);
+        let num_prop = gl.num_prop as usize;
+        assert_eq!(num_prop, 6); // 3 xyz + 3 RGB
+        let vert_count = gl.vert_properties.len() / num_prop;
+        assert!(vert_count > 0);
+        // All vertices should have R=1, G=0, B=0
+        for i in 0..vert_count {
+            let r = gl.vert_properties[i * num_prop + 3];
+            let g = gl.vert_properties[i * num_prop + 4];
+            let b = gl.vert_properties[i * num_prop + 5];
+            assert!((r - 1.0).abs() < 1e-6, "Vertex {i} R={r}, expected 1.0");
+            assert!(g.abs() < 1e-6, "Vertex {i} G={g}, expected 0.0");
+            assert!(b.abs() < 1e-6, "Vertex {i} B={b}, expected 0.0");
+        }
+    }
+
+    #[test]
+    fn test_colored_boolean_preserves_properties() {
+        // Two cubes with different colors, boolean should preserve both
+        let a = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true)
+            .set_properties(3, |p, _, _| { p[0] = 0.0; p[1] = 0.0; p[2] = 1.0; }); // blue
+        let b = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true)
+            .set_properties(3, |p, _, _| { p[0] = 1.0; p[1] = 0.0; p[2] = 0.0; }) // red
+            .translate(Vec3::new(0.5, 0.0, 0.0));
+        let result = a.union(&b);
+        assert!(result.num_tri() > 0);
+        let gl = result.get_mesh_gl(0);
+        let num_prop = gl.num_prop as usize;
+        assert_eq!(num_prop, 6); // xyz + RGB preserved
+        // Should have both blue and red vertices
+        let vert_count = gl.vert_properties.len() / num_prop;
+        let mut has_blue = false;
+        let mut has_red = false;
+        for i in 0..vert_count {
+            let r = gl.vert_properties[i * num_prop + 3];
+            let b_val = gl.vert_properties[i * num_prop + 5];
+            if b_val > 0.5 { has_blue = true; }
+            if r > 0.5 { has_red = true; }
+        }
+        assert!(has_blue, "Result should have blue vertices from shape A");
+        assert!(has_red, "Result should have red vertices from shape B");
+    }
+
+    #[test]
+    fn test_rotate_boolean_with_properties_all_angles() {
+        // Simulate what the Boolean Gallery animation does with colored shapes.
+        // This tests the combination of set_properties + rotate + boolean at many angles.
+        let a = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true)
+            .set_properties(4, |p, _, _| { p[0] = 0.27; p[1] = 0.53; p[2] = 0.80; p[3] = 1.0; });
+        let b_base = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true)
+            .set_properties(4, |p, _, _| { p[0] = 0.85; p[1] = 0.25; p[2] = 0.25; p[3] = 0.6; });
+
+        for deg in (0..360).step_by(5) {
+            let angle = deg as f64;
+            let b = b_base
+                .rotate(angle * 0.7 / 1.5, angle, angle * 0.3 / 1.5)
+                .translate(Vec3::new(0.3, 0.0, 0.0));
+            let result = a.union(&b);
+            assert!(
+                result.num_tri() > 0,
+                "Colored union failed at rotation angle {angle}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_spiky_dodecahedron_boolean_all_angles() {
+        // Test that spiky dodecahedron booleans work at all angles without hanging.
+        // This is the exact scenario that the Boolean Gallery animation runs.
+        use crate::types::MeshGL;
+
+        fn make_spiky_dodecahedron(spike_height: f64) -> Manifold {
+            let phi: f64 = (1.0 + 5.0_f64.sqrt()) / 2.0;
+            let inv_phi = 1.0 / phi;
+            let scale = 0.5;
+            let raw_verts: [(f64, f64, f64); 20] = [
+                ( 1.0,  1.0,  1.0), ( 1.0,  1.0, -1.0), ( 1.0, -1.0,  1.0), ( 1.0, -1.0, -1.0),
+                (-1.0,  1.0,  1.0), (-1.0,  1.0, -1.0), (-1.0, -1.0,  1.0), (-1.0, -1.0, -1.0),
+                (0.0,  inv_phi,  phi), (0.0,  inv_phi, -phi), (0.0, -inv_phi,  phi), (0.0, -inv_phi, -phi),
+                ( inv_phi,  phi, 0.0), (-inv_phi,  phi, 0.0), ( inv_phi, -phi, 0.0), (-inv_phi, -phi, 0.0),
+                ( phi, 0.0,  inv_phi), ( phi, 0.0, -inv_phi), (-phi, 0.0,  inv_phi), (-phi, 0.0, -inv_phi),
+            ];
+            let faces: [[usize; 5]; 12] = [
+                [0, 8, 10, 2, 16], [0, 16, 17, 1, 12], [0, 12, 13, 4, 8],
+                [1, 17, 3, 11, 9], [1, 9, 5, 13, 12], [2, 10, 6, 15, 14],
+                [2, 14, 3, 17, 16], [4, 13, 5, 19, 18], [4, 18, 6, 10, 8],
+                [5, 9, 11, 7, 19], [6, 18, 19, 7, 15], [3, 14, 15, 7, 11],
+            ];
+            let verts: Vec<(f64, f64, f64)> = raw_verts.iter().map(|&(x, y, z)| (x * scale, y * scale, z * scale)).collect();
+            let mut positions: Vec<f32> = Vec::new();
+            let mut tri_verts: Vec<u32> = Vec::new();
+            for &(x, y, z) in &verts {
+                positions.extend([x as f32, y as f32, z as f32]);
+            }
+            for face in &faces {
+                let cx: f64 = face.iter().map(|&i| verts[i].0).sum::<f64>() / 5.0;
+                let cy: f64 = face.iter().map(|&i| verts[i].1).sum::<f64>() / 5.0;
+                let cz: f64 = face.iter().map(|&i| verts[i].2).sum::<f64>() / 5.0;
+                let len = (cx * cx + cy * cy + cz * cz).sqrt();
+                let (nx, ny, nz) = (cx / len, cy / len, cz / len);
+                let spike_idx = (positions.len() / 3) as u32;
+                positions.extend([(cx + nx * spike_height) as f32, (cy + ny * spike_height) as f32, (cz + nz * spike_height) as f32]);
+                for j in 0..5 {
+                    tri_verts.extend([spike_idx, face[j] as u32, face[(j + 1) % 5] as u32]);
+                }
+            }
+            let mut mesh = MeshGL::default();
+            mesh.num_prop = 3;
+            mesh.vert_properties = positions;
+            mesh.tri_verts = tri_verts;
+            Manifold::from_mesh_gl(&mesh)
+        }
+
+        let a = make_spiky_dodecahedron(0.4);
+        assert!(a.num_tri() == 60, "Spiky dodecahedron should have 60 tris, got {}", a.num_tri());
+
+        // Test basic self-union works
+        let b = make_spiky_dodecahedron(0.4).translate(Vec3::new(0.3, 0.0, 0.0));
+        let result = a.union(&b);
+        assert!(result.num_tri() > 0, "Basic spiky dodecahedron union failed");
+
+        // Test at the specific rotation angles that hang
+        // Frame 36 hangs: rot=(25.2, 54.0, 10.8)
+        let b = make_spiky_dodecahedron(0.4)
+            .rotate(25.2, 54.0, 10.8)
+            .translate(Vec3::new(0.3, 0.0, 0.0));
+        let result = a.union(&b);
+        assert!(
+            result.num_tri() > 0,
+            "Spiky dodecahedron union failed at rot=(25.2, 54.0, 10.8)"
+        );
+    }
+
+    /// C++ TEST(Boolean, ConvexConvexMinkowski) — sphere + cube Minkowski sum
+    /// Checks analytical volume and surface area of a rounded cuboid.
+    #[test]
+    fn test_cpp_convex_convex_minkowski() {
+        let r = 0.1;
+        let w = 2.0;
+        let sphere = Manifold::sphere(r, 20);
+        let cube = Manifold::cube(Vec3::splat(w), false);
+        let sum = cube.minkowski_sum(&sphere);
+
+        let pi = std::f64::consts::PI;
+        // Analytical volume of rounded cuboid:
+        // w³ + 6w²r + 3πwr² + (4/3)πr³
+        let analytical_volume =
+            w * w * w + 6.0 * w * w * r + 3.0 * pi * w * r * r + (4.0 / 3.0) * pi * r * r * r;
+        // Analytical surface area:
+        // 6w² + 6πwr + 4πr²
+        let analytical_area = 6.0 * w * w + 6.0 * pi * w * r + 4.0 * pi * r * r;
+
+        // Discrete sphere approximation differs from analytical by ~1%
+        assert!(
+            (sum.volume() - analytical_volume).abs() < 0.15,
+            "ConvexConvexMinkowski volume: {} expected ~{}",
+            sum.volume(),
+            analytical_volume
+        );
+        assert!(
+            (sum.surface_area() - analytical_area).abs() < 0.5,
+            "ConvexConvexMinkowski area: {} expected ~{}",
+            sum.surface_area(),
+            analytical_area
+        );
+        assert_eq!(sum.genus(), 0);
+    }
+
+    /// C++ TEST(Boolean, ConvexConvexMinkowskiDifference) — sphere erosion of cube
+    #[test]
+    fn test_cpp_convex_convex_minkowski_difference() {
+        let r = 0.1;
+        let w = 2.0;
+        let sphere = Manifold::sphere(r, 20);
+        let cube = Manifold::cube(Vec3::splat(w), false);
+        let difference = cube.minkowski_difference(&sphere);
+
+        // Analytical volume of eroded cube: (w-2r)³
+        let analytical_volume = (w - 2.0 * r) * (w - 2.0 * r) * (w - 2.0 * r);
+        // Analytical surface area: 6*(w-2r)²
+        let analytical_area = 6.0 * (w - 2.0 * r) * (w - 2.0 * r);
+
+        assert!(
+            (difference.volume() - analytical_volume).abs() < 0.1,
+            "ConvexConvexMinkowskiDifference volume: {} expected ~{}",
+            difference.volume(),
+            analytical_volume
+        );
+        assert!(
+            (difference.surface_area() - analytical_area).abs() < 0.1,
+            "ConvexConvexMinkowskiDifference area: {} expected ~{}",
+            difference.surface_area(),
+            analytical_area
+        );
+        assert_eq!(difference.genus(), 0);
+    }
+
+    /// C++ TEST(Boolean, NonConvexConvexMinkowskiSum)
+    #[test]
+    #[ignore = "Non-convex Minkowski is O(n^2) on triangle count; too slow for routine testing"]
+    fn test_cpp_nonconvex_convex_minkowski_sum() {
+        let sphere = Manifold::sphere(1.2, 20);
+        let cube = Manifold::cube(Vec3::splat(2.0), true);
+        let non_convex = cube.difference(&sphere);
+        let sum = non_convex.minkowski_sum(&Manifold::sphere(0.1, 20));
+        assert!(
+            (sum.volume() - 4.841).abs() < 1e-3,
+            "NonConvexConvexMinkowskiSum volume: {} expected ~4.841",
+            sum.volume()
+        );
+        assert!(
+            (sum.surface_area() - 34.06).abs() < 1e-2,
+            "NonConvexConvexMinkowskiSum area: {} expected ~34.06",
+            sum.surface_area()
+        );
+        assert_eq!(sum.genus(), 5);
+    }
+
+    /// C++ TEST(Boolean, NonConvexConvexMinkowskiDifference)
+    #[test]
+    #[ignore = "Non-convex Minkowski is O(n^2) on triangle count; too slow for routine testing"]
+    fn test_cpp_nonconvex_convex_minkowski_difference() {
+        let sphere = Manifold::sphere(1.2, 20);
+        let cube = Manifold::cube(Vec3::splat(2.0), true);
+        let non_convex = cube.difference(&sphere);
+        let difference = non_convex.minkowski_difference(&Manifold::sphere(0.05, 20));
+        assert!(
+            (difference.volume() - 0.778).abs() < 1e-3,
+            "NonConvexConvexMinkowskiDifference volume: {} expected ~0.778",
+            difference.volume()
+        );
+        assert!(
+            (difference.surface_area() - 16.70).abs() < 1e-2,
+            "NonConvexConvexMinkowskiDifference area: {} expected ~16.70",
+            difference.surface_area()
+        );
+        assert_eq!(difference.genus(), 5);
+    }
+
+    /// C++ TEST(Boolean, NonConvexNonConvexMinkowskiSum)
+    #[test]
+    #[ignore = "Non-convex Minkowski is O(n^2) on triangle count; too slow for routine testing"]
+    fn test_cpp_nonconvex_nonconvex_minkowski_sum() {
+        let tet = Manifold::tetrahedron();
+        let non_convex = tet.difference(
+            &Manifold::tetrahedron()
+                .rotate(0.0, 0.0, 90.0)
+                .translate(Vec3::splat(1.0)),
+        );
+        let sum = non_convex.minkowski_sum(&non_convex.scale(Vec3::splat(0.5)));
+        assert!(
+            (sum.volume() - 8.65625).abs() < 1e-5,
+            "NonConvexNonConvexMinkowskiSum volume: {} expected ~8.65625",
+            sum.volume()
+        );
+        assert!(
+            (sum.surface_area() - 31.17691).abs() < 1e-5,
+            "NonConvexNonConvexMinkowskiSum area: {} expected ~31.17691",
+            sum.surface_area()
+        );
+        assert_eq!(sum.genus(), 0);
+    }
+
+    /// C++ TEST(SDF, Bounds) — CubeVoid SDF with bounds check
+    #[test]
+    fn test_cpp_sdf_bounds() {
+        let size = 4.0;
+        let edge_length = 1.0;
+
+        let cube_void_sdf = |p: Vec3| -> f64 {
+            let min_v = Vec3::new(p.x + 1.0, p.y + 1.0, p.z + 1.0);
+            let max_v = Vec3::new(1.0 - p.x, 1.0 - p.y, 1.0 - p.z);
+            let min3 = min_v.x.min(min_v.y.min(min_v.z));
+            let max3 = max_v.x.min(max_v.y.min(max_v.z));
+            -1.0 * min3.min(max3)
+        };
+
+        let cube_void = Manifold::level_set(
+            cube_void_sdf,
+            crate::types::Box::from_points(Vec3::splat(-size / 2.0), Vec3::splat(size / 2.0)),
+            edge_length,
+        );
+
+        assert!(!cube_void.is_empty(), "SDF CubeVoid should not be empty");
+        assert_eq!(cube_void.genus(), -1, "SDF CubeVoid genus should be -1, got {}", cube_void.genus());
+
+        let epsilon = cube_void.get_tolerance();
+        let bounds = cube_void.bounding_box();
+        let outer_bound = size / 2.0;
+        assert!((bounds.min.x - (-outer_bound)).abs() < epsilon + 0.1,
+            "min.x: {} expected ~{}", bounds.min.x, -outer_bound);
+        assert!((bounds.max.x - outer_bound).abs() < epsilon + 0.1,
+            "max.x: {} expected ~{}", bounds.max.x, outer_bound);
+    }
+
+    /// C++ TEST(SDF, Bounds3) — Sphere SDF with bounds check
+    #[test]
+    fn test_cpp_sdf_sphere_bounds() {
+        let radius = 1.2;
+        let sphere = Manifold::level_set(
+            move |pos: Vec3| radius - (pos.x * pos.x + pos.y * pos.y + pos.z * pos.z).sqrt(),
+            crate::types::Box::from_points(Vec3::splat(-1.0), Vec3::splat(1.0)),
+            0.1,
+        );
+
+        assert!(!sphere.is_empty(), "SDF sphere should not be empty");
+        assert_eq!(sphere.genus(), 0, "SDF sphere genus should be 0, got {}", sphere.genus());
+
+        let epsilon = sphere.get_tolerance();
+        let bounds = sphere.bounding_box();
+        assert!((bounds.min.x - (-1.0)).abs() < epsilon + 0.1,
+            "min.x: {} expected ~-1", bounds.min.x);
+        assert!((bounds.max.x - 1.0).abs() < epsilon + 0.1,
+            "max.x: {} expected ~1", bounds.max.x);
+    }
+
+    /// C++ TEST(SDF, Void) — Cube minus CubeVoid SDF
+    #[test]
+    fn test_cpp_sdf_void() {
+        let size = 4.0;
+        let edge_length = 0.5;
+
+        let cube_void_sdf = |p: Vec3| -> f64 {
+            let min_v = Vec3::new(p.x + 1.0, p.y + 1.0, p.z + 1.0);
+            let max_v = Vec3::new(1.0 - p.x, 1.0 - p.y, 1.0 - p.z);
+            let min3 = min_v.x.min(min_v.y.min(min_v.z));
+            let max3 = max_v.x.min(max_v.y.min(max_v.z));
+            -1.0 * min3.min(max3)
+        };
+
+        let cube_void = Manifold::level_set(
+            cube_void_sdf,
+            crate::types::Box::from_points(Vec3::splat(-size / 2.0), Vec3::splat(size / 2.0)),
+            edge_length,
+        );
+
+        let cube = Manifold::cube(Vec3::splat(size), true);
+        let result = cube.difference(&cube_void);
+
+        assert_eq!(result.genus(), 0, "SDF Void genus: {} expected 0", result.genus());
+        assert!(
+            (result.volume() - 8.0).abs() < 0.001,
+            "SDF Void volume: {} expected ~8.0",
+            result.volume()
+        );
+        assert!(
+            (result.surface_area() - 24.0).abs() < 0.001,
+            "SDF Void area: {} expected ~24.0",
+            result.surface_area()
+        );
+    }
+
+    /// C++ TEST(Boolean, UnionDifference) — cube with hole, union stacked
+    #[test]
+    fn test_cpp_union_difference() {
+        let block = Manifold::cube(Vec3::splat(1.0), true)
+            .difference(&Manifold::cylinder(1.0, 0.5, 0.5, 32));
+        let result = block.union(&block.translate(Vec3::new(0.0, 0.0, 1.0)));
+        let result_vol = result.volume();
+        let block_vol = block.volume();
+        assert!(
+            (result_vol - block_vol * 2.0).abs() < 0.0001,
+            "UnionDifference: result {} expected ~{}",
+            result_vol,
+            block_vol * 2.0
+        );
+    }
+
+    /// C++ TEST(Boolean, Empty) — operations with empty manifold
+    #[test]
+    fn test_cpp_boolean_empty_ops() {
+        let cube = Manifold::cube(Vec3::splat(1.0), false);
+        let cube_vol = cube.volume();
+        let empty = Manifold::empty();
+
+        assert!((cube.union(&empty).volume() - cube_vol).abs() < 1e-10,
+            "cube + empty should equal cube");
+        assert!((cube.difference(&empty).volume() - cube_vol).abs() < 1e-10,
+            "cube - empty should equal cube");
+        assert!(empty.difference(&cube).is_empty(),
+            "empty - cube should be empty");
+        assert!(cube.intersection(&empty).is_empty(),
+            "cube ^ empty should be empty");
+    }
+
+    /// C++ TEST(Boolean, NonIntersecting) — non-overlapping cubes
+    #[test]
+    fn test_cpp_non_intersecting() {
+        let cube1 = Manifold::cube(Vec3::splat(1.0), false);
+        let vol1 = cube1.volume();
+        let cube2 = cube1.scale(Vec3::splat(2.0)).translate(Vec3::new(3.0, 0.0, 0.0));
+        let vol2 = cube2.volume();
+
+        assert!(
+            (cube1.union(&cube2).volume() - (vol1 + vol2)).abs() < 1e-10,
+            "Non-intersecting union volume should be sum"
+        );
+        assert!(
+            (cube1.difference(&cube2).volume() - vol1).abs() < 1e-10,
+            "Non-intersecting subtract volume should be cube1"
+        );
+        assert!(
+            cube1.intersection(&cube2).is_empty(),
+            "Non-intersecting intersect should be empty"
+        );
+    }
+
+    /// C++ TEST(Hull, Hollow) — hull of hollow sphere equals sphere volume
+    /// C++ uses 360 segments but we use 24 for test speed
+    #[test]
+    fn test_cpp_hull_hollow() {
+        let sphere = Manifold::sphere(100.0, 24);
+        let hollow = sphere.difference(&sphere.scale(Vec3::splat(0.8)));
+        let sphere_vol = sphere.volume();
+        let hull_vol = hollow.convex_hull().volume();
+        assert!(
+            (hull_vol - sphere_vol).abs() / sphere_vol < 0.01,
+            "Hull of hollow sphere: {} expected ~{}",
+            hull_vol,
+            sphere_vol
+        );
+    }
+
+    /// C++ TEST(Hull, Cube) — hull of cube with interior points
+    #[test]
+    fn test_cpp_hull_cube_with_interior() {
+        let pts = vec![
+            Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0), Vec3::new(0.0, 0.0, 1.0),
+            Vec3::new(1.0, 1.0, 0.0), Vec3::new(0.0, 1.0, 1.0),
+            Vec3::new(1.0, 0.0, 1.0), Vec3::new(1.0, 1.0, 1.0),
+            Vec3::new(0.5, 0.5, 0.5), Vec3::new(0.5, 0.0, 0.0),
+            Vec3::new(0.5, 0.7, 0.2),
+        ];
+        let cube = Manifold::hull(&pts);
+        assert!(
+            (cube.volume() - 1.0).abs() < 1e-6,
+            "Hull of cube points: {} expected 1.0",
+            cube.volume()
+        );
+    }
+
+    /// C++ TEST(Hull, Empty) — hull of coplanar/too-few points
+    #[test]
+    fn test_cpp_hull_empty() {
+        let too_few = vec![Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)];
+        let h = Manifold::hull(&too_few);
+        assert!(h.is_empty() || h.volume().abs() < 1e-10, "Hull of 3 points should be empty/degenerate");
+
+        let coplanar = vec![
+            Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0), Vec3::new(1.0, 1.0, 0.0),
+        ];
+        let h2 = Manifold::hull(&coplanar);
+        assert!(h2.is_empty() || h2.volume().abs() < 1e-10, "Hull of coplanar points should be empty/degenerate");
+    }
+
+    /// C++ TEST(Boolean, Mirrored) — mirrored cube subtraction
+    #[test]
+    fn test_cpp_mirrored() {
+        let cube = Manifold::cube(Vec3::splat(1.0), false).scale(Vec3::new(1.0, -1.0, 1.0));
+        assert!(cube.matches_tri_normals(), "Mirrored cube should match tri normals");
+
+        let cube2 = Manifold::cube(Vec3::splat(1.0), false).scale(Vec3::new(0.5, -1.0, 0.5));
+        let result = cube.difference(&cube2);
+
+        assert!((result.volume() - 0.75).abs() < 1e-6,
+            "Mirrored volume: {} expected 0.75", result.volume());
+        assert!((result.surface_area() - 5.5).abs() < 1e-6,
+            "Mirrored area: {} expected 5.5", result.surface_area());
+    }
+
+    /// C++ TEST(Boolean, Cubes) — three cubes union
+    #[test]
+    fn test_cpp_cubes_union() {
+        let mut result = Manifold::cube(Vec3::new(1.2, 1.0, 1.0), true)
+            .translate(Vec3::new(0.0, -0.5, 0.5));
+        result = result.union(
+            &Manifold::cube(Vec3::new(1.0, 0.8, 0.5), false)
+                .translate(Vec3::new(-0.5, 0.0, 0.5)),
+        );
+        result = result.union(
+            &Manifold::cube(Vec3::new(1.2, 0.1, 0.5), false)
+                .translate(Vec3::new(-0.6, -0.1, 0.0)),
+        );
+
+        assert!(result.matches_tri_normals(), "Cubes result should match tri normals");
+        assert_eq!(result.num_degenerate_tris(), 0);
+        assert!(
+            (result.volume() - 1.6).abs() < 0.001,
+            "Cubes volume: {} expected ~1.6",
+            result.volume()
+        );
+        assert!(
+            (result.surface_area() - 9.2).abs() < 0.01,
+            "Cubes area: {} expected ~9.2",
+            result.surface_area()
+        );
+    }
+
+    /// C++ TEST(Boolean, Tetra) — tetrahedron subtraction
+    #[test]
+    fn test_cpp_tetra_boolean() {
+        let tetra = Manifold::tetrahedron();
+        assert!(!tetra.is_empty());
+
+        let tetra2 = tetra.translate(Vec3::splat(0.5));
+        let result = tetra2.difference(&tetra);
+
+        assert!(result.num_tri() > 0, "Tetra subtraction should be non-empty");
+        assert!(result.volume() > 0.0, "Tetra subtraction should have positive volume");
+    }
+
+    /// C++ TEST(Boolean, NonConvexNonConvexMinkowskiDifference)
+    #[test]
+    #[ignore = "Non-convex Minkowski is O(n^2) on triangle count; too slow for routine testing"]
+    fn test_cpp_nonconvex_nonconvex_minkowski_difference() {
+        let tet = Manifold::tetrahedron();
+        let non_convex = tet.difference(
+            &Manifold::tetrahedron()
+                .rotate(0.0, 0.0, 90.0)
+                .translate(Vec3::splat(1.0)),
+        );
+        let difference = non_convex.minkowski_difference(&non_convex.scale(Vec3::splat(0.1)));
+        assert!(
+            (difference.volume() - 0.815542).abs() < 1e-5,
+            "NonConvexNonConvexMinkowskiDifference volume: {} expected ~0.815542",
+            difference.volume()
+        );
+        assert!(
+            (difference.surface_area() - 6.95045).abs() < 1e-5,
+            "NonConvexNonConvexMinkowskiDifference area: {} expected ~6.95045",
+            difference.surface_area()
+        );
+        assert_eq!(difference.genus(), 0);
+    }
+
+    /// C++ TEST(Boolean, BatchBoolean) — exact value checks
+    #[test]
+    fn test_cpp_batch_boolean_exact() {
+        let cube = Manifold::cube(Vec3::new(100.0, 100.0, 1.0), false);
+        let cyl1 = Manifold::cylinder(1.0, 30.0, 30.0, 32).translate(Vec3::new(-10.0, 30.0, 0.0));
+        let cyl2 = Manifold::cylinder(1.0, 20.0, 20.0, 32).translate(Vec3::new(110.0, 20.0, 0.0));
+        let cyl3 = Manifold::cylinder(1.0, 40.0, 40.0, 32).translate(Vec3::new(50.0, 110.0, 0.0));
+
+        // Intersect: no overlap → empty
+        let intersect = Manifold::batch_boolean(
+            &[cube.clone(), cyl1.clone(), cyl2.clone(), cyl3.clone()],
+            OpType::Intersect,
+        );
+        assert!(intersect.is_empty(), "BatchBoolean intersect should be empty");
+
+        // Add
+        let add = Manifold::batch_boolean(
+            &[cube.clone(), cyl1.clone(), cyl2.clone(), cyl3.clone()],
+            OpType::Add,
+        );
+        assert!(!add.is_empty());
+        // C++ expects volume ~16290.478, surface area ~33156.594
+        // Tolerance is wider due to cylinder discretization differences
+        assert!(
+            (add.volume() - 16290.478).abs() < 20.0,
+            "BatchBoolean Add volume: {} expected ~16290.478",
+            add.volume()
+        );
+        assert!(
+            (add.surface_area() - 33156.594).abs() < 40.0,
+            "BatchBoolean Add area: {} expected ~33156.594",
+            add.surface_area()
+        );
+
+        // Subtract
+        let subtract = Manifold::batch_boolean(
+            &[cube.clone(), cyl1.clone(), cyl2.clone(), cyl3.clone()],
+            OpType::Subtract,
+        );
+        assert!(!subtract.is_empty());
+        // C++ expects volume ~7226.043, surface area ~14904.597
+        assert!(
+            (subtract.volume() - 7226.043).abs() < 20.0,
+            "BatchBoolean Subtract volume: {} expected ~7226.043",
+            subtract.volume()
+        );
+        assert!(
+            (subtract.surface_area() - 14904.597).abs() < 40.0,
+            "BatchBoolean Subtract area: {} expected ~14904.597",
+            subtract.surface_area()
+        );
+    }
+
+    /// C++ TEST(Boolean, PropertiesNoIntersection) — property handling for non-intersecting union
+    #[test]
+    fn test_cpp_properties_no_intersection() {
+        // Create cube with UV properties (2 extra props)
+        let cube = Manifold::cube(Vec3::splat(1.0), false)
+            .set_properties(2, |props, pos, _old| {
+                props[0] = pos.x;
+                props[1] = pos.y;
+            });
+        let m1 = cube.translate(Vec3::splat(1.5));
+        let result = cube.union(&m1);
+        assert_eq!(result.num_prop(), 2, "PropertiesNoIntersection: num_prop should be 2, got {}", result.num_prop());
+    }
+
+    /// C++ TEST(Boolean, MixedProperties) — property handling with different property counts
+    #[test]
+    fn test_cpp_mixed_properties() {
+        let cube_uv = Manifold::cube(Vec3::splat(1.0), false)
+            .set_properties(2, |props, pos, _old| {
+                props[0] = pos.x;
+                props[1] = pos.y;
+            });
+        let cube_plain = Manifold::cube(Vec3::splat(1.0), false);
+        let result = cube_uv.union(&cube_plain.translate(Vec3::splat(0.5)));
+        assert_eq!(result.num_prop(), 2, "MixedProperties: num_prop should be 2, got {}", result.num_prop());
+    }
+
+    /// C++ TEST(Boolean, SelfSubtract)
+    #[test]
+    fn test_cpp_self_subtract() {
+        let cube = Manifold::cube(Vec3::splat(1.0), false);
+        let empty = cube.difference(&cube);
+        assert!(empty.is_empty(), "SelfSubtract should produce empty mesh");
+        assert!((empty.volume()).abs() < 1e-10);
+        assert!((empty.surface_area()).abs() < 1e-10);
+    }
+
+    /// C++ TEST(Boolean, NoRetainedVerts)
+    #[test]
+    fn test_cpp_no_retained_verts() {
+        let cube = Manifold::cube(Vec3::splat(1.0), true);
+        let oct = Manifold::sphere(1.0, 4);
+        assert!((cube.volume() - 1.0).abs() < 0.001, "cube vol: {}", cube.volume());
+        assert!((oct.volume() - 1.333).abs() < 0.001, "oct vol: {}", oct.volume());
+        let result = cube.intersection(&oct);
+        assert!(
+            (result.volume() - 0.833).abs() < 0.001,
+            "NoRetainedVerts intersection volume: {} expected ~0.833",
+            result.volume()
+        );
+    }
+
+    /// C++ TEST(Properties, Measurements) — basic volume/area
+    #[test]
+    fn test_cpp_properties_measurements() {
+        let cube = Manifold::cube(Vec3::splat(1.0), false);
+        assert!((cube.volume() - 1.0).abs() < 1e-6, "cube volume: {}", cube.volume());
+        assert!((cube.surface_area() - 6.0).abs() < 1e-6, "cube area: {}", cube.surface_area());
+
+        // Scale by -1 should still have same volume/area (flips orientation but absolute values same)
+        let flipped = cube.scale(Vec3::splat(-1.0));
+        assert!((flipped.volume() - 1.0).abs() < 1e-6, "flipped cube volume: {}", flipped.volume());
+        assert!((flipped.surface_area() - 6.0).abs() < 1e-6, "flipped cube area: {}", flipped.surface_area());
+    }
+
+    /// C++ TEST(Properties, Epsilon) — epsilon scales with geometry
+    #[test]
+    fn test_cpp_properties_epsilon() {
+        let k_precision: f64 = crate::types::K_PRECISION;
+        let cube = Manifold::cube(Vec3::splat(1.0), false);
+        assert!((cube.get_tolerance() - k_precision).abs() < k_precision * 0.1,
+            "unit cube epsilon: {} expected ~{}", cube.get_tolerance(), k_precision);
+
+        let scaled = cube.scale(Vec3::new(0.1, 1.0, 10.0));
+        assert!((scaled.get_tolerance() - 10.0 * k_precision).abs() < k_precision,
+            "scaled cube epsilon: {} expected ~{}", scaled.get_tolerance(), 10.0 * k_precision);
+
+        let translated = scaled.translate(Vec3::new(-100.0, -10.0, -1.0));
+        assert!((translated.get_tolerance() - 100.0 * k_precision).abs() < k_precision * 10.0,
+            "translated cube epsilon: {} expected ~{}", translated.get_tolerance(), 100.0 * k_precision);
+    }
+
+    /// C++ TEST(Properties, Epsilon2) — epsilon after translate+scale
+    #[test]
+    fn test_cpp_properties_epsilon2() {
+        let k_precision: f64 = crate::types::K_PRECISION;
+        let cube = Manifold::cube(Vec3::splat(1.0), false)
+            .translate(Vec3::new(-0.5, 0.0, 0.0))
+            .scale(Vec3::new(2.0, 1.0, 1.0));
+        assert!((cube.get_tolerance() - 2.0 * k_precision).abs() < k_precision,
+            "epsilon2: {} expected ~{}", cube.get_tolerance(), 2.0 * k_precision);
+    }
+
+    /// C++ TEST(Properties, Coplanar) — coplanar check on primitives
+    #[test]
+    fn test_cpp_properties_coplanar() {
+        let cube = Manifold::cube(Vec3::splat(1.0), false);
+        assert!(cube.matches_tri_normals(), "Cube should match tri normals");
+        assert_eq!(cube.num_degenerate_tris(), 0, "Cube should have no degenerate tris");
+
+        let tet = Manifold::tetrahedron();
+        assert!(tet.matches_tri_normals(), "Tetrahedron should match tri normals");
+    }
+
+    /// C++ TEST(Boolean, MultiCoplanar) — multi-step coplanar subtraction
+    #[test]
+    fn test_cpp_multi_coplanar() {
+        let cube = Manifold::cube(Vec3::splat(1.0), false);
+        let first = cube.difference(&cube.translate(Vec3::new(0.3, 0.3, 0.0)));
+        let cube2 = cube.translate(Vec3::new(-0.3, -0.3, 0.0));
+        let out = first.difference(&cube2);
+        assert_eq!(out.genus(), -1, "MultiCoplanar genus: {} expected -1", out.genus());
+        assert!(
+            (out.volume() - 0.18).abs() < 1e-5,
+            "MultiCoplanar volume: {} expected ~0.18",
+            out.volume()
+        );
+        assert!(
+            (out.surface_area() - 2.76).abs() < 1e-5,
+            "MultiCoplanar area: {} expected ~2.76",
+            out.surface_area()
+        );
+    }
+
+    /// C++ TEST(Boolean, FaceUnion) — cubes sharing a face
+    #[test]
+    fn test_cpp_face_union() {
+        let cubes = Manifold::cube(Vec3::splat(1.0), false);
+        let result = cubes.union(&cubes.translate(Vec3::new(1.0, 0.0, 0.0)));
+        assert_eq!(result.genus(), 0, "FaceUnion genus: {} expected 0", result.genus());
+        assert!(
+            (result.volume() - 2.0).abs() < 1e-5,
+            "FaceUnion volume: {} expected 2.0",
+            result.volume()
+        );
+        assert!(
+            (result.surface_area() - 10.0).abs() < 1e-5,
+            "FaceUnion area: {} expected 10.0",
+            result.surface_area()
+        );
+    }
+
+    /// C++ TEST(Boolean, SplitByPlane60) — equal-volume split of rotated cube
+    #[test]
+    fn test_cpp_split_by_plane60() {
+        let cube = Manifold::cube(Vec3::splat(2.0), true)
+            .translate(Vec3::new(0.0, 1.0, 0.0))
+            .rotate(0.0, 0.0, -60.0)
+            .translate(Vec3::new(2.0, 0.0, 0.0));
+        let phi_rad = 30.0_f64.to_radians();
+        let (first, second) = cube.split_by_plane(
+            Vec3::new(phi_rad.sin(), -phi_rad.cos(), 0.0),
+            1.0,
+        );
+        assert!(
+            (first.volume() - second.volume()).abs() < 1e-5,
+            "SplitByPlane60: first={} second={} should be equal",
+            first.volume(),
+            second.volume()
+        );
+    }
+
+    /// C++ TEST(BooleanComplex, BooleanVolumes) — sphere subtraction volumes
+    #[test]
+    fn test_cpp_boolean_volumes() {
+        let sphere = Manifold::sphere(1.0, 12);
+        let sphere2 = sphere.translate(Vec3::splat(0.5));
+
+        let u = sphere.union(&sphere2);
+        let i = sphere.intersection(&sphere2);
+        let d = sphere.difference(&sphere2);
+
+        let sphere_vol = sphere.volume();
+        // Union + Intersect = 2 * sphere (inclusion-exclusion)
+        assert!(
+            (u.volume() + i.volume() - 2.0 * sphere_vol).abs() < 0.01,
+            "U+I={} expected ~2*sphere={}",
+            u.volume() + i.volume(), 2.0 * sphere_vol
+        );
+        // Difference + Intersect = sphere
+        assert!(
+            (d.volume() + i.volume() - sphere_vol).abs() < 0.01,
+            "D+I={} expected ~sphere={}",
+            d.volume() + i.volume(), sphere_vol
+        );
     }
 }

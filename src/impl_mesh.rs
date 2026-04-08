@@ -419,6 +419,108 @@ impl ManifoldImpl {
     }
 
     // -----------------------------------------------------------------------
+    // IncrementMeshIDs — port of C++ Manifold::Impl::IncrementMeshIDs()
+    // -----------------------------------------------------------------------
+
+    /// Allocates fresh unique mesh IDs and remaps all triRef.meshID values.
+    /// This ensures boolean results don't collide with source mesh IDs.
+    pub fn increment_mesh_ids(&mut self) {
+        use std::collections::HashMap;
+
+        // Build old -> new ID mapping
+        let old_transforms: HashMap<i32, Relation> =
+            std::mem::take(&mut self.mesh_relation.mesh_id_transform);
+        let num_mesh_ids = old_transforms.len() as u32;
+        if num_mesh_ids == 0 { return; }
+        let mut next_mesh_id = reserve_ids(num_mesh_ids) as i32;
+        let mut old2new: HashMap<i32, i32> = HashMap::new();
+        for (old_id, relation) in old_transforms {
+            old2new.insert(old_id, next_mesh_id);
+            self.mesh_relation.mesh_id_transform.insert(next_mesh_id, relation);
+            next_mesh_id += 1;
+        }
+
+        // Update all triRef.meshID
+        for tri_ref in &mut self.mesh_relation.tri_ref {
+            if let Some(&new_id) = old2new.get(&tri_ref.mesh_id) {
+                tri_ref.mesh_id = new_id;
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // DedupePropVerts — port of C++ Manifold::Impl::DedupePropVerts()
+    // -----------------------------------------------------------------------
+
+    /// Deduplicates property vertices that share identical property values
+    /// across paired halfedges within the same mesh.
+    pub fn dedupe_prop_verts(&mut self) {
+        let num_prop = self.num_prop;
+        if num_prop == 0 { return; }
+
+        let n_edges = self.halfedge.len();
+        // Collect (prop0, prop1) pairs for edges where properties match
+        let mut vert2vert: Vec<(i32, i32)> = vec![(-1, -1); n_edges];
+        for edge_idx in 0..n_edges {
+            let edge = self.halfedge[edge_idx];
+            if edge.paired_halfedge < 0 { continue; }
+            let edge_face = edge_idx / 3;
+            let pair_face = edge.paired_halfedge as usize / 3;
+
+            if self.mesh_relation.tri_ref[edge_face].mesh_id
+                != self.mesh_relation.tri_ref[pair_face].mesh_id
+            {
+                continue;
+            }
+
+            let prop0 = self.halfedge[edge_idx].prop_vert;
+            let prop1 = self.halfedge[next_halfedge(edge.paired_halfedge) as usize].prop_vert;
+            if prop0 < 0 || prop1 < 0 { continue; }
+
+            let mut prop_equal = true;
+            for p in 0..num_prop {
+                let idx0 = num_prop * prop0 as usize + p;
+                let idx1 = num_prop * prop1 as usize + p;
+                if idx0 >= self.properties.len() || idx1 >= self.properties.len() {
+                    prop_equal = false;
+                    break;
+                }
+                if self.properties[idx0] != self.properties[idx1] {
+                    prop_equal = false;
+                    break;
+                }
+            }
+            if prop_equal {
+                vert2vert[edge_idx] = (prop0, prop1);
+            }
+        }
+
+        // Use union-find to merge equivalent property vertices
+        let num_prop_vert = self.num_prop_vert();
+        let mut ds = crate::disjoint_sets::DisjointSets::new(num_prop_vert as u32);
+        for &(a, b) in &vert2vert {
+            if a >= 0 && b >= 0 {
+                ds.unite(a as u32, b as u32);
+            }
+        }
+        let mut vert_labels = Vec::new();
+        let num_labels = ds.connected_components(&mut vert_labels);
+
+        // Build label -> canonical vert mapping
+        let mut label2vert = vec![0i32; num_labels as usize];
+        for v in 0..num_prop_vert {
+            label2vert[vert_labels[v] as usize] = v as i32;
+        }
+
+        // Remap all prop_vert indices
+        for edge in &mut self.halfedge {
+            if edge.prop_vert >= 0 && (edge.prop_vert as usize) < num_prop_vert {
+                edge.prop_vert = label2vert[vert_labels[edge.prop_vert as usize] as usize];
+            }
+        }
+    }
+
+    // -----------------------------------------------------------------------
     // RemoveUnreferencedVerts
     // -----------------------------------------------------------------------
 
@@ -557,7 +659,14 @@ impl ManifoldImpl {
         }
 
         result.mesh_relation = self.mesh_relation.clone();
-        result.epsilon = self.epsilon;
+        // Scale epsilon by spectral norm of transform, matching C++:
+        // result.epsilon_ *= SpectralNorm(mat3(transform_));
+        let m3_for_norm = Mat3::from_cols(
+            Vec3::new(t.x.x, t.x.y, t.x.z),
+            Vec3::new(t.y.x, t.y.y, t.y.z),
+            Vec3::new(t.z.x, t.z.y, t.z.z),
+        );
+        result.epsilon = self.epsilon * crate::svd::spectral_norm(m3_for_norm);
         result.tolerance = self.tolerance;
         result.num_prop = self.num_prop;
         result.properties = self.properties.clone();

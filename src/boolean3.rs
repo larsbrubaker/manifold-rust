@@ -708,7 +708,8 @@ pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
 pub fn boolean(mesh_a: &ManifoldImpl, mesh_b: &ManifoldImpl, op: OpType) -> ManifoldImpl {
     if mesh_a.is_empty() {
         return match op {
-            OpType::Add | OpType::Intersect => mesh_b.clone(),
+            OpType::Add => mesh_b.clone(),
+            OpType::Intersect => ManifoldImpl::new(),
             OpType::Subtract => ManifoldImpl::new(),
         };
     }

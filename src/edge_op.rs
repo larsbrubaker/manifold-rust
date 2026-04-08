@@ -534,11 +534,12 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
             // Single topological unit: need to add 2 triangles
             let new_vert = mesh.vert_pos.len() as i32;
             mesh.vert_pos.push(mesh.vert_pos[end_vert as usize]);
-            let next_curr = next_halfedge(current as i32) as usize;
-            let current2 = mesh.halfedge[next_curr].paired_halfedge as usize;
+            // C++ advances current BEFORE building triangles:
+            // current = halfedge_[NextHalfedge(current)].pairedHalfedge;
+            current = mesh.halfedge[next_halfedge(current as i32) as usize].paired_halfedge as usize;
             let opposite = mesh.halfedge[next_halfedge(edge as i32) as usize].paired_halfedge as usize;
 
-            update_vert(mesh, new_vert, current2, opposite);
+            update_vert(mesh, new_vert, current, opposite);
 
             let new_he = mesh.halfedge.len();
             let old_face = current / 3;
@@ -578,7 +579,7 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
                 let fn_copy = mesh.face_normal[old_face2];
                 mesh.face_normal.push(fn_copy);
             }
-            return;
+            break;
         }
         current = mesh.halfedge[next_halfedge(current as i32) as usize].paired_halfedge as usize;
     }
@@ -601,21 +602,19 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
         }
     }
 
-    // Check if startVert is now pinched (orbit of paired edge)
-    // Uses DedupeEdge-style traversal: halfedge[next_halfedge(current)].paired
-    let pair = mesh.halfedge[edge].paired_halfedge as usize;
-    let start2 = mesh.halfedge[next_halfedge(pair as i32) as usize].paired_halfedge;
-    if start2 < 0 { return; }
-    let mut cur = start2 as usize;
-    loop {
+    // Orbit startVert - check if endVert is pinched
+    let pair = mesh.halfedge[edge].paired_halfedge;
+    if pair < 0 { return; }
+    let pair = pair as usize;
+    let mut cur = mesh.halfedge[next_halfedge(pair as i32) as usize].paired_halfedge;
+    if cur < 0 { return; }
+    let mut cur = cur as usize;
+    while cur != pair {
         let v = mesh.halfedge[cur].start_vert;
         if v == end_vert {
-            return; // Connected: not pinched
+            return; // Connected: not a pinched vert
         }
-        let p = mesh.halfedge[next_halfedge(cur as i32) as usize].paired_halfedge;
-        if p < 0 { break; }
-        cur = p as usize;
-        if cur == pair { break; }
+        cur = mesh.halfedge[next_halfedge(cur as i32) as usize].paired_halfedge as usize;
     }
 
     if cur == pair {
@@ -637,7 +636,8 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
 
 /// Finds and fixes all duplicate edges (4-manifold conditions).
 pub fn dedupe_edges(mesh: &mut ManifoldImpl) {
-    loop {
+    let max_iterations = mesh.halfedge.len(); // safety bound
+    for iteration in 0..max_iterations {
         let n_edges = mesh.halfedge.len();
         let mut processed = vec![false; n_edges];
         let mut duplicates: Vec<usize> = Vec::new();
@@ -655,13 +655,16 @@ pub fn dedupe_edges(mesh: &mut ManifoldImpl) {
             processed[i] = true;
             let c_ev0 = mesh.halfedge[i].end_vert;
             if c_ev0 >= 0 { end_verts.push((c_ev0, i)); }
-            // Then orbit
+            // Then orbit (with safety bound to prevent infinite loops)
             let mut current = i;
+            let mut orbit_steps = 0;
             loop {
                 let pair = mesh.halfedge[current].paired_halfedge;
                 if pair < 0 { break; }
                 current = next_halfedge(pair) as usize;
                 if current == i { break; }
+                orbit_steps += 1;
+                if orbit_steps > n_edges { break; } // safety
                 processed[current] = true;
                 let c_sv = mesh.halfedge[current].start_vert;
                 let c_ev = mesh.halfedge[current].end_vert;
@@ -682,11 +685,14 @@ pub fn dedupe_edges(mesh: &mut ManifoldImpl) {
                 }
             }
             current = i;
+            orbit_steps = 0;
             loop {
                 let pair = mesh.halfedge[current].paired_halfedge;
                 if pair < 0 { break; }
                 current = next_halfedge(pair) as usize;
                 if current == i { break; }
+                orbit_steps += 1;
+                if orbit_steps > n_edges { break; } // safety
                 let c_ev = mesh.halfedge[current].end_vert;
                 if c_ev >= 0 {
                     if let Some(&(_, min_edge)) = end_verts.iter().find(|(v, _)| *v == c_ev) {

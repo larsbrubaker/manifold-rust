@@ -28,7 +28,9 @@ export interface MeshData {
 }
 
 function toMeshData(raw: any): MeshData {
-  return {
+  // Extract all data from the WASM struct before freeing it.
+  // The getters copy typed arrays to JS heap, so we must capture them first.
+  const result: MeshData = {
     positions: raw.positions,
     normals: raw.normals,
     indices: raw.indices,
@@ -39,6 +41,10 @@ function toMeshData(raw: any): MeshData {
     volume: raw.volume,
     surface_area: raw.surface_area,
   };
+  // Free the WASM-side MeshData to prevent memory leak.
+  // Without this, each frame leaks ~100KB+ of WASM linear memory at 60fps.
+  if (typeof raw.free === 'function') raw.free();
+  return result;
 }
 
 export function version(): string {

@@ -150,4 +150,35 @@ mod tests {
         let b = a.offset(0.25);
         assert!(b.area() > a.area());
     }
+
+    /// C++ TEST(CrossSection, Square) — cube from extrusion matches cube
+    #[test]
+    fn test_cpp_cross_section_square() {
+        let cs = CrossSection::square(5.0);
+        let a = crate::manifold::Manifold::cube(
+            crate::linalg::Vec3::new(5.0, 5.0, 5.0),
+            false,
+        );
+        let b = crate::manifold::Manifold::extrude(
+            &cs.to_polygons(),
+            5.0,
+            0,
+            0.0,
+            crate::linalg::Vec2::new(1.0, 1.0),
+        );
+        let diff = a.difference(&b);
+        assert!(
+            diff.volume().abs() < 1e-6,
+            "CrossSection square extrusion should match cube, diff volume: {}",
+            diff.volume()
+        );
+    }
+
+    /// C++ TEST(CrossSection, Empty) — empty cross section from empty polygons
+    #[test]
+    fn test_cpp_cross_section_empty() {
+        let polys: crate::types::Polygons = vec![vec![], vec![]];
+        let cs = CrossSection::new(polys);
+        assert!(cs.area().abs() < 1e-10, "CrossSection from empty polygons should have zero area");
+    }
 }

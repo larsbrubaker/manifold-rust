@@ -218,6 +218,299 @@ impl ManifoldImpl {
         vert_flat_face
     }
 
+    /// Port of C++ Manifold::Impl::SetNormals()
+    /// Fills in vertex properties with unshared normals across edges bent
+    /// more than minSharpAngle (in degrees).
+    pub fn set_normals(&mut self, normal_idx: i32, min_sharp_angle: f64) {
+        if self.is_empty() || normal_idx < 0 {
+            return;
+        }
+        let normal_idx = normal_idx as usize;
+
+        let old_num_prop = self.num_prop;
+        let tri_is_flat_face = self.flat_faces();
+        let vert_flat_face = self.vert_flat_face(&tri_is_flat_face);
+
+        // Count sharp edges per vertex
+        let mut vert_num_sharp = vec![0i32; self.num_vert()];
+        for e in 0..self.halfedge.len() {
+            if !self.halfedge[e].is_forward() {
+                continue;
+            }
+            let pair = self.halfedge[e].paired_halfedge as usize;
+            let tri1 = e / 3;
+            let tri2 = pair / 3;
+            let d = dot(self.face_normal[tri1], self.face_normal[tri2]).clamp(-1.0, 1.0);
+            let dihedral = d.acos().to_degrees();
+            if dihedral > min_sharp_angle {
+                vert_num_sharp[self.halfedge[e].start_vert as usize] += 1;
+                vert_num_sharp[self.halfedge[e].end_vert as usize] += 1;
+            } else {
+                let face_split = tri_is_flat_face[tri1] != tri_is_flat_face[tri2]
+                    || (tri_is_flat_face[tri1]
+                        && tri_is_flat_face[tri2]
+                        && !self.mesh_relation.tri_ref[tri1]
+                            .same_face(&self.mesh_relation.tri_ref[tri2]));
+                if vert_flat_face[self.halfedge[e].start_vert as usize] == -2 && face_split {
+                    vert_num_sharp[self.halfedge[e].start_vert as usize] += 1;
+                }
+                if vert_flat_face[self.halfedge[e].end_vert as usize] == -2 && face_split {
+                    vert_num_sharp[self.halfedge[e].end_vert as usize] += 1;
+                }
+            }
+        }
+
+        // Expand properties to accommodate normals
+        let num_prop = old_num_prop.max(normal_idx + 3);
+        let num_prop_vert = self.num_prop_vert();
+        let mut old_properties = vec![0.0f64; num_prop * num_prop_vert];
+        // Copy old properties into wider array
+        for v in 0..num_prop_vert {
+            for p in 0..old_num_prop.min(num_prop) {
+                if v * old_num_prop + p < self.properties.len() {
+                    old_properties[v * num_prop + p] = self.properties[v * old_num_prop + p];
+                }
+            }
+        }
+        // Swap: old_properties now has the expanded copy, self.properties will be rebuilt
+        std::mem::swap(&mut self.properties, &mut old_properties);
+        // Now old_properties has the ORIGINAL properties data in expanded form
+        // and self.properties has the expanded layout too
+        // But actually we need self.properties to be the output. Let me redo this properly.
+        // old_properties = original expanded data
+        // self.properties = will be built up
+
+        // Actually match C++ more closely:
+        // old_properties gets original data (in new wider format), self.properties starts fresh
+        let mut new_properties = vec![0.0f64; num_prop * num_prop_vert];
+        // Copy old props into old_properties for reading
+        let orig_props = old_properties; // this already has the expanded copy
+        // new_properties will be written to
+
+        self.num_prop = num_prop;
+
+        // Save old prop assignments and reset
+        let old_halfedge_prop: Vec<i32> = self.halfedge.iter().map(|h| h.prop_vert).collect();
+        for h in self.halfedge.iter_mut() {
+            h.prop_vert = -1;
+        }
+
+        let num_edge = self.halfedge.len();
+        for start_edge in 0..num_edge {
+            if self.halfedge[start_edge].prop_vert >= 0 {
+                continue;
+            }
+            let vert = self.halfedge[start_edge].start_vert as usize;
+
+            if vert_num_sharp[vert] < 2 {
+                // Vertex has single normal
+                let normal = if vert_flat_face[vert] >= 0 {
+                    self.face_normal[vert_flat_face[vert] as usize]
+                } else {
+                    self.vert_normal[vert]
+                };
+
+                let mut last_prop: i32 = -1;
+                // ForVert traversal
+                let mut current = start_edge;
+                loop {
+                    let prop = old_halfedge_prop[current];
+                    self.halfedge[current].prop_vert = prop;
+                    if prop != last_prop {
+                        last_prop = prop;
+                        // Copy old properties to new
+                        let src_start = (prop as usize) * num_prop;
+                        for p in 0..old_num_prop.min(num_prop) {
+                            new_properties[src_start + p] = orig_props[src_start + p];
+                        }
+                        // Set normal
+                        new_properties[prop as usize * num_prop + normal_idx] = normal.x;
+                        new_properties[prop as usize * num_prop + normal_idx + 1] = normal.y;
+                        new_properties[prop as usize * num_prop + normal_idx + 2] = normal.z;
+                    }
+                    current = crate::types::next_halfedge(
+                        self.halfedge[current].paired_halfedge,
+                    ) as usize;
+                    if current == start_edge {
+                        break;
+                    }
+                }
+            } else {
+                // Vertex has multiple normals
+                let center_pos = self.vert_pos[vert];
+                let mut group: Vec<usize> = Vec::new();
+                let mut normals: Vec<Vec3> = Vec::new();
+
+                // Find a sharp edge to start on
+                let mut current = start_edge;
+                let mut prev_face = current / 3;
+                loop {
+                    let next = crate::types::next_halfedge(
+                        self.halfedge[current].paired_halfedge,
+                    ) as usize;
+                    let face = next / 3;
+                    let d = dot(self.face_normal[face], self.face_normal[prev_face]).clamp(-1.0, 1.0);
+                    let dihedral = d.acos().to_degrees();
+                    if dihedral > min_sharp_angle
+                        || tri_is_flat_face[face] != tri_is_flat_face[prev_face]
+                        || (tri_is_flat_face[face]
+                            && tri_is_flat_face[prev_face]
+                            && !self.mesh_relation.tri_ref[face]
+                                .same_face(&self.mesh_relation.tri_ref[prev_face]))
+                    {
+                        break;
+                    }
+                    current = next;
+                    prev_face = face;
+                    if current == start_edge {
+                        break;
+                    }
+                }
+
+                let end_edge = current;
+
+                // Calculate pseudo-normals between each sharp edge
+                // ForVert traversal with edge vector computation
+                normals.push(Vec3::splat(0.0));
+                let mut prev_edge_vec = Vec3::splat(0.0);
+                let mut first_iter = true;
+                current = end_edge;
+                let mut prev_face2 = end_edge / 3;
+                loop {
+                    let face = current / 3;
+                    let end_v = self.halfedge[current].end_vert as usize;
+                    let mut pos = self.vert_pos[end_v];
+                    let edge_vec = if self.is_inside_quad(current) {
+                        Vec3::new(f64::NAN, f64::NAN, f64::NAN)
+                    } else {
+                        if vert_num_sharp[end_v] < 2 {
+                            let n = if vert_flat_face[end_v] >= 0 {
+                                self.face_normal[vert_flat_face[end_v] as usize]
+                            } else {
+                                self.vert_normal[end_v]
+                            };
+                            let tan = self.tangent_from_normal(
+                                n,
+                                self.halfedge[current].paired_halfedge as usize,
+                            );
+                            pos = pos + Vec3::new(tan.x, tan.y, tan.z);
+                        }
+                        safe_normalize(pos - center_pos)
+                    };
+
+                    if !first_iter {
+                        // Check for sharp edge between prev_face2 and face
+                        let d = dot(self.face_normal[prev_face2], self.face_normal[face]).clamp(-1.0, 1.0);
+                        let dihedral = d.acos().to_degrees();
+                        if dihedral > min_sharp_angle
+                            || tri_is_flat_face[prev_face2] != tri_is_flat_face[face]
+                            || (tri_is_flat_face[prev_face2]
+                                && tri_is_flat_face[face]
+                                && !self.mesh_relation.tri_ref[prev_face2]
+                                    .same_face(&self.mesh_relation.tri_ref[face]))
+                        {
+                            normals.push(Vec3::splat(0.0));
+                        }
+
+                        group.push(normals.len() - 1);
+
+                        let ev = if edge_vec.x.is_finite() { edge_vec } else { prev_edge_vec };
+                        if prev_edge_vec.x.is_finite() && ev.x.is_finite() {
+                            let c = cross(ev, prev_edge_vec);
+                            let angle = angle_between(prev_edge_vec, ev);
+                            *normals.last_mut().unwrap() = *normals.last().unwrap()
+                                + safe_normalize(c) * angle;
+                        }
+                    } else {
+                        first_iter = false;
+                    }
+
+                    prev_edge_vec = if edge_vec.x.is_finite() { edge_vec } else { prev_edge_vec };
+                    prev_face2 = face;
+
+                    current = crate::types::next_halfedge(
+                        self.halfedge[current].paired_halfedge,
+                    ) as usize;
+                    if current == end_edge {
+                        // Handle the wrap-around: the last edge pairs with the first
+                        // We need to add the last group entry
+                        let face = current / 3;
+                        let d = dot(self.face_normal[prev_face2], self.face_normal[face]).clamp(-1.0, 1.0);
+                        let dihedral = d.acos().to_degrees();
+                        if dihedral > min_sharp_angle
+                            || tri_is_flat_face[prev_face2] != tri_is_flat_face[face]
+                            || (tri_is_flat_face[prev_face2]
+                                && tri_is_flat_face[face]
+                                && !self.mesh_relation.tri_ref[prev_face2]
+                                    .same_face(&self.mesh_relation.tri_ref[face]))
+                        {
+                            normals.push(Vec3::splat(0.0));
+                        }
+                        group.push(normals.len() - 1);
+                        break;
+                    }
+                }
+
+                // Normalize all normals
+                for n in normals.iter_mut() {
+                    *n = safe_normalize(*n);
+                }
+
+                // Assign property vertices
+                let mut last_group: usize = 0;
+                let mut last_prop: i32 = -1;
+                let mut new_prop: i32 = -1;
+                let mut idx = 0usize;
+                current = end_edge;
+                loop {
+                    let prop = old_halfedge_prop[current];
+                    let g = if idx < group.len() { group[idx] } else { 0 };
+
+                    if g != last_group && g != 0 && prop == last_prop {
+                        // Split property vertex
+                        last_group = g;
+                        new_prop = (new_properties.len() / num_prop) as i32;
+                        new_properties.resize(new_properties.len() + num_prop, 0.0);
+                        let src_start = (prop as usize) * num_prop;
+                        for p in 0..old_num_prop.min(num_prop) {
+                            new_properties[new_prop as usize * num_prop + p] = orig_props[src_start + p];
+                        }
+                        if g < normals.len() {
+                            new_properties[new_prop as usize * num_prop + normal_idx] = normals[g].x;
+                            new_properties[new_prop as usize * num_prop + normal_idx + 1] = normals[g].y;
+                            new_properties[new_prop as usize * num_prop + normal_idx + 2] = normals[g].z;
+                        }
+                    } else if prop != last_prop {
+                        // Update property vertex
+                        last_prop = prop;
+                        new_prop = prop;
+                        let src_start = (prop as usize) * num_prop;
+                        for p in 0..old_num_prop.min(num_prop) {
+                            new_properties[src_start + p] = orig_props[src_start + p];
+                        }
+                        if g < normals.len() {
+                            new_properties[prop as usize * num_prop + normal_idx] = normals[g].x;
+                            new_properties[prop as usize * num_prop + normal_idx + 1] = normals[g].y;
+                            new_properties[prop as usize * num_prop + normal_idx + 2] = normals[g].z;
+                        }
+                    }
+
+                    self.halfedge[current].prop_vert = new_prop;
+                    idx += 1;
+
+                    current = crate::types::next_halfedge(
+                        self.halfedge[current].paired_halfedge,
+                    ) as usize;
+                    if current == end_edge {
+                        break;
+                    }
+                }
+            }
+        }
+
+        self.properties = new_properties;
+    }
+
     pub fn vert_halfedge(&self) -> Vec<i32> {
         let mut vert_halfedge = vec![-1; self.num_vert()];
         for (idx, edge) in self.halfedge.iter().enumerate() {

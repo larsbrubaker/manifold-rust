@@ -70,7 +70,23 @@ export function init(container: HTMLElement): () => void {
     ]);
   }
 
+  let frameCount = 0;
+
   function update(silent = false) {
+    // Log operation params BEFORE calling WASM so we can reproduce crashes/hangs.
+    // Written to localStorage so it persists even if the tab crashes.
+    const opNames = ['union', 'intersection', 'difference'];
+    const shapeNames = ['cube', 'sphere', 'cylinder', 'spiky-dodecahedron'];
+    const params = {
+      frame: frameCount++,
+      shapeA: shapeNames[shapeA] || shapeA,
+      shapeB: shapeNames[shapeB] || shapeB,
+      op: opNames[op] || op,
+      offset: [offsetX, offsetY, offsetZ],
+      rotation: [rotX, rotY, rotZ],
+    };
+    localStorage.setItem('boolean-gallery-last-op', JSON.stringify(params));
+
     try {
       let data: MeshData;
       if (rotX !== 0 || rotY !== 0 || rotZ !== 0) {
@@ -82,7 +98,8 @@ export function init(container: HTMLElement): () => void {
       viewer.setColor(OP_COLORS[op] || 0x4488cc);
       errorBox.style.display = 'none';
       showReadout(data);
-    } catch {
+    } catch (e) {
+      console.error('Boolean op failed:', params, e);
       if (!silent) {
         errorBox.style.display = 'block';
         errorBox.innerHTML = '<strong>Boolean operation failed.</strong><br>Try adjusting the offset.';

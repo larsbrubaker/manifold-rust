@@ -912,6 +912,30 @@ impl BVec4 {
     }
 }
 
+impl Index<usize> for BVec4 {
+    type Output = bool;
+    fn index(&self, i: usize) -> &bool {
+        match i {
+            0 => &self.x,
+            1 => &self.y,
+            2 => &self.z,
+            3 => &self.w,
+            _ => panic!("BVec4 index out of range: {i}"),
+        }
+    }
+}
+impl IndexMut<usize> for BVec4 {
+    fn index_mut(&mut self, i: usize) -> &mut bool {
+        match i {
+            0 => &mut self.x,
+            1 => &mut self.y,
+            2 => &mut self.z,
+            3 => &mut self.w,
+            _ => panic!("BVec4 index out of range: {i}"),
+        }
+    }
+}
+
 impl Not for BVec4 {
     type Output = BVec4;
     fn not(self) -> BVec4 {

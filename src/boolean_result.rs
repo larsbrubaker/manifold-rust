@@ -660,10 +660,25 @@ fn create_properties(out_r: &mut ManifoldImpl, in_p: &ManifoldImpl, in_q: &Manif
         }
     }
 
-    // Build properties
+    // Build properties with deduplication (matches C++ CreateProperties)
     out_r.properties.clear();
     out_r.properties.reserve(out_r.num_vert() * num_prop);
     let mut idx = 0i32;
+
+    // Property vertex deduplication structures
+    let id_miss_prop = out_r.num_vert() as i32;
+    // propIdx: indexed by output vertex; bins hold ([pq, key_z, key_w], prop_idx)
+    let mut prop_idx: Vec<Vec<([i32; 3], i32)>> = vec![Vec::new(); out_r.num_vert() + 1];
+    // propMissIdx: [0] for mesh Q, [1] for mesh P — indexed by source propVert
+    let mut prop_miss_idx: [Vec<i32>; 2] = [
+        vec![-1i32; in_q.num_prop_vert()],
+        vec![-1i32; in_p.num_prop_vert()],
+    ];
+
+    #[inline]
+    fn next3(i: usize) -> usize { (i + 1) % 3 }
+    #[inline]
+    fn prev3(i: usize) -> usize { (i + 2) % 3 }
 
     for tri in 0..num_tri {
         if out_r.halfedge[3 * tri].start_vert < 0 {
@@ -671,14 +686,79 @@ fn create_properties(out_r: &mut ManifoldImpl, in_p: &ManifoldImpl, in_q: &Manif
         }
         let ref_pq = out_r.mesh_relation.tri_ref[tri];
         let pq = ref_pq.mesh_id == 0;
+        let pq_flag: i32 = if pq { 0 } else { 1 };
         let old_num_prop = if pq { num_prop_p } else { num_prop_q };
         let properties = if pq { &in_p.properties } else { &in_q.properties };
         let halfedge = if pq { &in_p.halfedge } else { &in_q.halfedge };
 
         for i in 0..3 {
+            let vert = out_r.halfedge[3 * tri + i].start_vert;
+            let uvw = bary[3 * tri + i];
+
+            // Build dedup key: [pq_flag, vert_key, key_z, key_w]
+            let mut key = [pq_flag, id_miss_prop, -1i32, -1i32];
+            if old_num_prop > 0 && 3 * ref_pq.face_id as usize + 2 < halfedge.len() {
+                let mut edge: i32 = -2;
+                for j in 0..3usize {
+                    if uvw[j] == 1.0 {
+                        // On a retained vertex
+                        key[2] = halfedge[3 * ref_pq.face_id as usize + j].prop_vert;
+                        edge = -1;
+                        break;
+                    }
+                    if uvw[j] == 0.0 {
+                        edge = j as i32;
+                    }
+                }
+                if edge >= 0 {
+                    // On an edge: both prop verts must match
+                    let p0 = halfedge[3 * ref_pq.face_id as usize + next3(edge as usize)].prop_vert;
+                    let p1 = halfedge[3 * ref_pq.face_id as usize + prev3(edge as usize)].prop_vert;
+                    key[1] = vert;
+                    key[2] = p0.min(p1);
+                    key[3] = p0.max(p1);
+                } else if edge == -2 {
+                    // Interior point
+                    key[1] = vert;
+                }
+            }
+
+            // Attempt dedup lookup
+            let mut found = false;
+            if key[1] == id_miss_prop && key[2] >= 0 {
+                // Vertex case: use propMissIdx
+                let pq_idx = key[0] as usize;
+                let prop_key = key[2] as usize;
+                if pq_idx < 2 && prop_key < prop_miss_idx[pq_idx].len() {
+                    let entry = prop_miss_idx[pq_idx][prop_key];
+                    if entry >= 0 {
+                        out_r.halfedge[3 * tri + i].prop_vert = entry;
+                        found = true;
+                    } else {
+                        prop_miss_idx[pq_idx][prop_key] = idx;
+                    }
+                }
+            } else {
+                // Edge/interior case: use propIdx
+                let bin_idx = key[1] as usize;
+                if bin_idx < prop_idx.len() {
+                    let search_key = [key[0], key[2], key[3]];
+                    if let Some(entry) = prop_idx[bin_idx].iter().find(|(k, _)| *k == search_key) {
+                        out_r.halfedge[3 * tri + i].prop_vert = entry.1;
+                        found = true;
+                    } else {
+                        prop_idx[bin_idx].push((search_key, idx));
+                    }
+                }
+            }
+
+            if found {
+                continue;
+            }
+
+            // No dedup match — assign new property vertex and interpolate
             out_r.halfedge[3 * tri + i].prop_vert = idx;
             idx += 1;
-            let uvw = bary[3 * tri + i];
 
             for p in 0..num_prop {
                 if p < old_num_prop && 3 * ref_pq.face_id as usize + 2 < halfedge.len() {
@@ -686,9 +766,9 @@ fn create_properties(out_r: &mut ManifoldImpl, in_p: &ManifoldImpl, in_q: &Manif
                     for j in 0..3 {
                         let prop_vert = halfedge[3 * ref_pq.face_id as usize + j].prop_vert;
                         if prop_vert >= 0 {
-                            let prop_idx = old_num_prop * prop_vert as usize + p;
-                            if prop_idx < properties.len() {
-                                old_props[j] = properties[prop_idx];
+                            let prop_idx_val = old_num_prop * prop_vert as usize + p;
+                            if prop_idx_val < properties.len() {
+                                old_props[j] = properties[prop_idx_val];
                             }
                         }
                     }
@@ -723,6 +803,24 @@ pub fn boolean_result(
     let c1 = if op == OpType::Intersect { 0 } else { 1 };
     let c2 = if op == OpType::Add { 1 } else { 0 };
     let c3 = if op == OpType::Intersect { 1 } else { -1 };
+
+    // Early returns for empty inputs (matches C++ boolean_result.cpp lines 680-690)
+    if in_p.is_empty() {
+        if !in_q.is_empty() && op == OpType::Add {
+            return in_q.clone();
+        }
+        return ManifoldImpl::new();
+    } else if in_q.is_empty() {
+        if op == OpType::Intersect {
+            return ManifoldImpl::new();
+        }
+        return in_p.clone();
+    }
+
+    // Check for valid (overflow) result
+    if !bool3.valid {
+        return ManifoldImpl::new();
+    }
 
     let invert_q = op == OpType::Subtract;
 
@@ -892,7 +990,6 @@ pub fn boolean_result(
         &face_pq2r[in_p.num_tri()..],
         false,
     );
-
     append_new_edges(
         &mut out_r,
         &mut face_ptr_r,
@@ -901,7 +998,6 @@ pub fn boolean_result(
         &face_pq2r,
         in_p.num_tri(),
     );
-
     append_whole_edges(
         &mut out_r,
         &mut face_ptr_r,
@@ -942,7 +1038,7 @@ pub fn boolean_result(
     // Finalize
     out_r.calculate_bbox();
     out_r.sort_geometry();
-    // IncrementMeshIDs will be needed for CSG tree; skip for now
+    out_r.increment_mesh_ids();
 
     out_r
 }
