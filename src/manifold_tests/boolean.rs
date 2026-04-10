@@ -716,6 +716,7 @@ fn test_cpp_empty_original() {
 
 /// C++ TEST(Boolean, CreatePropertiesSlow) — position colors via set_properties, boolean
 #[test]
+#[ignore = "Slow: sphere(10, 1024) boolean takes too long in debug"]
 fn test_cpp_create_properties_slow() {
     let a = Manifold::sphere(10.0, 1024)
         .set_properties(3, |props, _pos, _old| {

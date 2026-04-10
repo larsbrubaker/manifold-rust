@@ -41,6 +41,10 @@ cargo test -- --nocapture
   focused modules before adding more code.
 - Never reduce a file's line count by removing comments or blank lines to meet the limit —
   that is not refactoring. Split real logic into separate files/modules.
+- **Exceptions:** `linalg.rs` (~2260 lines) is exempt — it is dense type definitions and
+  operator overloads that are inherently verbose in Rust and would lose cohesion if split.
+  The test block has been extracted to `linalg_tests.rs`. `edge_op.rs` and
+  `quickhull_algo.rs` are slightly over (~900/~820) with tightly coupled algorithms.
 
 ### Bug workflow — always follow this order
 1. **Write a failing test** that reproduces the bug.

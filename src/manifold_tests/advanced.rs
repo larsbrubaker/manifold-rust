@@ -437,7 +437,13 @@ fn test_cpp_properties_min_gap_transformed() {
 /// C++ TEST(CrossSection, MirrorUnion) — CrossSection mirror and union
 #[test]
 fn test_cpp_cross_section_mirror_union() {
-    let a = CrossSection::square(5.0).translate(Vec2::new(-2.5, -2.5));
+    // C++ uses CrossSection::Square({5,5}, true) which centers at origin
+    let a = CrossSection::new(vec![vec![
+        Vec2::new(-2.5, -2.5),
+        Vec2::new(2.5, -2.5),
+        Vec2::new(2.5, 2.5),
+        Vec2::new(-2.5, 2.5),
+    ]]);
     let b = a.translate(Vec2::new(2.5, 2.5));
     let cross = a.union(&b).union(&b.mirror(Vec2::new(1.0, 1.0)));
     let _result = Manifold::extrude(&cross.to_polygons(), 5.0, 0, 0.0, Vec2::new(1.0, 1.0));

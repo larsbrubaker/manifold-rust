@@ -133,16 +133,20 @@ impl CrossSection {
         )
     }
 
+    /// Mirror through a line perpendicular to the given axis vector.
+    /// Matches C++ `CrossSection::Mirror(ax)` which uses `I - 2*n*n^T`.
     pub fn mirror(&self, axis: Vec2) -> Self {
         let len_sq = axis.x * axis.x + axis.y * axis.y;
         if len_sq < 1e-20 {
             return Self::default();
         }
-        // Reflection matrix: R = 2*(n*n^T)/|n|^2 - I
-        let ax = axis.x;
-        let ay = axis.y;
-        let a = (ax * ax - ay * ay) / len_sq;
-        let b = 2.0 * ax * ay / len_sq;
+        // Reflection matrix: R = I - 2*n*n^T where n = normalize(axis)
+        let nx = axis.x / len_sq.sqrt();
+        let ny = axis.y / len_sq.sqrt();
+        let r00 = 1.0 - 2.0 * nx * nx;
+        let r01 = -2.0 * nx * ny;
+        let r10 = -2.0 * nx * ny;
+        let r11 = 1.0 - 2.0 * ny * ny;
         Self::new(
             self.polygons
                 .iter()
@@ -150,7 +154,7 @@ impl CrossSection {
                     // Mirror reverses winding, so reverse the polygon
                     poly.iter()
                         .rev()
-                        .map(|p| Vec2::new(a * p.x + b * p.y, b * p.x - a * p.y))
+                        .map(|p| Vec2::new(r00 * p.x + r01 * p.y, r10 * p.x + r11 * p.y))
                         .collect()
                 })
                 .collect(),
