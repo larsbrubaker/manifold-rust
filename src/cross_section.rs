@@ -108,8 +108,158 @@ impl CrossSection {
         Self::new(from_paths(&difference_d(&to_paths(&self.polygons), &to_paths(&other.polygons), FillRule::NonZero, 6)))
     }
 
+    pub fn scale(&self, v: Vec2) -> Self {
+        Self::new(
+            self.polygons
+                .iter()
+                .map(|poly| poly.iter().map(|p| Vec2::new(p.x * v.x, p.y * v.y)).collect())
+                .collect(),
+        )
+    }
+
+    pub fn rotate(&self, degrees: f64) -> Self {
+        let rad = degrees.to_radians();
+        let c = rad.cos();
+        let s = rad.sin();
+        Self::new(
+            self.polygons
+                .iter()
+                .map(|poly| {
+                    poly.iter()
+                        .map(|p| Vec2::new(p.x * c - p.y * s, p.x * s + p.y * c))
+                        .collect()
+                })
+                .collect(),
+        )
+    }
+
+    pub fn mirror(&self, axis: Vec2) -> Self {
+        let len_sq = axis.x * axis.x + axis.y * axis.y;
+        if len_sq < 1e-20 {
+            return Self::default();
+        }
+        // Reflection matrix: R = 2*(n*n^T)/|n|^2 - I
+        let ax = axis.x;
+        let ay = axis.y;
+        let a = (ax * ax - ay * ay) / len_sq;
+        let b = 2.0 * ax * ay / len_sq;
+        Self::new(
+            self.polygons
+                .iter()
+                .map(|poly| {
+                    // Mirror reverses winding, so reverse the polygon
+                    poly.iter()
+                        .rev()
+                        .map(|p| Vec2::new(a * p.x + b * p.y, b * p.x - a * p.y))
+                        .collect()
+                })
+                .collect(),
+        )
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.polygons.is_empty() || self.polygons.iter().all(|p| p.len() < 3)
+    }
+
+    pub fn num_vert(&self) -> usize {
+        self.polygons.iter().map(|p| p.len()).sum()
+    }
+
+    pub fn num_contour(&self) -> usize {
+        self.polygons.iter().filter(|p| p.len() >= 3).count()
+    }
+
+    /// Decompose into connected components. Each component maintains its
+    /// contours (outer boundary + holes).
+    pub fn decompose(&self) -> Vec<Self> {
+        // Simple decomposition: use clipper union to normalize, then separate
+        // non-overlapping groups by bounding box.
+        let normalized = self.union(&Self::default());
+        let polys = &normalized.polygons;
+        if polys.is_empty() {
+            return vec![];
+        }
+
+        // Group polygons: outer polygons are CCW (positive area), holes are CW.
+        // Each outer polygon starts a new component, holes are assigned to the
+        // outer polygon whose bbox contains them.
+        let mut outers: Vec<(usize, Rect)> = Vec::new();
+        let mut holes: Vec<(usize, Vec2)> = Vec::new();
+
+        for (i, poly) in polys.iter().enumerate() {
+            if poly.len() < 3 {
+                continue;
+            }
+            let sa = signed_area(poly);
+            if sa >= 0.0 {
+                // Outer (CCW in our convention)
+                let mut r = Rect::new();
+                for &p in poly {
+                    r.union_point(p);
+                }
+                outers.push((i, r));
+            } else {
+                // Hole — use first point as representative
+                holes.push((i, poly[0]));
+            }
+        }
+
+        let mut components: Vec<Vec<usize>> = outers.iter().map(|(i, _)| vec![*i]).collect();
+
+        for (hole_idx, pt) in &holes {
+            // Find smallest outer bbox that contains this hole's representative point
+            let mut best = None;
+            let mut best_area = f64::MAX;
+            for (ci, (_, rect)) in outers.iter().enumerate() {
+                if rect.contains_point(*pt) {
+                    let a = (rect.max.x - rect.min.x) * (rect.max.y - rect.min.y);
+                    if a < best_area {
+                        best_area = a;
+                        best = Some(ci);
+                    }
+                }
+            }
+            if let Some(ci) = best {
+                components[ci].push(*hole_idx);
+            }
+        }
+
+        components
+            .into_iter()
+            .map(|indices| {
+                let component_polys = indices.into_iter().map(|i| polys[i].clone()).collect();
+                Self::new(component_polys)
+            })
+            .collect()
+    }
+
     pub fn offset(&self, delta: f64) -> Self {
         Self::new(from_paths(&inflate_paths_d(&to_paths(&self.polygons), delta, JoinType::Round, EndType::Polygon, 2.0, 6, 0.0)))
+    }
+
+    /// Offset with explicit join type and segment count.
+    /// join_type: 0=Square, 1=Round, 2=Miter
+    pub fn offset_with_params(
+        &self,
+        delta: f64,
+        join_type: i32,
+        miter_limit: f64,
+        circular_segments: i32,
+    ) -> Self {
+        let jt = match join_type {
+            0 => JoinType::Square,
+            2 => JoinType::Miter,
+            _ => JoinType::Round,
+        };
+        Self::new(from_paths(&inflate_paths_d(
+            &to_paths(&self.polygons),
+            delta,
+            jt,
+            EndType::Polygon,
+            miter_limit,
+            6,
+            0.0,
+        )))
     }
 
     pub fn minkowski_sum(&self, other: &Self) -> Self {

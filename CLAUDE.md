@@ -34,13 +34,35 @@ cargo test test_name -- --exact
 cargo test -- --nocapture
 ```
 
-## Code Quality
+## Coding Standards
 
-**Names** — Follow Rust conventions (`snake_case` for functions/variables, `PascalCase` for types, `SCREAMING_SNAKE_CASE` for constants). Mirror C++ names where they are clear; use better Rust names where they aren't.
+### File length
+- **Hard limit: 800 lines.** Files that reach this must be refactored by splitting into
+  focused modules before adding more code.
+- Never reduce a file's line count by removing comments or blank lines to meet the limit —
+  that is not refactoring. Split real logic into separate files/modules.
 
-**Comments** — Explain *why*, not *what*. When porting, note where Rust differs from C++ and why.
+### Bug workflow — always follow this order
+1. **Write a failing test** that reproduces the bug.
+2. **Fix the bug.**
+3. **Confirm the test passes** (`cargo test`).
 
-**Refactoring** — Improve code when it serves a purpose, not for aesthetics.
+Never commit a bug fix that isn't covered by a test.
+
+### General style
+- Prefer `Result`/`Option` over `unwrap` in library code; `expect` is acceptable in
+  `main` for startup failures with a clear message.
+- Keep handler functions focused — if a handler grows complex, extract helpers.
+- Avoid unsafe code unless there is no alternative; document every `unsafe` block.
+
+### Names
+Follow Rust conventions (`snake_case` for functions/variables, `PascalCase` for types, `SCREAMING_SNAKE_CASE` for constants). Mirror C++ names where they are clear; use better Rust names where they aren't.
+
+### Comments
+Explain *why*, not *what*. When porting, note where Rust differs from C++ and why.
+
+### Refactoring
+Improve code when it serves a purpose, not for aesthetics.
 
 ## C++ to Rust Porting Rules
 

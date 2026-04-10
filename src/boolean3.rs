@@ -692,7 +692,10 @@ pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
     out.initialize_original();
     out.calculate_bbox();
     out.set_epsilon(-1.0, false);
+    // required to remove parts that are smaller than the tolerance (matches C++)
+    crate::edge_op::remove_degenerates(&mut out, 0);
     out.sort_geometry();
+    out.increment_mesh_ids();
     out.set_normals_and_coplanar();
     out
 }
