@@ -277,14 +277,18 @@ impl Manifold {
     /// Port of C++ Manifold::Simplify()
     pub fn simplify(&self, tolerance: f64) -> Self {
         let mut out = self.imp.clone();
-        let old_epsilon = out.epsilon;
-        if tolerance > 0.0 {
-            out.epsilon = tolerance;
+        let old_tolerance = out.epsilon;
+        let mut tol = tolerance;
+        if tol == 0.0 {
+            tol = old_tolerance;
+        }
+        if tol > old_tolerance {
+            out.epsilon = tol;
+            out.set_normals_and_coplanar();
         }
         crate::edge_op::simplify_topology(&mut out, 0);
         out.sort_geometry();
-        out.set_normals_and_coplanar();
-        out.epsilon = old_epsilon; // restore original tolerance
+        out.epsilon = old_tolerance;
         Self::from_impl(out)
     }
 

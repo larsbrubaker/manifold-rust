@@ -24,13 +24,15 @@ impl ManifoldImpl {
 
     pub fn sharpen_edges(&self, min_sharp_angle: f64, min_smoothness: f64) -> Vec<Smoothness> {
         let mut out = Vec::new();
-        let min_radians = radians(min_sharp_angle);
+        // Clamp to avoid float-noise false positives (matches C++ kMinSharpAngle)
+        let min_radians = radians(min_sharp_angle.max(1e-4));
         for e in 0..self.halfedge.len() {
             if !self.halfedge[e].is_forward() {
                 continue;
             }
             let pair = self.halfedge[e].paired_halfedge as usize;
-            let dihedral = dot(self.face_normal[e / 3], self.face_normal[pair / 3]).acos();
+            let d = dot(self.face_normal[e / 3], self.face_normal[pair / 3]).clamp(-1.0, 1.0);
+            let dihedral = d.acos();
             if dihedral > min_radians {
                 out.push(Smoothness { halfedge: e, smoothness: min_smoothness });
                 out.push(Smoothness { halfedge: pair, smoothness: min_smoothness });

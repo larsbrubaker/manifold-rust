@@ -20,6 +20,11 @@ use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{cross, dot, length, Vec3, Vec4};
 use crate::types::{K_PI, K_TWO_PI, Smoothness, TriRef};
 
+/// Minimum sharp angle in degrees, below which edges are considered coplanar.
+/// Floating point noise in the dihedral angle computation can reach ~1e-6
+/// degrees for nearly-parallel face normals; this threshold must exceed that.
+const K_MIN_SHARP_ANGLE: f64 = 1e-4;
+
 #[inline]
 pub(super) fn vec3_from_vec4(v: Vec4) -> Vec3 {
     Vec3::new(v.x, v.y, v.z)
@@ -221,6 +226,9 @@ impl ManifoldImpl {
         if self.is_empty() || normal_idx < 0 {
             return;
         }
+        // Clamp to avoid treating nearly-coplanar faces as sharp due to
+        // floating point noise in the dihedral computation (~1e-6 degrees).
+        let min_sharp_angle = min_sharp_angle.max(K_MIN_SHARP_ANGLE);
         let normal_idx = normal_idx as usize;
 
         let old_num_prop = self.num_prop;
