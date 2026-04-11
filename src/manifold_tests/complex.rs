@@ -305,6 +305,36 @@ fn test_cpp_perturb3() {
         "Perturb3 area: {} expected 26.972", nasty_gear.surface_area());
 }
 
+/// C++ TEST(Boolean, MeshGLRoundTrip) — boolean result preserves mesh runs through MeshGL
+#[test]
+fn test_cpp_meshgl_round_trip() {
+    let cube = Manifold::cube(Vec3::splat(2.0), false);
+    assert!(cube.original_id() >= 0, "Cube should have positive originalID");
+    let _original = cube.get_mesh_gl(0);
+
+    let result = cube.clone() + cube.translate(Vec3::new(1.0, 1.0, 0.0));
+
+    assert!(result.original_id() < 0, "Boolean result should have negative originalID");
+    // Result should have ~18 verts, 32 tris (two overlapping cubes)
+    assert!(result.num_vert() > 0);
+    assert!(result.num_tri() > 0);
+
+    let in_gl = result.get_mesh_gl(0);
+    // Boolean of 2 meshes → 2 runs
+    assert_eq!(in_gl.run_original_id.len(), 2,
+        "MeshGLRoundTrip: expected 2 runs, got {}", in_gl.run_original_id.len());
+
+    // Reconstruct from MeshGL
+    let result2 = Manifold::from_mesh_gl(&in_gl);
+    assert!(result2.original_id() < 0);
+    assert!(result2.num_vert() > 0);
+    assert!(result2.num_tri() > 0);
+
+    let out_gl = result2.get_mesh_gl(0);
+    assert_eq!(out_gl.run_original_id.len(), 2,
+        "MeshGLRoundTrip: roundtrip should preserve 2 runs, got {}", out_gl.run_original_id.len());
+}
+
 /// C++ TEST(BooleanComplex, CraycloudBool) — subtract complements, simplify to empty
 #[test]
 #[ignore = "OBJ mesh not loading as manifold (663 halfedges, not multiple of 6)"]

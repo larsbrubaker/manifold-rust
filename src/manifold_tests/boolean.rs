@@ -744,8 +744,12 @@ fn test_cpp_simplify() {
     assert!(result.num_tri() > 1000,
         "Simplify: pre-simplify should have many tris, got {}", result.num_tri());
 
-    // Reconstruct from MeshGL to wipe face references (matches C++ second part)
-    let mesh_gl = result.get_mesh_gl(0);
+    // Clear face/run data and reconstruct (matches C++ test: resultGL.faceID.clear())
+    let mut mesh_gl = result.get_mesh_gl(0);
+    mesh_gl.face_id.clear();
+    mesh_gl.run_original_id.clear();
+    mesh_gl.run_index.clear();
+    mesh_gl.run_transform.clear();
     let result2 = Manifold::from_mesh_gl(&mesh_gl);
     let simplified = result2.simplify(0.0);
     // 2x1x1 box: 10 faces × 2 tris = 20
