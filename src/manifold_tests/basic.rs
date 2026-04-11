@@ -710,3 +710,53 @@ fn test_cpp_manifold_warp_batch() {
     assert_eq!(shape1.volume(), shape2.volume(), "WarpBatch: volumes differ");
     assert_eq!(shape1.surface_area(), shape2.surface_area(), "WarpBatch: areas differ");
 }
+
+/// C++ TEST(Manifold, Warp2) — extrude circle then warp into arc
+#[test]
+fn test_cpp_manifold_warp2() {
+    use crate::cross_section::CrossSection;
+    let circle = CrossSection::circle(5.0, 20).translate(Vec2::new(10.0, 10.0));
+    let shape = Manifold::extrude(
+        &circle.to_polygons(), 2.0, 10, 0.0, Vec2::new(1.0, 1.0),
+    ).warp(|v: &mut Vec3| {
+        let n_segments = 10;
+        let angle_step = 2.0 / 3.0 * std::f64::consts::PI / n_segments as f64;
+        let z_index = n_segments - 1 - v.z.round() as i32;
+        let angle = z_index as f64 * angle_step;
+        let new_z = v.y;
+        let new_y = v.x * angle.sin();
+        let new_x = v.x * angle.cos();
+        v.x = new_x;
+        v.y = new_y;
+        v.z = new_z;
+    });
+
+    let simplified = Manifold::batch_boolean(&[shape.clone()], OpType::Add);
+
+    assert!((shape.volume() - simplified.volume()).abs() < 0.0001,
+        "Warp2: volume mismatch {} vs {}", shape.volume(), simplified.volume());
+    assert!((shape.surface_area() - simplified.surface_area()).abs() < 0.0001,
+        "Warp2: area mismatch {} vs {}", shape.surface_area(), simplified.surface_area());
+    assert!((shape.volume() - 321.0).abs() < 1.0,
+        "Warp2: volume {} expected ~321", shape.volume());
+}
+
+/// C++ TEST(Manifold, FaceIDRoundTrip) — faceID preserved through round-trip
+#[test]
+fn test_cpp_manifold_face_id_round_trip() {
+    let cube = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false);
+    assert!(cube.original_id() >= 0);
+    let mut in_gl = cube.get_mesh_gl(3);
+
+    // Cube has 12 tris, 6 faces → 6 unique faceIDs
+    let unique_in: std::collections::HashSet<u32> = in_gl.face_id.iter().copied().collect();
+    assert_eq!(unique_in.len(), 6, "FaceIDRoundTrip: expected 6 unique faceIDs, got {}", unique_in.len());
+
+    // Override with just 2 unique values
+    in_gl.face_id = vec![3, 3, 3, 3, 3, 3, 5, 5, 5, 5, 5, 5];
+
+    let cube2 = Manifold::from_mesh_gl(&in_gl);
+    let out_gl = cube2.get_mesh_gl(3);
+    let unique_out: std::collections::HashSet<u32> = out_gl.face_id.iter().copied().collect();
+    assert_eq!(unique_out.len(), 2, "FaceIDRoundTrip: expected 2 unique faceIDs, got {}", unique_out.len());
+}

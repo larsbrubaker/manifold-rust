@@ -731,3 +731,47 @@ fn test_cpp_cross_section_negative_offset() {
     assert!((dilated.area() - expected).abs() < 1.0,
         "NegativeOffset area: {} expected {}", dilated.area(), expected);
 }
+
+/// C++ TEST(Boolean, EdgeUnion) — two cubes sharing an edge stay disjoint
+#[test]
+fn test_cpp_boolean_edge_union() {
+    let mut cubes = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false);
+    cubes = cubes.union(&cubes.translate(Vec3::new(1.0, 1.0, 0.0)));
+    assert!(!cubes.is_empty(), "EdgeUnion should not be empty");
+    // Two disjoint cubes: 16 verts, 24 tris total
+    assert_eq!(cubes.num_vert(), 16, "EdgeUnion: {} verts expected 16", cubes.num_vert());
+    assert_eq!(cubes.num_tri(), 24, "EdgeUnion: {} tris expected 24", cubes.num_tri());
+}
+
+/// C++ TEST(Boolean, Precision2) — cubes that barely overlap vs barely don't
+#[test]
+fn test_cpp_boolean_precision2() {
+    let scale = 1000.0;
+    let k_precision: f64 = crate::types::K_PRECISION;
+    let cube = Manifold::cube(Vec3::splat(scale), false);
+    let distance = scale * (1.0 - k_precision / 2.0);
+
+    let cube2 = cube.translate(Vec3::splat(-distance));
+    let intersection = cube.intersection(&cube2);
+    assert!(intersection.is_empty(),
+        "Precision2: cubes offset by scale*(1-kPrec/2) should have empty intersection");
+
+    let cube3 = cube2.translate(Vec3::splat(scale * k_precision));
+    let intersection2 = cube.intersection(&cube3);
+    assert!(!intersection2.is_empty(),
+        "Precision2: cubes shifted back by scale*kPrec should intersect");
+}
+
+/// C++ TEST(Manifold, MeshID) — two imports of same MeshGL get different IDs
+#[test]
+fn test_cpp_manifold_mesh_id() {
+    let cube = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false);
+    let mut cube_gl = cube.get_mesh_gl(3);
+    cube_gl.run_index.clear();
+    cube_gl.run_original_id.clear();
+    let cube1 = Manifold::from_mesh_gl(&cube_gl);
+    let cube2 = Manifold::from_mesh_gl(&cube_gl);
+    let id1 = cube1.get_mesh_gl(3).run_original_id[0];
+    let id2 = cube2.get_mesh_gl(3).run_original_id[0];
+    assert_ne!(id1, id2, "MeshID: two imports should get different IDs: {} vs {}", id1, id2);
+}
