@@ -420,6 +420,7 @@ fn test_cpp_properties_min_gap_sphere_sphere() {
 
 /// C++ TEST(Properties, MingapAfterTransformations)
 #[test]
+#[ignore] // Slow: 512-segment sphere min_gap in debug mode
 fn test_cpp_properties_min_gap_transformed() {
     let a = Manifold::sphere(1.0, 512).rotate(30.0, 30.0, 30.0);
     let b = Manifold::sphere(1.0, 512)

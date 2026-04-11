@@ -416,38 +416,32 @@ fn intersect12(
 
     let mut result = Intersections::default();
 
-    // For each edge of a, generate its bounding box and test against faces of b
+    // For each forward edge of a, generate its bounding box
     let n = a.halfedge.len();
-    for query_idx in 0..n {
-        if !a.halfedge[query_idx].is_forward() {
-            continue;
-        }
-        let edge_box = BBox::from_points(
-            a.vert_pos[a.halfedge[query_idx].start_vert as usize],
-            a.vert_pos[a.halfedge[query_idx].end_vert as usize],
-        );
-        if edge_box.is_empty() {
-            continue;
-        }
-        for leaf_idx in 0..collider.leaf_count() {
-            // Manual broadphase check since we need per-edge iteration
-            let leaf_box = &collider.leaf_bbox()[leaf_idx];
-            if !edge_box.does_overlap_box(leaf_box) {
-                continue;
+    collider.collisions_fn(
+        |query_idx| {
+            if !a.halfedge[query_idx].is_forward() {
+                return BBox::default(); // empty box, will be skipped
             }
-
-            let (x, v) = kernel12(query_idx, leaf_idx, a, b, in_p, in_q, expand_p, forward);
+            BBox::from_points(
+                a.vert_pos[a.halfedge[query_idx].start_vert as usize],
+                a.vert_pos[a.halfedge[query_idx].end_vert as usize],
+            )
+        },
+        n,
+        |query_idx, face_idx| {
+            let (x, v) = kernel12(query_idx, face_idx, a, b, in_p, in_q, expand_p, forward);
             if v.x.is_finite() {
                 if forward {
-                    result.p1q2.push([query_idx as i32, leaf_idx as i32]);
+                    result.p1q2.push([query_idx as i32, face_idx as i32]);
                 } else {
-                    result.p1q2.push([leaf_idx as i32, query_idx as i32]);
+                    result.p1q2.push([face_idx as i32, query_idx as i32]);
                 }
                 result.x12.push(x);
                 result.v12.push(v);
             }
-        }
-    }
+        },
+    );
 
     // Sort by edge index for deterministic results
     let mut indices: Vec<usize> = (0..result.p1q2.len()).collect();
@@ -521,24 +515,27 @@ fn winding03(
     // For each representative vertex, compute winding number via kernel02
     let mut w03 = vec![0i32; a.vert_pos.len()];
 
-    for &vi in &verts {
+    // Use BVH for winding number queries.
+    // The winding number shoots a Z-ray, so we need XY overlap with infinite Z.
+    // Build query boxes with the vertex XY position and infinite Z extent.
+    let query_boxes: Vec<(usize, BBox)> = verts.iter().map(|&vi| {
         let pt = a.vert_pos[vi];
-        let mut total = 0i32;
-        for leaf_idx in 0..collider.leaf_count() {
-            let leaf_box = &collider.leaf_bbox()[leaf_idx];
-            // Use XY-only overlap check: the winding number shoots a ray in Z
-            // C++ Box::DoesOverlap(vec3) only checks x,y (projected in z)
-            if !(pt.x <= leaf_box.max.x && pt.x >= leaf_box.min.x
-                && pt.y <= leaf_box.max.y && pt.y >= leaf_box.min.y) {
-                continue;
-            }
-            let (s02, z02) = kernel02(vi, leaf_idx, a, b, expand_p, forward);
+        let qbox = BBox::from_points(
+            Vec3::new(pt.x, pt.y, f64::NEG_INFINITY),
+            Vec3::new(pt.x, pt.y, f64::INFINITY),
+        );
+        (vi, qbox)
+    }).collect();
+
+    // For each vert, query the BVH
+    for &(vi, ref qbox) in &query_boxes {
+        collider.collisions_with_boxes(std::slice::from_ref(qbox), false, |_qi, face_idx| {
+            let (s02, z02) = kernel02(vi, face_idx, a, b, expand_p, forward);
             if z02.is_finite() {
                 let contribution = s02 * if forward { 1 } else { -1 };
-                total += contribution;
                 w03[vi] += contribution;
             }
-        }
+        });
     }
 
     // Flood fill: propagate representative's winding number to all component members

@@ -12,63 +12,249 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Phase 10: collider — API-compatible foundation for overlap queries and
-// geometric distance checks. The current implementation uses a deterministic
-// brute-force broadphase while preserving the same entry points the later
-// boolean phases will rely on.
+// Collider — BVH-based broadphase collision detection.
+// Uses a radix tree built from Morton codes for O(n log n) queries,
+// matching the C++ Manifold implementation.
 
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{cross, distance2, dot, Mat3x4, Vec3};
 use crate::sort::{get_face_box_morton, morton_code};
 use crate::types::Box as BBox;
 
+// Node encoding (matches C++):
+// - Even indices are leaf nodes: leaf i -> node 2*i
+// - Odd indices are internal nodes: internal i -> node 2*i + 1
+// - Root is always node index 1 (internal node 0)
+const K_ROOT: i32 = 1;
+
+fn leaf_to_node(leaf: i32) -> i32 {
+    leaf * 2
+}
+fn node_to_leaf(node: i32) -> i32 {
+    node / 2
+}
+fn internal_to_node(internal: i32) -> i32 {
+    internal * 2 + 1
+}
+fn node_to_internal(node: i32) -> i32 {
+    node / 2
+}
+fn is_leaf(node: i32) -> bool {
+    node % 2 == 0
+}
+fn is_internal(node: i32) -> bool {
+    node % 2 == 1
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct Collider {
     leaf_bbox: Vec<BBox>,
     leaf_morton: Vec<u32>,
+    sorted_to_original: Vec<usize>, // Maps sorted leaf index → original index
+    // BVH tree data (built on demand)
+    node_bbox: Vec<BBox>,          // AABBs for all nodes (2*num_leaves - 1)
+    internal_children: Vec<[i32; 2]>, // Child pairs for internal nodes (num_leaves - 1)
 }
 
 impl Collider {
+    /// Create a new Collider from leaf bounding boxes and morton codes.
+    /// Sorts leaves by morton code internally (required by radix tree algorithm).
     pub fn new(leaf_bbox: Vec<BBox>, leaf_morton: Vec<u32>) -> Self {
         debug_assert_eq!(leaf_bbox.len(), leaf_morton.len());
-        Self { leaf_bbox, leaf_morton }
+        let n = leaf_bbox.len();
+        // Sort leaves by morton code (matching C++ SortGeometry ordering)
+        let mut order: Vec<usize> = (0..n).collect();
+        order.sort_by_key(|&i| leaf_morton[i]);
+        let sorted_bbox: Vec<BBox> = order.iter().map(|&i| leaf_bbox[i]).collect();
+        let sorted_morton: Vec<u32> = order.iter().map(|&i| leaf_morton[i]).collect();
+        let sorted_to_original = order;
+
+        let mut collider = Self {
+            leaf_bbox: sorted_bbox,
+            leaf_morton: sorted_morton,
+            sorted_to_original,
+            node_bbox: Vec::new(),
+            internal_children: Vec::new(),
+        };
+        collider.build_bvh();
+        collider
     }
 
-    pub fn update_boxes(&mut self, leaf_bbox: Vec<BBox>) {
-        debug_assert_eq!(leaf_bbox.len(), self.leaf_bbox.len());
-        self.leaf_bbox = leaf_bbox;
-    }
 
-    pub fn transform(&mut self, transform: &Mat3x4) {
-        debug_assert!(Self::is_axis_aligned(transform));
-        for bbox in &mut self.leaf_bbox {
-            *bbox = bbox.transform(transform);
+    fn build_bvh(&mut self) {
+        let num_leaves = self.leaf_bbox.len();
+        if num_leaves == 0 {
+            return;
         }
+        if num_leaves == 1 {
+            // Single leaf: root bbox = leaf bbox
+            self.node_bbox = vec![BBox::default(); 2];
+            self.node_bbox[0] = self.leaf_bbox[0]; // leaf 0 -> node 0
+            self.node_bbox[1] = self.leaf_bbox[0]; // root node 1
+            self.internal_children = vec![[0, 0]; 1]; // root points to leaf 0
+            return;
+        }
+
+        let num_internal = num_leaves - 1;
+        let num_nodes = 2 * num_leaves - 1;
+        self.node_bbox = vec![BBox::default(); num_nodes];
+        self.internal_children = vec![[-1, -1]; num_internal];
+
+        // Copy leaf bboxes into node array
+        for i in 0..num_leaves {
+            self.node_bbox[leaf_to_node(i as i32) as usize] = self.leaf_bbox[i];
+        }
+
+        // Build radix tree structure
+        self.create_radix_tree();
+
+        // Build internal bounding boxes bottom-up
+        self.build_internal_boxes();
     }
 
-    pub fn collisions_with_boxes<F: FnMut(usize, usize)>(
-        &self,
-        queries: &[BBox],
-        self_collision: bool,
-        mut record: F,
-    ) {
-        for (query_idx, query) in queries.iter().enumerate() {
-            for (leaf_idx, leaf) in self.leaf_bbox.iter().enumerate() {
-                if self_collision && query_idx == leaf_idx {
-                    continue;
+    /// Build radix tree from sorted Morton codes (matches C++ CreateRadixTree).
+    fn create_radix_tree(&mut self) {
+        let num_leaves = self.leaf_bbox.len();
+        if num_leaves <= 1 {
+            return;
+        }
+        let num_internal = num_leaves - 1;
+
+        const K_INITIAL_LENGTH: i32 = 128;
+        const K_LENGTH_MULTIPLE: i32 = 4;
+
+        // Helper: count leading zeros of XOR of two morton codes
+        let prefix_length = |i: i32, j: i32| -> i32 {
+            if j < 0 || j >= num_leaves as i32 {
+                return -1;
+            }
+            let mi = self.leaf_morton[i as usize];
+            let mj = self.leaf_morton[j as usize];
+            let xor = mi ^ mj;
+            if xor == 0 {
+                // Same morton code, use index as tiebreaker (matches C++ clz)
+                32 + ((i as u32 ^ j as u32).leading_zeros() as i32)
+            } else {
+                xor.leading_zeros() as i32
+            }
+        };
+
+        // RangeEnd: find the other end of the range for internal node i
+        let range_end = |i: i32| -> i32 {
+            let dir_val = prefix_length(i, i + 1) - prefix_length(i, i - 1);
+            let dir = if dir_val > 0 { 1i32 } else if dir_val < 0 { -1i32 } else { -1i32 };
+            let common_prefix = prefix_length(i, i - dir);
+            let mut max_length = K_INITIAL_LENGTH;
+            while prefix_length(i, i + dir * max_length) > common_prefix {
+                max_length *= K_LENGTH_MULTIPLE;
+            }
+            let mut length = 0i32;
+            let mut step = max_length / 2;
+            while step > 0 {
+                if prefix_length(i, i + dir * (length + step)) > common_prefix {
+                    length += step;
                 }
-                if query.does_overlap_box(leaf) {
-                    record(query_idx, leaf_idx);
+                step /= 2;
+            }
+            i + dir * length
+        };
+
+        // FindSplit: find where the split occurs within [first, last]
+        let find_split = |first: i32, last: i32| -> i32 {
+            let common_prefix = prefix_length(first, last);
+            let mut split = first;
+            let mut step = last - first;
+            loop {
+                step = (step + 1) >> 1; // divide by 2, rounding up
+                let new_split = split + step;
+                if new_split < last {
+                    let split_prefix = prefix_length(first, new_split);
+                    if split_prefix > common_prefix {
+                        split = new_split;
+                    }
                 }
+                if step <= 1 { break; }
+            }
+            split
+        };
+
+        // For each internal node, find its range and split point
+        let mut node_parent = vec![-1i32; 2 * num_leaves - 1];
+
+        for internal in 0..num_internal {
+            let i = internal as i32;
+            let mut first = i;
+            let mut last = range_end(i);
+            if first > last {
+                std::mem::swap(&mut first, &mut last);
+            }
+
+            let split = find_split(first, last);
+
+            // Assign children (matches C++ exactly)
+            let child1 = if split == first {
+                leaf_to_node(split)
+            } else {
+                internal_to_node(split)
+            };
+            // C++ increments split before computing child2
+            let split2 = split + 1;
+            let child2 = if split2 == last {
+                leaf_to_node(split2)
+            } else if (split2 as usize) < num_internal {
+                internal_to_node(split2)
+            } else {
+                // Degenerate case: split2 exceeds internal node range.
+                // This mirrors C++ UB when dir=0 in RangeEnd (clz(0) is UB).
+                // Make child2 = child1 so traversal still works.
+                child1
+            };
+
+            self.internal_children[internal] = [child1, child2];
+            let node = internal_to_node(i);
+            node_parent[child1 as usize] = node;
+            node_parent[child2 as usize] = node;
+        }
+
+        // Build bboxes bottom-up using a counter-based approach
+        // Process leaves and walk up to root
+        let mut counter = vec![0u32; num_internal];
+
+        for leaf in 0..num_leaves {
+            let mut node = leaf_to_node(leaf as i32);
+            loop {
+                let parent = node_parent[node as usize];
+                if parent < 0 {
+                    break; // at root
+                }
+                let internal = node_to_internal(parent);
+                if internal < 0 || internal >= num_internal as i32 {
+                    break;
+                }
+                let idx = internal as usize;
+                counter[idx] += 1;
+                if counter[idx] < 2 {
+                    break; // wait for second child
+                }
+                // Both children ready, compute union
+                let [c1, c2] = self.internal_children[idx];
+                let b1 = self.node_bbox[c1 as usize];
+                let b2 = self.node_bbox[c2 as usize];
+                self.node_bbox[parent as usize] = b1.union_box(&b2);
+                node = parent;
             }
         }
     }
 
-    /// Function-based collision query. For each query index 0..n, calls
-    /// `query_box_fn(i)` to generate a bounding box on the fly, then tests it
-    /// against all leaf boxes. Non-empty overlaps are reported via `record`.
-    /// This is the API used by Boolean3: edge bounding boxes are generated
-    /// from halfedge indices without pre-materializing an array.
+    /// Build internal bounding boxes (already done in create_radix_tree for sequential).
+    fn build_internal_boxes(&mut self) {
+        // Already built in create_radix_tree above.
+        // The C++ separates these for GPU parallelism; we combine them.
+    }
+
+    /// BVH-accelerated collision query with function-generated query boxes.
+    /// For each query index 0..n, calls query_box_fn(i) to get the query AABB,
+    /// then traverses the BVH to find overlapping leaves.
     pub fn collisions_fn<F, R>(
         &self,
         query_box_fn: F,
@@ -78,22 +264,58 @@ impl Collider {
         F: Fn(usize) -> BBox,
         R: FnMut(usize, usize),
     {
+        if self.internal_children.is_empty() {
+            // Fallback for 0-1 leaves
+            if self.leaf_bbox.len() == 1 {
+                let original_idx = self.sorted_to_original[0];
+                for query_idx in 0..n {
+                    let query = query_box_fn(query_idx);
+                    if !query.is_empty() && query.does_overlap_box(&self.leaf_bbox[0]) {
+                        record(query_idx, original_idx);
+                    }
+                }
+            }
+            return;
+        }
+
         for query_idx in 0..n {
             let query = query_box_fn(query_idx);
             if query.is_empty() {
                 continue;
             }
-            for (leaf_idx, leaf) in self.leaf_bbox.iter().enumerate() {
-                if query.does_overlap_box(leaf) {
-                    record(query_idx, leaf_idx);
-                }
-            }
+            self.traverse_bvh(&query, query_idx, false, &mut record);
         }
     }
 
-    /// Point-based collision query. For each query index in 0..n, calls
-    /// `point_fn(i)` to get a point, wraps it in a zero-volume box, and tests
-    /// against all leaf boxes. Used by Winding03 for vertex queries.
+    /// BVH-accelerated collision query with pre-computed query boxes.
+    pub fn collisions_with_boxes<F: FnMut(usize, usize)>(
+        &self,
+        queries: &[BBox],
+        self_collision: bool,
+        mut record: F,
+    ) {
+        if self.internal_children.is_empty() {
+            // Fallback for 0-1 leaves
+            if self.leaf_bbox.len() == 1 {
+                let original_idx = self.sorted_to_original[0];
+                for (qi, q) in queries.iter().enumerate() {
+                    if !(self_collision && qi == original_idx) && q.does_overlap_box(&self.leaf_bbox[0]) {
+                        record(qi, original_idx);
+                    }
+                }
+            }
+            return;
+        }
+
+        for (query_idx, query) in queries.iter().enumerate() {
+            if query.is_empty() {
+                continue;
+            }
+            self.traverse_bvh(query, query_idx, self_collision, &mut record);
+        }
+    }
+
+    /// Point-based collision query using BVH.
     pub fn collisions_point<F, R>(
         &self,
         point_fn: F,
@@ -103,15 +325,113 @@ impl Collider {
         F: Fn(usize) -> Vec3,
         R: FnMut(usize, usize),
     {
+        if self.internal_children.is_empty() {
+            if self.leaf_bbox.len() == 1 {
+                let original_idx = self.sorted_to_original[0];
+                for query_idx in 0..n {
+                    let pt = point_fn(query_idx);
+                    let query = BBox::from_point(pt);
+                    if query.does_overlap_box(&self.leaf_bbox[0]) {
+                        record(query_idx, original_idx);
+                    }
+                }
+            }
+            return;
+        }
+
         for query_idx in 0..n {
             let pt = point_fn(query_idx);
             let query = BBox::from_point(pt);
-            for (leaf_idx, leaf) in self.leaf_bbox.iter().enumerate() {
-                if query.does_overlap_box(leaf) {
-                    record(query_idx, leaf_idx);
+            self.traverse_bvh(&query, query_idx, false, &mut record);
+        }
+    }
+
+    /// Stack-based depth-first BVH traversal (matches C++ FindCollision).
+    fn traverse_bvh<F: FnMut(usize, usize)>(
+        &self,
+        query: &BBox,
+        query_idx: usize,
+        self_collision: bool,
+        record: &mut F,
+    ) {
+        let mut stack = [0i32; 64];
+        let mut top: i32 = -1;
+        let mut node = K_ROOT;
+
+        loop {
+            let internal = node_to_internal(node);
+            if internal < 0 || internal as usize >= self.internal_children.len() {
+                if top < 0 { break; }
+                node = stack[top as usize];
+                top -= 1;
+                continue;
+            }
+            let [child1, child2] = self.internal_children[internal as usize];
+
+            let traverse1 = self.check_node(query, child1, query_idx, self_collision, record);
+            let traverse2 = self.check_node(query, child2, query_idx, self_collision, record);
+
+            if !traverse1 && !traverse2 {
+                if top < 0 {
+                    break;
+                }
+                node = stack[top as usize];
+                top -= 1;
+            } else {
+                node = if traverse1 { child1 } else { child2 };
+                if traverse1 && traverse2 {
+                    top += 1;
+                    debug_assert!((top as usize) < 64, "BVH stack overflow");
+                    stack[top as usize] = child2;
                 }
             }
         }
+    }
+
+    /// Check if a node's AABB overlaps the query. If it's a leaf, record the hit.
+    /// Returns true if the node is internal and overlaps (should traverse deeper).
+    #[inline]
+    fn check_node<F: FnMut(usize, usize)>(
+        &self,
+        query: &BBox,
+        node: i32,
+        query_idx: usize,
+        self_collision: bool,
+        record: &mut F,
+    ) -> bool {
+        if node < 0 || node as usize >= self.node_bbox.len() {
+            return false;
+        }
+        let node_box = &self.node_bbox[node as usize];
+        let overlaps = query.does_overlap_box(node_box);
+        if overlaps && is_leaf(node) {
+            let sorted_idx = node_to_leaf(node) as usize;
+            let original_idx = self.sorted_to_original[sorted_idx];
+            if !self_collision || original_idx != query_idx {
+                record(query_idx, original_idx);
+            }
+        }
+        overlaps && is_internal(node)
+    }
+
+    pub fn update_boxes(&mut self, leaf_bbox: Vec<BBox>) {
+        debug_assert_eq!(leaf_bbox.len(), self.leaf_bbox.len());
+        // Reorder to sorted order (sorted_to_original maps sorted→original)
+        // We need original→sorted, which is the inverse
+        for (sorted_idx, &orig_idx) in self.sorted_to_original.iter().enumerate() {
+            self.leaf_bbox[sorted_idx] = leaf_bbox[orig_idx];
+        }
+        // Rebuild BVH with new boxes (morton codes and sort order unchanged)
+        self.build_bvh();
+    }
+
+    pub fn transform(&mut self, transform: &Mat3x4) {
+        debug_assert!(Self::is_axis_aligned(transform));
+        for bbox in &mut self.leaf_bbox {
+            *bbox = bbox.transform(transform);
+        }
+        // Rebuild BVH after transform
+        self.build_bvh();
     }
 
     pub fn leaf_count(&self) -> usize {
@@ -162,7 +482,7 @@ pub fn edge_edge_dist(p: Vec3, a: Vec3, q: Vec3, b: Vec3) -> (Vec3, Vec3) {
     };
 
     let u = if b_dot_b != 0.0 {
-        let mut u = (t * a_dot_b - b_dot_t) / b_dot_b;
+        let u = (t * a_dot_b - b_dot_t) / b_dot_b;
         if u < 0.0 {
             t = if a_dot_a != 0.0 { (a_dot_t / a_dot_a).clamp(0.0, 1.0) } else { 0.0 };
             0.0
@@ -201,28 +521,20 @@ pub fn distance_triangle_triangle_squared(p: [Vec3; 3], q: [Vec3; 3]) -> f64 {
                 mindd = dd;
 
                 let mut id = i + 2;
-                if id >= 3 {
-                    id -= 3;
-                }
-                let mut z = p[id] - cp;
+                if id >= 3 { id -= 3; }
+                let z = p[id] - cp;
                 let mut a = dot(z, v);
 
                 id = j + 2;
-                if id >= 3 {
-                    id -= 3;
-                }
-                z = q[id] - cq;
+                if id >= 3 { id -= 3; }
+                let z = q[id] - cq;
                 let mut b = dot(z, v);
 
                 if a <= 0.0 && b >= 0.0 {
                     return dot(v, v);
                 }
 
-                if a <= 0.0 {
-                    a = 0.0;
-                } else if b > 0.0 {
-                    b = 0.0;
-                }
+                if a <= 0.0 { a = 0.0; } else if b > 0.0 { b = 0.0; }
 
                 if mindd - a + b > 0.0 {
                     shown_disjoint = true;
@@ -238,29 +550,25 @@ pub fn distance_triangle_triangle_squared(p: [Vec3; 3], q: [Vec3; 3]) -> f64 {
         let mut index = None;
         if tp.x > 0.0 && tp.y > 0.0 && tp.z > 0.0 {
             let mut idx = if tp.x < tp.y { 0 } else { 1 };
-            if tp.z < tp[idx] {
-                idx = 2;
-            }
+            if tp.z < tp[idx] { idx = 2; }
             index = Some(idx);
         } else if tp.x < 0.0 && tp.y < 0.0 && tp.z < 0.0 {
             let mut idx = if tp.x > tp.y { 0 } else { 1 };
-            if tp.z > tp[idx] {
-                idx = 2;
-            }
+            if tp.z > tp[idx] { idx = 2; }
             index = Some(idx);
         }
 
         if let Some(index) = index {
             shown_disjoint = true;
             let q_index = q[index];
-            let mut v = q_index - p[0];
-            let mut z = cross(sn, sv[0]);
+            let v = q_index - p[0];
+            let z = cross(sn, sv[0]);
             if dot(v, z) > 0.0 {
-                v = q_index - p[1];
-                z = cross(sn, sv[1]);
+                let v = q_index - p[1];
+                let z = cross(sn, sv[1]);
                 if dot(v, z) > 0.0 {
-                    v = q_index - p[2];
-                    z = cross(sn, sv[2]);
+                    let v = q_index - p[2];
+                    let z = cross(sn, sv[2]);
                     if dot(v, z) > 0.0 {
                         let cp = q_index + sn * (tp[index] / snl);
                         let cq = q_index;
@@ -278,29 +586,25 @@ pub fn distance_triangle_triangle_squared(p: [Vec3; 3], q: [Vec3; 3]) -> f64 {
         let mut index = None;
         if sp.x > 0.0 && sp.y > 0.0 && sp.z > 0.0 {
             let mut idx = if sp.x < sp.y { 0 } else { 1 };
-            if sp.z < sp[idx] {
-                idx = 2;
-            }
+            if sp.z < sp[idx] { idx = 2; }
             index = Some(idx);
         } else if sp.x < 0.0 && sp.y < 0.0 && sp.z < 0.0 {
             let mut idx = if sp.x > sp.y { 0 } else { 1 };
-            if sp.z > sp[idx] {
-                idx = 2;
-            }
+            if sp.z > sp[idx] { idx = 2; }
             index = Some(idx);
         }
 
         if let Some(index) = index {
             shown_disjoint = true;
             let p_index = p[index];
-            let mut v = p_index - q[0];
-            let mut z = cross(tn, tv[0]);
+            let v = p_index - q[0];
+            let z = cross(tn, tv[0]);
             if dot(v, z) > 0.0 {
-                v = p_index - q[1];
-                z = cross(tn, tv[1]);
+                let v = p_index - q[1];
+                let z = cross(tn, tv[1]);
                 if dot(v, z) > 0.0 {
-                    v = p_index - q[2];
-                    z = cross(tn, tv[2]);
+                    let v = p_index - q[2];
+                    let z = cross(tn, tv[2]);
                     if dot(v, z) > 0.0 {
                         let cp = p_index;
                         let cq = p_index + tn * (sp[index] / tnl);
@@ -486,5 +790,31 @@ mod tests {
         let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(2.0, 0.0, 0.0))));
         let gap = a.min_gap(&b, 5.0);
         assert!((gap - 1.0).abs() < 1e-8, "gap = {}", gap);
+    }
+
+    #[test]
+    fn test_bvh_many_boxes() {
+        // Create many non-overlapping boxes and verify BVH finds the right pairs
+        let n = 100;
+        let mut boxes = Vec::new();
+        let mut mortons = Vec::new();
+        for i in 0..n {
+            let x = i as f64 * 3.0;
+            boxes.push(BBox::from_points(
+                Vec3::new(x, 0.0, 0.0),
+                Vec3::new(x + 1.0, 1.0, 1.0),
+            ));
+            mortons.push(i as u32);
+        }
+        let collider = Collider::new(boxes.clone(), mortons);
+
+        // Query that overlaps box 50
+        let query = vec![BBox::from_points(
+            Vec3::new(150.5, 0.5, 0.5),
+            Vec3::new(150.6, 0.6, 0.6),
+        )];
+        let mut hits = Vec::new();
+        collider.collisions_with_boxes(&query, false, |a, b| hits.push((a, b)));
+        assert_eq!(hits, vec![(0, 50)]);
     }
 }
