@@ -13,6 +13,8 @@ use std::ops::{
     Sub, SubAssign,
 };
 
+use crate::math;
+
 // ─── Vec2 ────────────────────────────────────────────────────────────────────
 
 /// `la::vec<double, 2>` — 2-component f64 column vector
@@ -1752,7 +1754,7 @@ pub fn uangle(a: Vec3, b: Vec3) -> f64 {
     if d > 1.0 {
         0.0
     } else {
-        (if d < -1.0 { -1.0 } else { d }).acos()
+        math::acos(if d < -1.0 { -1.0 } else { d })
     }
 }
 
@@ -1765,28 +1767,28 @@ pub fn angle(a: Vec3, b: Vec3) -> f64 {
 /// 2D rotation: rotate `v` CCW by angle `a` (radians)
 #[inline]
 pub fn rot2(a: f64, v: Vec2) -> Vec2 {
-    let (s, c) = a.sin_cos();
+    let (s, c) = (math::sin(a), math::cos(a));
     Vec2::new(v.x * c - v.y * s, v.x * s + v.y * c)
 }
 
 /// Rotate `v` CCW around X axis by `a` radians
 #[inline]
 pub fn rotx(a: f64, v: Vec3) -> Vec3 {
-    let (s, c) = a.sin_cos();
+    let (s, c) = (math::sin(a), math::cos(a));
     Vec3::new(v.x, v.y * c - v.z * s, v.y * s + v.z * c)
 }
 
 /// Rotate `v` CCW around Y axis by `a` radians
 #[inline]
 pub fn roty(a: f64, v: Vec3) -> Vec3 {
-    let (s, c) = a.sin_cos();
+    let (s, c) = (math::sin(a), math::cos(a));
     Vec3::new(v.x * c + v.z * s, v.y, -v.x * s + v.z * c)
 }
 
 /// Rotate `v` CCW around Z axis by `a` radians
 #[inline]
 pub fn rotz(a: f64, v: Vec3) -> Vec3 {
-    let (s, c) = a.sin_cos();
+    let (s, c) = (math::sin(a), math::cos(a));
     Vec3::new(v.x * c - v.y * s, v.x * s + v.y * c, v.z)
 }
 
@@ -1803,7 +1805,7 @@ pub fn slerp(a: Vec3, b: Vec3, t: f64) -> Vec3 {
     if th == 0.0 {
         a
     } else {
-        a * (th * (1.0 - t)).sin() / th.sin() + b * (th * t).sin() / th.sin()
+        a * math::sin(th * (1.0 - t)) / math::sin(th) + b * math::sin(th * t) / math::sin(th)
     }
 }
 
@@ -2077,7 +2079,7 @@ pub fn qrot(q: Quat, v: Vec3) -> Vec3 {
 /// Rotation angle of a unit quaternion
 #[inline]
 pub fn qangle(q: Quat) -> f64 {
-    length(q.xyz()).atan2(q.w) * 2.0
+    math::atan2(length(q.xyz()), q.w) * 2.0
 }
 
 /// Rotation axis of a unit quaternion
@@ -2103,13 +2105,13 @@ pub fn qslerp(a: Quat, b: Quat, t: f64) -> Quat {
         if d > 1.0 {
             0.0
         } else {
-            d.acos()
+            math::acos(d)
         }
     };
     if th == 0.0 {
         a
     } else {
-        a * (th * (1.0 - t)).sin() / th.sin() + b2 * (th * t).sin() / th.sin()
+        a * math::sin(th * (1.0 - t)) / math::sin(th) + b2 * math::sin(th * t) / math::sin(th)
     }
 }
 
@@ -2117,10 +2119,10 @@ pub fn qslerp(a: Quat, b: Quat, t: f64) -> Quat {
 #[inline]
 pub fn rotation_quat_axis_angle(axis: Vec3, angle: f64) -> Quat {
     Quat::new(
-        axis.x * (angle / 2.0).sin(),
-        axis.y * (angle / 2.0).sin(),
-        axis.z * (angle / 2.0).sin(),
-        (angle / 2.0).cos(),
+        axis.x * math::sin(angle / 2.0),
+        axis.y * math::sin(angle / 2.0),
+        axis.z * math::sin(angle / 2.0),
+        math::cos(angle / 2.0),
     )
 }
 

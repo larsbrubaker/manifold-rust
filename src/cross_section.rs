@@ -15,6 +15,7 @@
 use clipper2_rust::{difference_d, inflate_paths_d, intersect_d, minkowski_sum_d, union_d, EndType, FillRule, JoinType, PathD, PathsD, Point};
 
 use crate::linalg::Vec2;
+use crate::math;
 use crate::types::{Polygons, Rect};
 
 #[derive(Clone, Debug, Default)]
@@ -63,7 +64,7 @@ impl CrossSection {
         let poly = (0..segments)
             .map(|i| {
                 let a = (i as f64 / segments as f64) * std::f64::consts::TAU;
-                Vec2::new(radius * a.cos(), radius * a.sin())
+                Vec2::new(radius * math::cos(a), radius * math::sin(a))
             })
             .collect();
         Self::new(vec![poly])
@@ -119,8 +120,8 @@ impl CrossSection {
 
     pub fn rotate(&self, degrees: f64) -> Self {
         let rad = degrees.to_radians();
-        let c = rad.cos();
-        let s = rad.sin();
+        let c = math::cos(rad);
+        let s = math::sin(rad);
         Self::new(
             self.polygons
                 .iter()

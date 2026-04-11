@@ -20,6 +20,7 @@
 use crate::face_op::get_axis_aligned_projection;
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{cross, dot, length, IVec3, Vec3};
+use crate::math;
 use crate::polygon::ccw;
 use crate::types::K_TWO_PI;
 
@@ -202,18 +203,17 @@ impl ManifoldImpl {
                 let neighbor_tri = self.halfedge[3 * tri + i].paired_halfedge as usize / 3;
                 let dihedral = 0.25
                     * edge_length[i]
-                    * dot(
+                    * math::asin(dot(
                         cross(self.face_normal[tri], self.face_normal[neighbor_tri]),
                         edge_dirs[i],
-                    )
-                    .asin();
+                    ));
                 mean_curvature[start_vert] += dihedral;
                 mean_curvature[end_vert] += dihedral;
                 degree[start_vert] += 1.0;
             }
 
-            let phi0 = (-dot(edge_dirs[2], edge_dirs[0])).acos();
-            let phi1 = (-dot(edge_dirs[0], edge_dirs[1])).acos();
+            let phi0 = math::acos(-dot(edge_dirs[2], edge_dirs[0]));
+            let phi1 = math::acos(-dot(edge_dirs[0], edge_dirs[1]));
             let phi2 = std::f64::consts::PI - phi0 - phi1;
             let area3 = edge_length[0] * edge_length[1] * length(cross(edge_dirs[0], edge_dirs[1]))
                 / 6.0;

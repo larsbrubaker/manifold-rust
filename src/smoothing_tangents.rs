@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{cross, dot, normalize, Vec3, Vec4};
+use crate::math;
 use crate::types::{radians, K_PI, K_PRECISION, K_TWO_PI, Smoothness};
 
 use super::{vec3_from_vec4, safe_normalize, angle_between, circular_tangent, wrap, collect_vertex_cycle};
@@ -32,7 +33,7 @@ impl ManifoldImpl {
             }
             let pair = self.halfedge[e].paired_halfedge as usize;
             let d = dot(self.face_normal[e / 3], self.face_normal[pair / 3]).clamp(-1.0, 1.0);
-            let dihedral = d.acos();
+            let dihedral = math::acos(d);
             if dihedral > min_radians {
                 out.push(Smoothness { halfedge: e, smoothness: min_smoothness });
                 out.push(Smoothness { halfedge: pair, smoothness: min_smoothness });

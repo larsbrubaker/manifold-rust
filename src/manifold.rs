@@ -15,6 +15,7 @@
 use crate::boolean3;
 use crate::cross_section::CrossSection;
 use crate::constructors;
+use crate::math;
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{mat4_to_mat3x4, normalize, rotation_matrix, rotation_quat_axis_angle, scaling_matrix, translation_matrix, IVec3, Mat3x4, Vec2, Vec3};
 use crate::minkowski;
@@ -93,9 +94,9 @@ impl Manifold {
         // (matches C++: v = cos(π/2 * (1 - v)); v = radius * normalize(v))
         for v in mesh.vert_pos.iter_mut() {
             let mapped = Vec3::new(
-                (K_HALF_PI * (1.0 - v.x)).cos(),
-                (K_HALF_PI * (1.0 - v.y)).cos(),
-                (K_HALF_PI * (1.0 - v.z)).cos(),
+                math::cos(K_HALF_PI * (1.0 - v.x)),
+                math::cos(K_HALF_PI * (1.0 - v.y)),
+                math::cos(K_HALF_PI * (1.0 - v.z)),
             );
             let n = normalize(mapped);
             *v = if n.x.is_nan() { Vec3::splat(0.0) } else { Vec3::new(n.x * radius, n.y * radius, n.z * radius) };
@@ -424,8 +425,8 @@ impl Manifold {
             + (center.z - n.z * origin_offset).powi(2)).sqrt()
             + 0.5 * size_len;
         let cutter = cutter.scale(Vec3::splat(dist)).translate(Vec3::new(origin_offset, 0.0, 0.0));
-        let y_deg = -(n.z).asin().to_degrees();
-        let z_deg = n.y.atan2(n.x).to_degrees();
+        let y_deg = -math::asin(n.z).to_degrees();
+        let z_deg = math::atan2(n.y, n.x).to_degrees();
         cutter.rotate(0.0, y_deg, z_deg)
     }
 

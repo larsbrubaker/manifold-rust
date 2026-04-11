@@ -18,6 +18,7 @@ use std::collections::HashMap;
 
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{cross, dot, length, Vec3, Vec4};
+use crate::math;
 use crate::types::{K_PI, K_TWO_PI, Smoothness, TriRef};
 
 /// Minimum sharp angle in degrees, below which edges are considered coplanar.
@@ -57,7 +58,7 @@ pub(super) fn angle_between(a: Vec3, b: Vec3) -> f64 {
     } else if d <= -1.0 {
         K_PI
     } else {
-        d.acos()
+        math::acos(d)
     }
 }
 
@@ -245,7 +246,7 @@ impl ManifoldImpl {
             let tri1 = e / 3;
             let tri2 = pair / 3;
             let d = dot(self.face_normal[tri1], self.face_normal[tri2]).clamp(-1.0, 1.0);
-            let dihedral = d.acos().to_degrees();
+            let dihedral = math::acos(d).to_degrees();
             if dihedral > min_sharp_angle {
                 vert_num_sharp[self.halfedge[e].start_vert as usize] += 1;
                 vert_num_sharp[self.halfedge[e].end_vert as usize] += 1;
@@ -354,7 +355,7 @@ impl ManifoldImpl {
                     ) as usize;
                     let face = next / 3;
                     let d = dot(self.face_normal[face], self.face_normal[prev_face]).clamp(-1.0, 1.0);
-                    let dihedral = d.acos().to_degrees();
+                    let dihedral = math::acos(d).to_degrees();
                     if dihedral > min_sharp_angle
                         || tri_is_flat_face[face] != tri_is_flat_face[prev_face]
                         || (tri_is_flat_face[face]
@@ -405,7 +406,7 @@ impl ManifoldImpl {
                     if !first_iter {
                         // Check for sharp edge between prev_face2 and face
                         let d = dot(self.face_normal[prev_face2], self.face_normal[face]).clamp(-1.0, 1.0);
-                        let dihedral = d.acos().to_degrees();
+                        let dihedral = math::acos(d).to_degrees();
                         if dihedral > min_sharp_angle
                             || tri_is_flat_face[prev_face2] != tri_is_flat_face[face]
                             || (tri_is_flat_face[prev_face2]
@@ -440,7 +441,7 @@ impl ManifoldImpl {
                         // We need to add the last group entry
                         let face = current / 3;
                         let d = dot(self.face_normal[prev_face2], self.face_normal[face]).clamp(-1.0, 1.0);
-                        let dihedral = d.acos().to_degrees();
+                        let dihedral = math::acos(d).to_degrees();
                         if dihedral > min_sharp_angle
                             || tri_is_flat_face[prev_face2] != tri_is_flat_face[face]
                             || (tri_is_flat_face[prev_face2]

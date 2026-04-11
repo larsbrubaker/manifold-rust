@@ -3,6 +3,7 @@
 
 use std::collections::HashMap;
 use crate::linalg::{Vec2, Vec3, Vec4, Mat3x4};
+use crate::math;
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -42,7 +43,7 @@ pub fn smoothstep(edge0: f64, edge1: f64, a: f64) -> f64 {
 /// Sine function where multiples of 90 degrees come out exact.
 pub fn sind(x: f64) -> f64 {
     if !x.is_finite() {
-        return x.sin();
+        return math::sin(x);
     }
     if x < 0.0 {
         return -sind(-x);
@@ -53,10 +54,10 @@ pub fn sind(x: f64) -> f64 {
         (r, q)
     };
     match ((quo % 4) + 4) % 4 {
-        0 => radians(remainder).sin(),
-        1 => radians(remainder).cos(),
-        2 => -radians(remainder).sin(),
-        3 => -radians(remainder).cos(),
+        0 => math::sin(radians(remainder)),
+        1 => math::cos(radians(remainder)),
+        2 => -math::sin(radians(remainder)),
+        3 => -math::cos(radians(remainder)),
         _ => 0.0,
     }
 }

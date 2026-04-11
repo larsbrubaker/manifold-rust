@@ -26,3 +26,4 @@ pub mod sdf;
 pub mod minkowski;
 pub mod quickhull;
 pub mod disjoint_sets;
+pub mod math;

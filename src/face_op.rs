@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use crate::linalg::{Vec2, Vec3, IVec3, cross, dot, normalize, length2};
+use crate::math;
 use crate::polygon::{ccw, triangulate_idx};
 use crate::types::{next_halfedge, Halfedge, PolyVert, PolygonsIdx, TriRef};
 use crate::impl_mesh::ManifoldImpl;
@@ -231,7 +232,7 @@ pub fn calculate_vert_normals(mesh: &mut ManifoldImpl) {
                     if curr_norm.x.is_finite() && prev_norm.x.is_finite() {
                         let d = dot(prev_norm, curr_norm).clamp(-1.0, 1.0);
                         // Negate because prevEdge points into vert and currEdge points away
-                        let phi = (-d).acos();
+                        let phi = math::acos(-d);
                         if phi.is_finite() && current / 3 < face_normal.len() {
                             normal = normal + face_normal[current / 3] * phi;
                         }
