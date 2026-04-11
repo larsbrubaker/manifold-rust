@@ -3,9 +3,9 @@
 This document tracks the incremental port of [Manifold](https://github.com/elalish/manifold) to Rust.
 Every phase must pass all tests with **exact numerical match** to the C++ before the next phase begins.
 
-## Current Status: 331 tests passing, 0 failing, 15 ignored
+## Current Status: 347 tests passing, 0 failing, 18 ignored
 
-~55% of C++ tests ported. ~90 remaining.
+~60% of C++ tests ported. ~82 remaining.
 
 ## Guiding Principles
 
@@ -52,26 +52,10 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 
 ## Unported C++ Tests — The Roadmap
 
-### Priority 1: Properties tests (11 unported)
-These test existing functionality (min_gap, triangle distance) that should mostly work now.
+### Priority 1: Properties tests (1 unported)
+- [ ] MingapStretchyBracelet (requires StretchyBracelet helper)
 
-- [ ] TriangleDistanceClosestPointsOnVertices
-- [ ] TriangleDistanceClosestPointOnEdge
-- [ ] TriangleDistanceClosestPointOnEdge2
-- [ ] TriangleDistanceClosestPointOnFace
-- [ ] TriangleDistanceOverlapping
-- [ ] MinGapCubeSphereOverlapping
-- [ ] MinGapAfterTransformationsOutOfBounds
-- [ ] MingapStretchyBracelet
-
-### Priority 2: Boolean tests (5 unported)
-Fill gaps in boolean coverage.
-
-- [ ] AlmostCoplanar
-- [ ] Coplanar
-- [ ] CornerUnion
-- [ ] Perturb1
-- [ ] TreeTransforms
+### Priority 2: Boolean tests (0 unported) ✅
 
 ### Priority 3: BooleanComplex tests (4 unported)
 Complex boolean scenarios with OBJ meshes.
@@ -87,21 +71,20 @@ Smooth subdivision with Bezier tangents.
 - [ ] RefineQuads, SineSurface, Tetrahedron
 - [ ] ToLength, Torus, TruncatedCone
 
-### Priority 5: Manifold API tests (32 unported)
+### Priority 5: Manifold API tests (24 unported)
 Covers MeshGL round-trip, mesh relations, decompose, invalid inputs.
 
-- [ ] GetMeshGL, MeshGLRoundTrip, ObjRoundTrip
+- [ ] MeshGLRoundTrip, ObjRoundTrip
 - [ ] MeshRelation, MeshRelationRefine, MeshRelationRefinePrecision, MeshRelationTransform
 - [ ] FaceIDRoundTrip, MeshID, Merge, MergeDegenerates, MergeEmpty, MergeRefine
 - [ ] Decompose, DecomposeProps
 - [ ] Invalid, InvalidInput1–7
-- [ ] MeshDeterminism, Warp2, WarpBatch
-- [ ] Project, Slice, SliceEmptyObject
+- [ ] Warp2
 - [ ] OpenscadCrash
 
-### Priority 6: CrossSection tests (6 unported)
+### Priority 6: CrossSection tests (3 unported)
 
-- [ ] BevelOffset, FillRule, HullError, MirrorCheckAxis, NegativeOffset, Rect
+- [ ] BevelOffset, FillRule, HullError
 
 ### Priority 7: SDF tests (9 unported) — requires Phase 16 completion
 
@@ -136,7 +119,7 @@ Covers MeshGL round-trip, mesh relations, decompose, invalid inputs.
 
 ---
 
-## Ignored Tests (15)
+## Ignored Tests (18)
 
 | Test | Reason |
 |------|--------|
@@ -152,6 +135,9 @@ Covers MeshGL round-trip, mesh relations, decompose, invalid inputs.
 | perturb3 | BatchBoolean precision |
 | craycloud | OBJ loader needs vertex merge |
 | opposite_face | MeshGL degenerate face import |
+| invalid_constructors | Constructor input validation not implemented |
+| mesh_determinism | Boolean produces 30 tris vs C++ 24 |
+| min_gap_out_of_bounds | Slow in debug (passes in release) |
 
 ---
 

@@ -5,7 +5,7 @@
       "name": "demo",
       "runtimeExecutable": "bun",
       "runtimeArgs": ["run", "server.ts"],
-      "port": 3000,
+      "autoPort": true,
       "cwd": "demo"
     }
   ]

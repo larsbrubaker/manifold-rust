@@ -536,3 +536,177 @@ fn test_cpp_mesh_determinism() {
             "MeshDeterminism: vertProperties[{}] = {} expected {}", i, actual, expected);
     }
 }
+
+/// C++ TEST(Manifold, Slice) — slice a cube at z=0 and z=1
+#[test]
+fn test_cpp_manifold_slice() {
+    let cube = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false);
+    let bottom = cube.slice(0.0);
+    let top = cube.slice(1.0);
+    assert_eq!(bottom.area(), 1.0, "Slice at z=0 should have area 1, got {}", bottom.area());
+    assert_eq!(top.area(), 0.0, "Slice at z=1 should have area 0, got {}", top.area());
+}
+
+/// C++ TEST(Manifold, SliceEmptyObject)
+#[test]
+fn test_cpp_manifold_slice_empty_object() {
+    let empty = Manifold::empty();
+    assert!(empty.is_empty());
+    let bottom = empty.slice(0.0);
+    assert_eq!(bottom.area(), 0.0, "Slice of empty should have area 0");
+}
+
+/// C++ TEST(Manifold, Project) — project a mesh onto XY plane
+#[test]
+fn test_cpp_manifold_project() {
+    use crate::types::MeshGL;
+    let input = MeshGL {
+        num_prop: 3,
+        vert_properties: vec![
+            0.0,    0.0,       0.0,
+            -2.0,   -0.7,    -0.1,
+            -2.0,   -0.7,    0.0,
+            -1.9, -0.7,    -0.1,
+            -1.9, -0.6901, -0.1,
+            -1.9, -0.7,    0.0,
+            -1.9, -0.6901, 0.0,
+            -2.0,   -1.0,      3.0,
+            -1.9, -1.0,      3.0,
+            -2.0,   -1.0,      4.0,
+            -1.9, -1.0,      4.0,
+            -1.9, -0.6901, 3.0,
+            -1.9, -0.6901, 4.0,
+            -1.7, -0.6901, 3.0,
+            -1.7, -0.6901, 3.2,
+            -2.0,   0.0,       -0.1,
+            -2.0,   0.0,       0.0,
+            -2.0,   0.0,       3.0,
+            -2.0,   0.0,       4.0,
+            -1.7, 0.0,       3.0,
+            -1.7, 0.0,       3.2,
+            -1.0, -0.6901, -0.1,
+            -1.0, -0.6901, 0.0,
+            -1.0, -0.6901, 3.2,
+            -1.0, -0.6901, 4.0,
+            -1.0, 0.0,       -0.1,
+            -1.0, 0.0,       0.0,
+            -1.0, 0.0,       3.2,
+            -1.0, 0.0,       4.0,
+        ],
+        tri_verts: vec![
+            1,  3,  2,
+            1,  4,  3,
+            2,  3,  5,
+            5,  6,  2,
+            3,  4,  6,
+            5,  3,  6,
+            6,  4,  21,
+            26, 22, 25,
+            21, 25, 22,
+            25, 15, 26,
+            26, 6,  22,
+            21, 4,  25,
+            21, 22, 6,
+            16, 26, 15,
+            16, 6,  26,
+            4,  15, 25,
+            15, 1,  16,
+            16, 2,  6,
+            4,  1,  15,
+            1,  2,  16,
+            12, 14, 23,
+            12, 13, 14,
+            12, 11, 13,
+            18, 9,  12,
+            11, 7,  17,
+            7,  9,  18,
+            17, 7,  18,
+            13, 11, 19,
+            17, 18, 20,
+            19, 11, 17,
+            19, 17, 20,
+            14, 13, 20,
+            18, 12, 24,
+            20, 13, 19,
+            20, 18, 27,
+            12, 10, 11,
+            24, 12, 23,
+            9,  10, 12,
+            9,  8,  10,
+            8,  11, 10,
+            8,  7,  11,
+            8,  9,  7,
+            14, 20, 27,
+            24, 28, 18,
+            27, 18, 28,
+            23, 14, 27,
+            24, 23, 28,
+            28, 23, 27,
+        ],
+        ..Default::default()
+    };
+    let m = Manifold::from_mesh_gl(&input);
+    let projected = m.project();
+    let area = projected.area();
+    assert!((area - 0.72).abs() < 0.01,
+        "Project area: {} expected ~0.72", area);
+}
+
+/// C++ TEST(Manifold, GetMeshGL) — sphere round-trip through MeshGL
+#[test]
+fn test_cpp_manifold_get_mesh_gl() {
+    let m1 = Manifold::sphere(0.01, 0);
+    let mesh1 = m1.get_mesh_gl(3);
+    let m2 = Manifold::from_mesh_gl(&mesh1);
+    let mesh2 = m2.get_mesh_gl(3);
+
+    // Check same number of vertices and triangles
+    let nv1 = mesh1.vert_properties.len() / mesh1.num_prop as usize;
+    let nv2 = mesh2.vert_properties.len() / mesh2.num_prop as usize;
+    assert_eq!(nv1, nv2, "GetMeshGL: vertex count mismatch {} vs {}", nv1, nv2);
+    assert_eq!(mesh1.tri_verts.len(), mesh2.tri_verts.len(),
+        "GetMeshGL: triVerts length mismatch");
+
+    // Check vertex positions match
+    for i in 0..nv1 {
+        let p1 = mesh1.get_vert_pos(i);
+        let p2 = mesh2.get_vert_pos(i);
+        let dx = p1[0] - p2[0];
+        let dy = p1[1] - p2[1];
+        let dz = p1[2] - p2[2];
+        let dist = (dx * dx + dy * dy + dz * dz).sqrt();
+        assert!(dist <= 0.0001, "GetMeshGL: vertex {} distance {}", i, dist);
+    }
+}
+
+/// C++ TEST(Manifold, WarpBatch) — warp vs warp_batch produce same results
+#[test]
+fn test_cpp_manifold_warp_batch() {
+    let cube = Manifold::cube(Vec3::new(2.0, 3.0, 4.0), false);
+    let id = cube.original_id();
+
+    let shape1 = cube.warp(|v: &mut Vec3| {
+        v.x += v.z * v.z;
+    });
+    let shape2 = cube.warp_batch(|vecs: &mut [Vec3]| {
+        for v in vecs.iter_mut() {
+            v.x += v.z * v.z;
+        }
+    });
+
+    assert!(id >= 0, "WarpBatch: original ID should be >= 0");
+    assert_eq!(shape1.original_id(), -1, "WarpBatch: warped shape1 should have ID -1");
+    assert_eq!(shape2.original_id(), -1, "WarpBatch: warped shape2 should have ID -1");
+
+    // Check run_original_id
+    let gl1 = shape1.get_mesh_gl(3);
+    assert_eq!(gl1.run_original_id.len(), 1, "WarpBatch: shape1 should have 1 run");
+    assert_eq!(gl1.run_original_id[0], id as u32, "WarpBatch: shape1 run ID mismatch");
+
+    let gl2 = shape2.get_mesh_gl(3);
+    assert_eq!(gl2.run_original_id.len(), 1, "WarpBatch: shape2 should have 1 run");
+    assert_eq!(gl2.run_original_id[0], id as u32, "WarpBatch: shape2 run ID mismatch");
+
+    assert_eq!(shape1.volume(), shape2.volume(), "WarpBatch: volumes differ");
+    assert_eq!(shape1.surface_area(), shape2.surface_area(), "WarpBatch: areas differ");
+}

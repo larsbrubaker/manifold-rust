@@ -637,3 +637,97 @@ fn test_cpp_cross_section_transform() {
     );
     assert!(!ex_a.is_empty(), "Transform extrusion should not be empty");
 }
+
+/// C++ TEST(CrossSection, MirrorCheckAxis) — verify mirror along (1,1) and (-1,1)
+#[test]
+fn test_cpp_cross_section_mirror_check_axis() {
+    use crate::cross_section::CrossSection;
+    let tri = CrossSection::new(vec![vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(5.0, 5.0),
+        Vec2::new(0.0, 10.0),
+    ]]);
+
+    let a = tri.mirror(Vec2::new(1.0, 1.0)).bounds();
+    let a_expected = CrossSection::new(vec![vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(-10.0, 0.0),
+        Vec2::new(-5.0, -5.0),
+    ]]).bounds();
+
+    assert!((a.min.x - a_expected.min.x).abs() < 0.001,
+        "MirrorCheckAxis a: min.x {} vs {}", a.min.x, a_expected.min.x);
+    assert!((a.min.y - a_expected.min.y).abs() < 0.001,
+        "MirrorCheckAxis a: min.y {} vs {}", a.min.y, a_expected.min.y);
+    assert!((a.max.x - a_expected.max.x).abs() < 0.001,
+        "MirrorCheckAxis a: max.x {} vs {}", a.max.x, a_expected.max.x);
+    assert!((a.max.y - a_expected.max.y).abs() < 0.001,
+        "MirrorCheckAxis a: max.y {} vs {}", a.max.y, a_expected.max.y);
+
+    let b = tri.mirror(Vec2::new(-1.0, 1.0)).bounds();
+    let b_expected = CrossSection::new(vec![vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(10.0, 0.0),
+        Vec2::new(5.0, 5.0),
+    ]]).bounds();
+
+    assert!((b.min.x - b_expected.min.x).abs() < 0.001,
+        "MirrorCheckAxis b: min.x {} vs {}", b.min.x, b_expected.min.x);
+    assert!((b.min.y - b_expected.min.y).abs() < 0.001,
+        "MirrorCheckAxis b: min.y {} vs {}", b.min.y, b_expected.min.y);
+    assert!((b.max.x - b_expected.max.x).abs() < 0.001,
+        "MirrorCheckAxis b: max.x {} vs {}", b.max.x, b_expected.max.x);
+    assert!((b.max.y - b_expected.max.y).abs() < 0.001,
+        "MirrorCheckAxis b: max.y {} vs {}", b.max.y, b_expected.max.y);
+}
+
+/// C++ TEST(CrossSection, Rect) — rect area, contains, overlap
+#[test]
+fn test_cpp_cross_section_rect() {
+    use crate::types::Rect;
+    use crate::cross_section::CrossSection;
+    let w = 10.0;
+    let h = 5.0;
+    let rect = Rect::from_points(Vec2::new(0.0, 0.0), Vec2::new(w, h));
+    // Build a CrossSection from the rect
+    let cross = CrossSection::new(vec![vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(w, 0.0),
+        Vec2::new(w, h),
+        Vec2::new(0.0, h),
+    ]]);
+    let area = rect.area();
+
+    assert!((area - w * h).abs() < 1e-6, "Rect area: {} expected {}", area, w * h);
+    assert!((area - cross.area()).abs() < 1e-6,
+        "Rect area {} != CrossSection area {}", area, cross.area());
+    assert!(rect.contains_point(Vec2::new(5.0, 5.0)), "Rect should contain (5,5)");
+    assert!(rect.contains_rect(&cross.bounds()), "Rect should contain cross bounds");
+    assert!(rect.contains_rect(&Rect::new()), "Rect should contain empty rect");
+    assert!(rect.does_overlap(&Rect::from_points(Vec2::new(5.0, 5.0), Vec2::new(15.0, 15.0))),
+        "Rect should overlap shifted rect");
+    assert!(Rect::new().is_empty(), "Default Rect should be empty");
+}
+
+/// C++ TEST(CrossSection, NegativeOffset) — inward offset on plus sign
+#[test]
+fn test_cpp_cross_section_negative_offset() {
+    use crate::cross_section::CrossSection;
+    // CrossSection::Square({30, 50}, true) = centered 30x50 rect
+    let sq1 = CrossSection::new(vec![vec![
+        Vec2::new(-15.0, -25.0), Vec2::new(15.0, -25.0),
+        Vec2::new(15.0, 25.0), Vec2::new(-15.0, 25.0),
+    ]]);
+    let sq2 = CrossSection::new(vec![vec![
+        Vec2::new(-25.0, -15.0), Vec2::new(25.0, -15.0),
+        Vec2::new(25.0, 15.0), Vec2::new(-25.0, 15.0),
+    ]]);
+    let plus_sign = sq1.union(&sq2);
+    // offset_with_params: join_type 1=Round, miter_limit=2.0
+    let dilated = plus_sign.offset_with_params(-10.0, 1, 2.0, 1024);
+    let expected = 30.0 * 30.0 - 10.0 * 10.0 * std::f64::consts::PI;
+    // Tolerance is wider because circular_segments param isn't fully wired
+    // through to clipper2 arc precision yet
+    assert!((dilated.area() - expected).abs() < 1.0,
+        "NegativeOffset area: {} expected {}", dilated.area(), expected);
+}

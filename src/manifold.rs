@@ -199,6 +199,7 @@ impl Manifold {
         out.calculate_bbox();
         out.sort_geometry();
         out.set_normals_and_coplanar();
+        out.mesh_relation.original_id = -1;
         Self::from_impl(out)
     }
 
@@ -259,6 +260,7 @@ impl Manifold {
         out.calculate_bbox();
         out.sort_geometry();
         out.set_normals_and_coplanar();
+        out.mesh_relation.original_id = -1;
         Self::from_impl(out)
     }
 
@@ -296,6 +298,26 @@ impl Manifold {
         }
         let halfspace = Self::halfspace(&self.imp.bbox, normal, origin_offset);
         self.intersection(&halfspace)
+    }
+
+    /// Slice this manifold at the given Z height, returning the cross-section
+    /// as a CrossSection. Mirrors C++ `Manifold::Slice`.
+    pub fn slice(&self, height: f64) -> CrossSection {
+        if self.is_empty() {
+            return CrossSection::new(vec![]);
+        }
+        let polys = self.imp.slice(height);
+        CrossSection::new(polys)
+    }
+
+    /// Project this manifold onto the XY plane, returning the silhouette
+    /// as a CrossSection. Mirrors C++ `Manifold::Project`.
+    pub fn project(&self) -> CrossSection {
+        if self.is_empty() {
+            return CrossSection::new(vec![]);
+        }
+        let polys = self.imp.project();
+        CrossSection::from_polygons_fill(polys)
     }
 
     /// Apply batch boolean operations on a list of manifolds.

@@ -1,5 +1,7 @@
 # manifold-rust
 
+[![Demo](README_HERO.png)](https://larsbrubaker.github.io/manifold-rust/)
+
 Pure Rust port of [Manifold](https://github.com/elalish/manifold) — a geometry library for 3D boolean operations on triangle meshes.
 
 > **Status: Port in progress.** See [PORTING_PLAN.md](PORTING_PLAN.md) for current phase.

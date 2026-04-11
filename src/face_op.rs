@@ -709,3 +709,134 @@ mod tests {
         assert!(any_coplanar_id_set, "no coplanar IDs were set");
     }
 }
+
+// -----------------------------------------------------------------------
+// Slice & Project — cross-section operations on ManifoldImpl
+// -----------------------------------------------------------------------
+
+use crate::collider::Collider;
+use crate::sort::get_face_box_morton;
+use crate::types::{Box as BBox, Polygons, SimplePolygon};
+
+impl ManifoldImpl {
+    /// Slice the mesh at the given Z height, returning 2D polygon loops.
+    /// Mirrors `Manifold::Impl::Slice` in `src/face_op.cpp`.
+    pub fn slice(&self, height: f64) -> Polygons {
+        let num_tri = self.num_tri();
+        if num_tri == 0 {
+            return vec![];
+        }
+
+        // Build plane query box spanning the full XY extent at the given Z
+        let mut plane = self.bbox;
+        plane.min.z = height;
+        plane.max.z = height;
+
+        // Build BVH for face bounding boxes
+        let (face_box, face_morton) = get_face_box_morton(self);
+        let collider = Collider::new(face_box, face_morton);
+
+        // Find all triangles that straddle the slice plane
+        let mut tris: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        let query = vec![BBox::from_points(plane.min, plane.max)];
+        collider.collisions_with_boxes(&query, false, |_query_idx, tri| {
+            let mut min_z = f64::INFINITY;
+            let mut max_z = f64::NEG_INFINITY;
+            for j in 0..3 {
+                let z = self.vert_pos[self.halfedge[3 * tri + j].start_vert as usize].z;
+                min_z = min_z.min(z);
+                max_z = max_z.max(z);
+            }
+            if min_z <= height && max_z > height {
+                tris.insert(tri);
+            }
+        });
+
+        // Trace polygon loops through intersected triangles
+        let mut polys: Polygons = Vec::new();
+        while !tris.is_empty() {
+            let start_tri = *tris.iter().next().unwrap();
+            let mut poly: SimplePolygon = Vec::new();
+
+            // Find the edge where the slice enters (above→below transition)
+            let mut k = 0usize;
+            for j in 0..3usize {
+                let next_j = (j + 1) % 3;
+                if self.vert_pos[self.halfedge[3 * start_tri + j].start_vert as usize].z > height
+                    && self.vert_pos[self.halfedge[3 * start_tri + next_j].start_vert as usize].z <= height
+                {
+                    k = next_j;
+                    break;
+                }
+            }
+
+            let mut tri = start_tri;
+            loop {
+                tris.remove(&tri);
+                if self.vert_pos[self.halfedge[3 * tri + k].end_vert as usize].z <= height {
+                    k = (k + 1) % 3;
+                }
+
+                let up = &self.halfedge[3 * tri + k];
+                let below = self.vert_pos[up.start_vert as usize];
+                let above = self.vert_pos[up.end_vert as usize];
+                let a = (height - below.z) / (above.z - below.z);
+                // lerp: below + a * (above - below)
+                let pt = Vec2::new(
+                    below.x + a * (above.x - below.x),
+                    below.y + a * (above.y - below.y),
+                );
+                poly.push(pt);
+
+                let pair = up.paired_halfedge;
+                tri = pair as usize / 3;
+                k = ((pair as usize) % 3 + 1) % 3;
+
+                if tri == start_tri {
+                    break;
+                }
+            }
+
+            polys.push(poly);
+        }
+
+        polys
+    }
+
+    /// Project the mesh silhouette onto the XY plane, returning 2D polygon loops.
+    /// Mirrors `Manifold::Impl::Project` in `src/face_op.cpp`.
+    pub fn project(&self) -> Polygons {
+        if self.num_tri() == 0 || self.face_normal.is_empty() {
+            return vec![];
+        }
+
+        let projection = get_axis_aligned_projection(Vec3::new(0.0, 0.0, 1.0));
+
+        // Find cusp edges: silhouette edges where one adjacent face points up
+        // and the other points down (z-component of normals)
+        let mut cusps: Vec<crate::types::Halfedge> = Vec::new();
+        for edge in &self.halfedge {
+            let paired_face = self.halfedge[edge.paired_halfedge as usize].paired_halfedge as usize / 3;
+            let this_face = edge.paired_halfedge as usize / 3;
+            if self.face_normal[paired_face].z >= 0.0 && self.face_normal[this_face].z < 0.0 {
+                cusps.push(*edge);
+            }
+        }
+
+        if cusps.is_empty() {
+            return vec![];
+        }
+
+        let loops = assemble_halfedges(&cusps, 0);
+        let polys_indexed = project_polygons(&loops, &cusps, &self.vert_pos, &projection);
+
+        // Convert PolygonsIdx to Polygons
+        let mut polys: Polygons = Vec::new();
+        for poly in &polys_indexed {
+            let simple: SimplePolygon = poly.iter().map(|pv| pv.pos).collect();
+            polys.push(simple);
+        }
+
+        polys
+    }
+}

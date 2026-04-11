@@ -50,6 +50,19 @@ impl CrossSection {
         Self { polygons }
     }
 
+    /// Create a CrossSection from polygons, normalizing via Clipper2 Union.
+    /// Mirrors C++ CrossSection(Polygons, FillRule) constructor which runs
+    /// the polygons through C2::Union to merge overlapping regions.
+    pub fn from_polygons_fill(polygons: Polygons) -> Self {
+        if polygons.is_empty() {
+            return Self::default();
+        }
+        let paths = to_paths(&polygons);
+        let empty = PathsD::new();
+        let result = union_d(&paths, &empty, FillRule::NonZero, 6);
+        Self { polygons: from_paths(&result) }
+    }
+
     pub fn square(size: f64) -> Self {
         Self::new(vec![vec![
             Vec2::new(0.0, 0.0),
