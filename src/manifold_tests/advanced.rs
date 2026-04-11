@@ -434,6 +434,144 @@ fn test_cpp_properties_min_gap_transformed() {
     );
 }
 
+/// C++ TEST(Properties, MinGapAfterTransformationsOutOfBounds)
+#[test]
+#[ignore] // Slow: 512-segment sphere min_gap in debug mode
+fn test_cpp_properties_min_gap_transformed_oob() {
+    let a = Manifold::sphere(1.0, 512).rotate(30.0, 30.0, 30.0);
+    let b = Manifold::sphere(1.0, 512)
+        .scale(Vec3::new(3.0, 1.0, 1.0))
+        .rotate(0.0, 90.0, 45.0)
+        .translate(Vec3::new(3.0, 0.0, 0.0));
+    let distance = a.min_gap(&b, 0.95);
+    assert!(
+        (distance - 0.95).abs() < 0.001,
+        "MinGapTransformedOOB: {} expected ~0.95", distance
+    );
+}
+
+/// C++ TEST(Properties, TriangleDistanceClosestPointsOnVertices)
+#[test]
+fn test_cpp_triangle_distance_vertices() {
+    use crate::collider::distance_triangle_triangle_squared;
+    let p = [Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)];
+    let q = [Vec3::new(2.0, 0.0, 0.0), Vec3::new(4.0, 0.0, 0.0), Vec3::new(3.0, 1.0, 0.0)];
+    let distance = distance_triangle_triangle_squared(p, q);
+    assert!((distance - 1.0).abs() < 1e-6,
+        "TriangleDistanceVertices: {} expected 1.0", distance);
+}
+
+/// C++ TEST(Properties, TriangleDistanceClosestPointOnEdge)
+#[test]
+fn test_cpp_triangle_distance_edge() {
+    use crate::collider::distance_triangle_triangle_squared;
+    let p = [Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)];
+    let q = [Vec3::new(-1.0, 2.0, 0.0), Vec3::new(1.0, 2.0, 0.0), Vec3::new(0.0, 3.0, 0.0)];
+    let distance = distance_triangle_triangle_squared(p, q);
+    assert!((distance - 1.0).abs() < 1e-6,
+        "TriangleDistanceEdge: {} expected 1.0", distance);
+}
+
+/// C++ TEST(Properties, TriangleDistanceClosestPointOnEdge2)
+#[test]
+fn test_cpp_triangle_distance_edge2() {
+    use crate::collider::distance_triangle_triangle_squared;
+    let p = [Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)];
+    let q = [Vec3::new(1.0, 1.0, 0.0), Vec3::new(3.0, 1.0, 0.0), Vec3::new(2.0, 2.0, 0.0)];
+    let distance = distance_triangle_triangle_squared(p, q);
+    assert!((distance - 0.5).abs() < 1e-6,
+        "TriangleDistanceEdge2: {} expected 0.5", distance);
+}
+
+/// C++ TEST(Properties, TriangleDistanceClosestPointOnFace)
+#[test]
+fn test_cpp_triangle_distance_face() {
+    use crate::collider::distance_triangle_triangle_squared;
+    let p = [Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)];
+    let q = [Vec3::new(-1.0, 2.0, -0.5), Vec3::new(1.0, 2.0, -0.5), Vec3::new(0.0, 2.0, 1.5)];
+    let distance = distance_triangle_triangle_squared(p, q);
+    assert!((distance - 1.0).abs() < 1e-6,
+        "TriangleDistanceFace: {} expected 1.0", distance);
+}
+
+/// C++ TEST(Properties, TriangleDistanceOverlapping)
+#[test]
+fn test_cpp_triangle_distance_overlapping() {
+    use crate::collider::distance_triangle_triangle_squared;
+    let p = [Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0), Vec3::new(0.0, 1.0, 0.0)];
+    let q = [Vec3::new(-1.0, 0.0, 0.0), Vec3::new(1.0, 0.5, 0.0), Vec3::new(0.0, 1.0, 0.0)];
+    let distance = distance_triangle_triangle_squared(p, q);
+    assert!((distance - 0.0).abs() < 1e-6,
+        "TriangleDistanceOverlapping: {} expected 0.0", distance);
+}
+
+/// C++ TEST(Boolean, TreeTransforms)
+#[test]
+fn test_cpp_tree_transforms() {
+    let a = (Manifold::cube(Vec3::splat(1.0), false) + Manifold::cube(Vec3::splat(1.0), false))
+        .translate(Vec3::new(1.0, 0.0, 0.0));
+    let b = Manifold::cube(Vec3::splat(1.0), false) + Manifold::cube(Vec3::splat(1.0), false);
+    let result = a + b;
+    assert!(
+        (result.volume() - 2.0).abs() < 1e-4,
+        "TreeTransforms volume: {} expected 2.0", result.volume()
+    );
+}
+
+/// C++ TEST(Boolean, CornerUnion)
+#[test]
+fn test_cpp_corner_union() {
+    let c = Manifold::cube(Vec3::splat(1.0), false);
+    let cubes = c.clone() + c.translate(Vec3::new(1.0, 1.0, 1.0));
+    // Should be two disjoint cubes (touching at a corner only)
+    assert_eq!(cubes.num_vert(), 16, "CornerUnion verts: {} expected 16", cubes.num_vert());
+    assert_eq!(cubes.num_tri(), 24, "CornerUnion tris: {} expected 24", cubes.num_tri());
+}
+
+/// C++ TEST(Boolean, Perturb1)
+#[test]
+fn test_cpp_perturb1() {
+    // Diamond with square hole
+    let big = Manifold::extrude(
+        &vec![
+            vec![
+                Vec2::new(0.0, 2.0), Vec2::new(2.0, 0.0),
+                Vec2::new(4.0, 2.0), Vec2::new(2.0, 4.0),
+            ],
+            vec![
+                Vec2::new(1.0, 2.0), Vec2::new(2.0, 3.0),
+                Vec2::new(3.0, 2.0), Vec2::new(2.0, 1.0),
+            ],
+        ],
+        1.0, 0, 0.0, Vec2::new(1.0, 1.0),
+    );
+    let little = Manifold::extrude(
+        &vec![vec![
+            Vec2::new(2.0, 1.0), Vec2::new(3.0, 2.0),
+            Vec2::new(2.0, 3.0), Vec2::new(1.0, 2.0),
+        ]],
+        1.0, 0, 0.0, Vec2::new(1.0, 1.0),
+    ).translate(Vec3::new(0.0, 0.0, 1.0));
+    let punch_hole = Manifold::extrude(
+        &vec![vec![
+            Vec2::new(1.0, 2.0), Vec2::new(2.0, 2.0),
+            Vec2::new(2.0, 3.0),
+        ]],
+        1.0, 0, 0.0, Vec2::new(1.0, 1.0),
+    ).translate(Vec3::new(0.0, 0.0, 1.0));
+    let result = (big + little) - punch_hole;
+    assert_eq!(result.num_degenerate_tris(), 0, "Perturb1: has degenerate tris");
+    assert_eq!(result.num_vert(), 24, "Perturb1 verts: {} expected 24", result.num_vert());
+    assert!(
+        (result.volume() - 7.5).abs() < 1e-4,
+        "Perturb1 volume: {} expected 7.5", result.volume()
+    );
+    assert!(
+        (result.surface_area() - 38.2).abs() < 0.1,
+        "Perturb1 SA: {} expected ~38.2", result.surface_area()
+    );
+}
+
 /// C++ TEST(CrossSection, MirrorUnion) — CrossSection mirror and union
 #[test]
 fn test_cpp_cross_section_mirror_union() {
