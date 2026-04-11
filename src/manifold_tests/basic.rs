@@ -471,3 +471,68 @@ fn test_cpp_mirror_union_full() {
     // Mirror with zero normal should return empty
     assert!(a.mirror(Vec3::new(0.0, 0.0, 0.0)).is_empty());
 }
+
+/// C++ TEST(Manifold, Invalid)
+#[test]
+#[ignore = "Constructor input validation not yet implemented"]
+fn test_cpp_invalid_constructors() {
+    use crate::types::Error;
+    // Zero-size constructors should return InvalidConstruction
+    assert_eq!(Manifold::sphere(0.0, 16).status(), Error::InvalidConstruction);
+    assert_eq!(Manifold::cylinder(0.0, 5.0, -1.0, 16).status(), Error::InvalidConstruction);
+    assert_eq!(Manifold::cylinder(2.0, -5.0, -1.0, 16).status(), Error::InvalidConstruction);
+    assert_eq!(Manifold::cylinder(2.0, 0.0, -1.0, 16).status(), Error::InvalidConstruction);
+    assert_eq!(Manifold::cylinder(2.0, 0.0, 0.0, 16).status(), Error::InvalidConstruction);
+    assert_eq!(Manifold::cube(Vec3::new(0.0, 0.0, 0.0), false).status(), Error::InvalidConstruction);
+    assert_eq!(Manifold::cube(Vec3::new(-1.0, 1.0, 1.0), false).status(), Error::InvalidConstruction);
+    // Empty extrude
+    let empty_poly: Vec<Vec<Vec2>> = vec![];
+    assert_eq!(Manifold::extrude(&empty_poly, 0.0, 0, 0.0, Vec2::new(1.0, 1.0)).status(), Error::InvalidConstruction);
+}
+
+/// C++ TEST(Manifold, MeshDeterminism)
+#[test]
+#[ignore = "Boolean produces more tris than C++ (30 vs 24); needs colinear edge collapse improvement"]
+fn test_cpp_mesh_determinism() {
+    let cube1 = Manifold::cube(Vec3::new(2.0, 2.0, 2.0), true);
+    let cube2 = Manifold::cube(Vec3::new(2.0, 2.0, 2.0), true)
+        .translate(Vec3::new(-1.1091, 0.88509, 1.3099));
+    let result = cube1 - cube2;
+    let out = result.get_mesh_gl(3);
+
+    // C++ expected triVerts and vertProperties — verify deterministic output
+    let expected_tri_verts: Vec<u32> = vec![
+        0,  2,  7,  0,  10, 1,  0,  6,  10, 0, 1,  2,  1, 3,  2,
+        1,  5,  3,  1,  11, 5,  0,  7,  6,  6, 7,  8,  6, 8,  13,
+        10, 12, 11, 1,  10, 11, 11, 13, 5,  6, 12, 10, 6, 13, 12,
+        13, 9,  5,  13, 8,  9,  11, 12, 13, 4, 2,  3,  4, 3,  5,
+        4,  7,  2,  4,  5,  8,  4,  8,  7,  9, 8,  5,
+    ];
+    let expected_vert_props: Vec<f32> = vec![
+        -1.0,      -1.0,       -1.0,
+        -1.0,      -1.0,        1.0,
+        -1.0,      -0.11491,    0.3099,
+        -1.0,      -0.11491,    1.0,
+        -0.1091,   -0.11491,    0.3099,
+        -0.1091,   -0.11491,    1.0,
+        -1.0,       1.0,       -1.0,
+        -1.0,       1.0,        0.3099,
+        -0.1091,    1.0,        0.3099,
+        -0.1091,    1.0,        1.0,
+         1.0,      -1.0,       -1.0,
+         1.0,      -1.0,        1.0,
+         1.0,       1.0,       -1.0,
+         1.0,       1.0,        1.0,
+    ];
+
+    assert_eq!(out.tri_verts, expected_tri_verts,
+        "MeshDeterminism: triVerts mismatch");
+    // Check vertex properties with tolerance
+    assert_eq!(out.vert_properties.len(), expected_vert_props.len(),
+        "MeshDeterminism: vertProperties length mismatch: {} vs {}",
+        out.vert_properties.len(), expected_vert_props.len());
+    for (i, (&actual, &expected)) in out.vert_properties.iter().zip(expected_vert_props.iter()).enumerate() {
+        assert!((actual - expected).abs() < 1e-4,
+            "MeshDeterminism: vertProperties[{}] = {} expected {}", i, actual, expected);
+    }
+}
