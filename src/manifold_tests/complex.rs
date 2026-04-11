@@ -304,3 +304,18 @@ fn test_cpp_perturb3() {
     assert!((nasty_gear.surface_area() - 26.972).abs() < 1e-3,
         "Perturb3 area: {} expected 26.972", nasty_gear.surface_area());
 }
+
+/// C++ TEST(BooleanComplex, CraycloudBool) — subtract complements, simplify to empty
+#[test]
+#[ignore = "OBJ mesh not loading as manifold (663 halfedges, not multiple of 6)"]
+fn test_cpp_complex_craycloud() {
+    let m1 = read_test_obj("Cray_left.obj");
+    let m2 = read_test_obj("Cray_right.obj");
+    let res = m1 - m2;
+    assert_eq!(res.status(), Error::NoError);
+    assert!(!res.is_empty(), "CraycloudBool: difference should not be empty");
+    let simplified = res.as_original().simplify(0.0);
+    assert!(simplified.is_empty(),
+        "CraycloudBool: AsOriginal().Simplify() should produce empty mesh, got {} tris",
+        simplified.num_tri());
+}
