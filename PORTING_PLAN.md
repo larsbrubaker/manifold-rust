@@ -3,9 +3,9 @@
 This document tracks the incremental port of [Manifold](https://github.com/elalish/manifold) to Rust.
 Every phase must pass all tests with **exact numerical match** to the C++ before the next phase begins.
 
-## Current Status: 347 tests passing, 0 failing, 18 ignored
+## Current Status: 357 tests passing, 0 failing, 19 ignored
 
-~60% of C++ tests ported. ~82 remaining.
+~65% of C++ tests ported. ~72 remaining.
 
 ## Guiding Principles
 
@@ -71,15 +71,14 @@ Smooth subdivision with Bezier tangents.
 - [ ] RefineQuads, SineSurface, Tetrahedron
 - [ ] ToLength, Torus, TruncatedCone
 
-### Priority 5: Manifold API tests (24 unported)
+### Priority 5: Manifold API tests (18 unported)
 Covers MeshGL round-trip, mesh relations, decompose, invalid inputs.
 
-- [ ] MeshGLRoundTrip, ObjRoundTrip
+- [ ] ObjRoundTrip
 - [ ] MeshRelation, MeshRelationRefine, MeshRelationRefinePrecision, MeshRelationTransform
-- [ ] FaceIDRoundTrip, MeshID, Merge, MergeDegenerates, MergeEmpty, MergeRefine
+- [ ] Merge, MergeDegenerates, MergeEmpty, MergeRefine
 - [ ] Decompose, DecomposeProps
-- [ ] Invalid, InvalidInput1–7
-- [ ] Warp2
+- [ ] Invalid, InvalidInput1–7, ValidInput
 - [ ] OpenscadCrash
 
 ### Priority 6: CrossSection tests (3 unported)
@@ -119,7 +118,7 @@ Covers MeshGL round-trip, mesh relations, decompose, invalid inputs.
 
 ---
 
-## Ignored Tests (18)
+## Ignored Tests (19)
 
 | Test | Reason |
 |------|--------|
@@ -138,6 +137,7 @@ Covers MeshGL round-trip, mesh relations, decompose, invalid inputs.
 | invalid_constructors | Constructor input validation not implemented |
 | mesh_determinism | Boolean produces 30 tris vs C++ 24 |
 | min_gap_out_of_bounds | Slow in debug (passes in release) |
+| min_gap_after_transformations | Slow 512-segment spheres in debug |
 
 ---
 
