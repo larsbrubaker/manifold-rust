@@ -407,7 +407,6 @@ fn test_cpp_properties_min_gap_overlapping() {
 
 /// C++ TEST(Properties, MinGapSphereSphere)
 #[test]
-#[ignore = "Sphere min_gap precision not yet matching C++"]
 fn test_cpp_properties_min_gap_sphere_sphere() {
     let a = Manifold::sphere(1.0, 32);
     let b = Manifold::sphere(1.0, 32).translate(Vec3::new(2.0, 2.0, 0.0));
