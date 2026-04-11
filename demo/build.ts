@@ -50,4 +50,12 @@ cpSync(join(ROOT, "styles"), join(DIST, "styles"), { recursive: true });
 console.log("Copying WASM package...");
 cpSync(join(ROOT, "public/pkg"), join(DIST, "public/pkg"), { recursive: true });
 
+// 5. Copy thumbnails
+console.log("Copying thumbnails...");
+cpSync(join(ROOT, "public/thumbs"), join(DIST, "public/thumbs"), { recursive: true });
+
+// 6. Copy favicon
+console.log("Copying favicon...");
+cpSync(join(ROOT, "public/favicon.svg"), join(DIST, "public/favicon.svg"));
+
 console.log(`Build complete -> ${DIST}`);
