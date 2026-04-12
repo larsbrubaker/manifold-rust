@@ -575,6 +575,114 @@ impl MeshGLP<f32, u32> {
             self.halfedge_tangent[offset + 3],
         ]
     }
+
+    /// Merges coincident vertices based on position within tolerance.
+    /// Uses BVH collision detection to find open edges, then groups
+    /// coincident vertices via union-find. Returns true if new merges
+    /// were found, false if the mesh was already fully merged.
+    pub fn merge(&mut self) -> bool {
+        use crate::collider::Collider;
+        use crate::disjoint_sets::DisjointSets;
+        use crate::sort::morton_code;
+        use std::collections::BTreeSet;
+
+        let num_vert = self.num_vert();
+        let num_tri = self.num_tri();
+
+        // Build initial merge map from existing merge vectors
+        let mut merge_map: Vec<usize> = (0..num_vert).collect();
+        for i in 0..self.merge_from_vert.len() {
+            merge_map[self.merge_from_vert[i] as usize] = self.merge_to_vert[i] as usize;
+        }
+
+        // Find open (non-manifold) edges
+        let next = [1usize, 2, 0];
+        let mut open_edges: BTreeSet<(usize, usize)> = BTreeSet::new();
+        for tri in 0..num_tri {
+            for i in 0..3 {
+                let a = merge_map[self.tri_verts[3 * tri + next[i]] as usize];
+                let b = merge_map[self.tri_verts[3 * tri + i] as usize];
+                let edge = (a, b);
+                // Look for the reverse edge
+                let rev = (b, a);
+                if open_edges.contains(&rev) {
+                    open_edges.remove(&rev);
+                } else {
+                    open_edges.insert(edge);
+                }
+            }
+        }
+
+        if open_edges.is_empty() {
+            return false;
+        }
+
+        // Collect unique open vertices
+        let open_verts: Vec<usize> = open_edges.iter().map(|e| e.0).collect();
+        let num_open = open_verts.len();
+
+        // Compute bounding box
+        let mut bbox = Box::default();
+        for v in 0..num_vert {
+            let pos = self.get_vert_pos(v);
+            let p = Vec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64);
+            bbox.union_point(p);
+        }
+
+        let tolerance = f64::max(
+            self.tolerance as f64,
+            f32::EPSILON as f64 * bbox.scale(),
+        );
+
+        // Build BVH boxes and morton codes for open vertices
+        let mut vert_box: Vec<Box> = Vec::with_capacity(num_open);
+        let mut vert_morton: Vec<u32> = Vec::with_capacity(num_open);
+        for &v in &open_verts {
+            let pos = self.get_vert_pos(v);
+            let center = Vec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64);
+            let half_tol = tolerance / 2.0;
+            let bx = Box::from_points(
+                center - Vec3::new(half_tol, half_tol, half_tol),
+                center + Vec3::new(half_tol, half_tol, half_tol),
+            );
+            vert_box.push(bx);
+            vert_morton.push(morton_code(center, &bbox));
+        }
+
+        // Sort by morton code
+        let mut order: Vec<usize> = (0..num_open).collect();
+        order.sort_by_key(|&i| vert_morton[i]);
+
+        let sorted_box: Vec<Box> = order.iter().map(|&i| vert_box[i]).collect();
+        let sorted_morton: Vec<u32> = order.iter().map(|&i| vert_morton[i]).collect();
+        let sorted_verts: Vec<usize> = order.iter().map(|&i| open_verts[i]).collect();
+
+        // Build collider and find coincident vertex pairs
+        let collider = Collider::new(sorted_box.clone(), sorted_morton);
+        let uf = DisjointSets::new(num_vert as u32);
+
+        collider.collisions_with_boxes(&sorted_box, false, |a, b| {
+            uf.unite(sorted_verts[a] as u32, sorted_verts[b] as u32);
+        });
+
+        // Also merge from existing merge vectors
+        for i in 0..self.merge_from_vert.len() {
+            uf.unite(self.merge_from_vert[i], self.merge_to_vert[i]);
+        }
+
+        // Rebuild merge vectors
+        self.merge_from_vert.clear();
+        self.merge_to_vert.clear();
+        for v in 0..num_vert {
+            let merge_to = uf.find(v as u32) as usize;
+            if merge_to != v {
+                self.merge_from_vert.push(v as u32);
+                self.merge_to_vert.push(merge_to as u32);
+            }
+        }
+
+        true
+    }
 }
 
 impl MeshGLP<f64, u64> {

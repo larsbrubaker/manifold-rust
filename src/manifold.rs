@@ -44,6 +44,13 @@ impl Manifold {
         Self::new()
     }
 
+    /// Create an empty manifold with a specific error status.
+    pub fn make_empty(status: crate::types::Error) -> Self {
+        let mut imp = ManifoldImpl::new();
+        imp.make_empty(status);
+        Self { imp }
+    }
+
     pub fn from_impl(imp: ManifoldImpl) -> Self {
         Self { imp }
     }
@@ -57,6 +64,11 @@ impl Manifold {
     }
 
     pub fn cube(size: Vec3, center: bool) -> Self {
+        if size.x < 0.0 || size.y < 0.0 || size.z < 0.0
+            || crate::linalg::length(size) == 0.0
+        {
+            return Self::make_empty(crate::types::Error::InvalidConstruction);
+        }
         let translation = if center {
             translation_matrix(-size * 0.5)
         } else {
@@ -67,16 +79,29 @@ impl Manifold {
     }
 
     pub fn cylinder(height: f64, radius_low: f64, radius_high: f64, circular_segments: i32) -> Self {
+        Self::cylinder_centered(height, radius_low, radius_high, circular_segments, false)
+    }
+
+    pub fn cylinder_centered(height: f64, radius_low: f64, radius_high: f64, circular_segments: i32, center: bool) -> Self {
+        if height <= 0.0 || radius_low < 0.0 {
+            return Self::make_empty(crate::types::Error::InvalidConstruction);
+        }
+        if radius_low == 0.0 && radius_high <= 0.0 {
+            return Self::make_empty(crate::types::Error::InvalidConstruction);
+        }
         Self::from_impl(constructors::cylinder(
             height,
             radius_low,
             radius_high,
             circular_segments,
-            false,
+            center,
         ))
     }
 
     pub fn sphere(radius: f64, circular_segments: i32) -> Self {
+        if radius <= 0.0 {
+            return Self::make_empty(crate::types::Error::InvalidConstruction);
+        }
         const K_HALF_PI: f64 = std::f64::consts::FRAC_PI_2;
 
         // Build unit octahedron and subdivide
@@ -112,10 +137,16 @@ impl Manifold {
     }
 
     pub fn extrude(cross_section: &Polygons, height: f64, n_divisions: i32, twist_degrees: f64, scale_top: Vec2) -> Self {
+        if cross_section.is_empty() || height <= 0.0 {
+            return Self::make_empty(crate::types::Error::InvalidConstruction);
+        }
         Self::from_impl(constructors::extrude(cross_section, height, n_divisions, twist_degrees, scale_top))
     }
 
     pub fn revolve(cross_section: &Polygons, circular_segments: i32, revolve_degrees: f64) -> Self {
+        if cross_section.is_empty() {
+            return Self::make_empty(crate::types::Error::InvalidConstruction);
+        }
         Self::from_impl(constructors::revolve(cross_section, circular_segments, revolve_degrees))
     }
 
@@ -515,11 +546,82 @@ impl Manifold {
     }
 
     pub fn decompose(&self) -> Vec<Self> {
-        vec![self.clone()]
+        use crate::disjoint_sets::DisjointSets;
+
+        let num_vert = self.imp.num_vert();
+        if num_vert == 0 {
+            return vec![];
+        }
+
+        let uf = DisjointSets::new(num_vert as u32);
+        for he in &self.imp.halfedge {
+            if he.is_forward() {
+                uf.unite(he.start_vert as u32, he.end_vert as u32);
+            }
+        }
+
+        let mut component_indices = vec![0i32; num_vert];
+        let num_components = uf.connected_components(&mut component_indices);
+
+        if num_components <= 1 {
+            return vec![self.clone()];
+        }
+
+        let num_tri = self.imp.num_tri();
+        let mut meshes = Vec::new();
+
+        for comp in 0..num_components {
+            let mut imp = ManifoldImpl::new();
+            imp.tolerance = self.imp.tolerance;
+
+            // Collect vertices belonging to this component
+            let vert_new2old: Vec<i32> = (0..num_vert as i32)
+                .filter(|&v| component_indices[v as usize] == comp)
+                .collect();
+            let n_vert = vert_new2old.len();
+            if n_vert == 0 { continue; }
+
+            imp.vert_pos = vert_new2old.iter().map(|&v| self.imp.vert_pos[v as usize]).collect();
+            if !self.imp.vert_normal.is_empty() {
+                imp.vert_normal = vert_new2old.iter()
+                    .map(|&v| self.imp.vert_normal[v as usize]).collect();
+            }
+
+            // Collect faces belonging to this component
+            let face_new2old: Vec<usize> = (0..num_tri)
+                .filter(|&f| {
+                    let sv = self.imp.halfedge[3 * f].start_vert;
+                    sv >= 0 && component_indices[sv as usize] == comp
+                })
+                .collect();
+
+            if face_new2old.is_empty() { continue; }
+
+            // Copy full data from original, then gather_faces will filter
+            imp.halfedge = self.imp.halfedge.clone();
+            imp.face_normal = self.imp.face_normal.clone();
+            imp.halfedge_tangent = self.imp.halfedge_tangent.clone();
+            imp.num_prop = self.imp.num_prop;
+            imp.properties = self.imp.properties.clone();
+            imp.mesh_relation = self.imp.mesh_relation.clone();
+
+            crate::sort::gather_faces(&mut imp, &face_new2old);
+            crate::sort::reindex_verts(&mut imp, &vert_new2old, self.imp.num_vert());
+            imp.calculate_bbox();
+            imp.sort_geometry();
+
+            meshes.push(Self::from_impl(imp));
+        }
+
+        meshes
     }
 
     pub fn level_set<F: Fn(Vec3) -> f64>(sdf_fn: F, bounds: crate::types::Box, edge_length: f64) -> Self {
         Self::from_impl(sdf::level_set(sdf_fn, bounds, edge_length, 0.0, -1.0))
+    }
+
+    pub fn level_set_with_level<F: Fn(Vec3) -> f64>(sdf_fn: F, bounds: crate::types::Box, edge_length: f64, level: f64) -> Self {
+        Self::from_impl(sdf::level_set(sdf_fn, bounds, edge_length, level, -1.0))
     }
 
     pub fn hull(points: &[Vec3]) -> Self {

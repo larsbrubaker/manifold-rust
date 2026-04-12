@@ -474,7 +474,6 @@ fn test_cpp_mirror_union_full() {
 
 /// C++ TEST(Manifold, Invalid)
 #[test]
-#[ignore = "Constructor input validation not yet implemented"]
 fn test_cpp_invalid_constructors() {
     use crate::types::Error;
     // Zero-size constructors should return InvalidConstruction

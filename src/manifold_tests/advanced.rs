@@ -769,9 +769,14 @@ fn test_cpp_manifold_mesh_id() {
     let mut cube_gl = cube.get_mesh_gl(3);
     cube_gl.run_index.clear();
     cube_gl.run_original_id.clear();
+    cube_gl.run_transform.clear();
     let cube1 = Manifold::from_mesh_gl(&cube_gl);
     let cube2 = Manifold::from_mesh_gl(&cube_gl);
-    let id1 = cube1.get_mesh_gl(3).run_original_id[0];
+    assert!(!cube1.is_empty(), "cube1 should not be empty, status={:?}", cube1.status());
+    assert!(!cube2.is_empty(), "cube2 should not be empty, status={:?}", cube2.status());
+    let gl1 = cube1.get_mesh_gl(3);
+    assert!(!gl1.run_original_id.is_empty(), "gl1 should have run_original_id");
+    let id1 = gl1.run_original_id[0];
     let id2 = cube2.get_mesh_gl(3).run_original_id[0];
     assert_ne!(id1, id2, "MeshID: two imports should get different IDs: {} vs {}", id1, id2);
 }

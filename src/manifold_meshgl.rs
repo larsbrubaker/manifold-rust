@@ -8,10 +8,64 @@ use super::Manifold;
 
 impl Manifold {
     pub fn from_mesh_gl(mesh: &MeshGL) -> Self {
+    let num_vert = mesh.num_vert() as u32;
+    let num_tri = mesh.num_tri();
+
+    // Validation checks matching C++ Impl::Impl(const MeshGLP&)
+    if num_vert == 0 && num_tri == 0 {
+        return Self::make_empty(crate::types::Error::NoError);
+    }
+    if num_vert < 4 || num_tri < 4 {
+        return Self::make_empty(crate::types::Error::NotManifold);
+    }
+    if mesh.num_prop < 3 {
+        return Self::make_empty(crate::types::Error::MissingPositionProperties);
+    }
+    if mesh.merge_from_vert.len() != mesh.merge_to_vert.len() {
+        return Self::make_empty(crate::types::Error::MergeVectorsDifferentLengths);
+    }
+    if !mesh.run_transform.is_empty()
+        && 12 * mesh.run_original_id.len() != mesh.run_transform.len()
+    {
+        return Self::make_empty(crate::types::Error::TransformWrongLength);
+    }
+    if !mesh.run_original_id.is_empty()
+        && !mesh.run_index.is_empty()
+        && mesh.run_original_id.len() + 1 != mesh.run_index.len()
+        && mesh.run_original_id.len() != mesh.run_index.len()
+    {
+        return Self::make_empty(crate::types::Error::RunIndexWrongLength);
+    }
+    if !mesh.face_id.is_empty() && mesh.face_id.len() != num_tri {
+        return Self::make_empty(crate::types::Error::FaceIdWrongLength);
+    }
+    if !mesh.vert_properties.iter().all(|x| x.is_finite()) {
+        return Self::make_empty(crate::types::Error::NonFiniteVertex);
+    }
+    if !mesh.run_transform.iter().all(|x| x.is_finite()) {
+        return Self::make_empty(crate::types::Error::InvalidConstruction);
+    }
+    if !mesh.halfedge_tangent.iter().all(|x| x.is_finite()) {
+        return Self::make_empty(crate::types::Error::InvalidConstruction);
+    }
+
+    // Check merge indices are in bounds
+    for i in 0..mesh.merge_from_vert.len() {
+        if mesh.merge_from_vert[i] >= num_vert || mesh.merge_to_vert[i] >= num_vert {
+            return Self::make_empty(crate::types::Error::MergeIndexOutOfBounds);
+        }
+    }
+
+    // Check tri_verts are in bounds
+    for &v in &mesh.tri_verts {
+        if v >= num_vert {
+            return Self::make_empty(crate::types::Error::VertexOutOfBounds);
+        }
+    }
+
     let mut imp = ManifoldImpl::new();
     let num_prop = mesh.num_prop as usize;
     imp.num_prop = num_prop.saturating_sub(3);
-    let num_tri = mesh.num_tri();
 
     imp.vert_pos = (0..mesh.num_vert())
         .map(|i| {
@@ -32,19 +86,30 @@ impl Manifold {
             .collect();
     }
 
-    let tri: Vec<IVec3> = (0..num_tri)
-        .map(|i| {
-            let t = mesh.get_tri_verts(i);
-            IVec3::new(t[0] as i32, t[1] as i32, t[2] as i32)
-        })
-        .collect();
-    imp.create_halfedges(&tri, &[]);
+    // Build prop2vert mapping from merge vectors
+    let has_merges = !mesh.merge_from_vert.is_empty();
+    let needs_prop_map = imp.num_prop > 0 && has_merges;
+    let prop2vert: Vec<i32> = if has_merges {
+        let mut p2v: Vec<i32> = (0..num_vert as i32).collect();
+        for i in 0..mesh.merge_from_vert.len() {
+            p2v[mesh.merge_from_vert[i] as usize] = mesh.merge_to_vert[i] as i32;
+        }
+        p2v
+    } else {
+        vec![]
+    };
 
     // Set up mesh relations from runOriginalID (matches C++ MeshGL constructor)
-    let run_index: Vec<usize> = if mesh.run_index.is_empty() {
+    let mut run_index: Vec<usize> = if mesh.run_index.is_empty() {
         vec![0, 3 * num_tri]
     } else {
-        mesh.run_index.iter().map(|&v| v as usize).collect()
+        let mut ri: Vec<usize> = mesh.run_index.iter().map(|&v| v as usize).collect();
+        if ri.len() == mesh.run_original_id.len() {
+            ri.push(3 * num_tri);
+        } else if ri.len() == 1 {
+            ri.push(3 * num_tri);
+        }
+        ri
     };
     let mut run_original_id: Vec<u32> = mesh.run_original_id.clone();
     let num_runs = run_original_id.len().max(1);
@@ -53,21 +118,22 @@ impl Manifold {
         run_original_id.push(start_id as u32);
     }
 
-    imp.mesh_relation.tri_ref.resize(num_tri, crate::types::TriRef::default());
+    // Build tri_ref for all input tris
+    let mut all_tri_ref: Vec<crate::types::TriRef> = vec![crate::types::TriRef::default(); num_tri];
     for (i, &orig_id) in run_original_id.iter().enumerate() {
         let mesh_id = start_id + i as i32;
         let run_start = if i < run_index.len() { run_index[i] / 3 } else { num_tri };
         let run_end = if i + 1 < run_index.len() { run_index[i + 1] / 3 } else { num_tri };
         for tri in run_start..run_end {
-            if tri < imp.mesh_relation.tri_ref.len() {
-                imp.mesh_relation.tri_ref[tri].mesh_id = mesh_id;
-                imp.mesh_relation.tri_ref[tri].original_id = orig_id as i32;
-                imp.mesh_relation.tri_ref[tri].face_id = if !mesh.face_id.is_empty() && tri < mesh.face_id.len() {
+            if tri < all_tri_ref.len() {
+                all_tri_ref[tri].mesh_id = mesh_id;
+                all_tri_ref[tri].original_id = orig_id as i32;
+                all_tri_ref[tri].face_id = if !mesh.face_id.is_empty() && tri < mesh.face_id.len() {
                     mesh.face_id[tri] as i32
                 } else {
                     -1
                 };
-                imp.mesh_relation.tri_ref[tri].coplanar_id = tri as i32;
+                all_tri_ref[tri].coplanar_id = tri as i32;
             }
         }
         let transform = if mesh.run_transform.len() >= (i + 1) * 12 {
@@ -87,9 +153,52 @@ impl Manifold {
             back_side: false,
         });
     }
+
+    // Build triangles, filtering out degenerates from merges
+    let mut tri_prop: Vec<IVec3> = Vec::with_capacity(num_tri);
+    let mut tri_vert: Vec<IVec3> = Vec::new();
+    if needs_prop_map {
+        tri_vert.reserve(num_tri);
+    }
+    imp.mesh_relation.tri_ref.clear();
+    imp.mesh_relation.tri_ref.reserve(num_tri);
+
+    for i in 0..num_tri {
+        let t = mesh.get_tri_verts(i);
+        let tri_p = IVec3::new(t[0] as i32, t[1] as i32, t[2] as i32);
+        let tri_v = if prop2vert.is_empty() {
+            tri_p
+        } else {
+            IVec3::new(
+                prop2vert[t[0] as usize],
+                prop2vert[t[1] as usize],
+                prop2vert[t[2] as usize],
+            )
+        };
+
+        // Skip degenerate triangles (where merged verts collapse)
+        if tri_v.x != tri_v.y && tri_v.y != tri_v.z && tri_v.z != tri_v.x {
+            if needs_prop_map {
+                tri_prop.push(tri_p);
+                tri_vert.push(tri_v);
+            } else {
+                tri_prop.push(tri_v);
+            }
+            imp.mesh_relation.tri_ref.push(all_tri_ref[i]);
+        }
+    }
+
+    imp.create_halfedges(&tri_prop, &tri_vert);
+
+    if !imp.is_manifold() {
+        return Self::make_empty(crate::types::Error::NotManifold);
+    }
+
     // A Manifold created from input mesh is never an original
     imp.mesh_relation.original_id = -1;
 
+    imp.dedupe_prop_verts();
+    imp.remove_unreferenced_verts();
     imp.calculate_bbox();
     imp.set_epsilon(mesh.tolerance as f64, false);
     imp.sort_geometry();

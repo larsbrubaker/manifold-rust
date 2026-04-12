@@ -153,3 +153,21 @@ fn test_cpp_hull_not_enough_points() {
     // Volume must be 0 for degenerate hull
     assert!(hull.volume().abs() < 1e-10, "NotEnoughPoints hull volume should be 0, got {}", hull.volume());
 }
+
+/// C++ TEST(Hull, EmptyHull) — empty point set yields empty manifold
+#[test]
+fn test_cpp_hull_empty_hull() {
+    let hull = Manifold::hull(&[]);
+    assert!(hull.is_empty(), "EmptyHull should be empty");
+}
+
+/// C++ TEST(Hull, Sphere) — hull of a sphere is the sphere itself
+#[test]
+#[ignore = "Slow: 1500-segment sphere hull"]
+fn test_cpp_hull_sphere() {
+    let sphere = Manifold::sphere(1.0, 1500).translate(Vec3::new(0.5, 0.5, 0.5));
+    let hull = Manifold::hull_manifolds(&[sphere.clone()]);
+    assert_eq!(hull.num_tri(), sphere.num_tri());
+    assert!((hull.volume() - sphere.volume()).abs() < 1e-4,
+        "Hull sphere volume {} vs sphere {}", hull.volume(), sphere.volume());
+}
