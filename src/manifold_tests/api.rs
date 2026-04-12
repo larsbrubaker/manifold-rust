@@ -619,3 +619,77 @@ fn test_cpp_decompose_props() {
             "DecomposeProps: part {} has {} props, expected 3", i, part.num_prop());
     }
 }
+
+// ============================================================================
+// Properties tests
+// ============================================================================
+
+/// C++ TEST(CrossSection, Square) — cube from extruded square equals cube
+#[test]
+fn test_cpp_cross_section_square() {
+    use crate::cross_section::CrossSection;
+    let a = Manifold::cube(Vec3::new(5.0, 5.0, 5.0), false);
+    let b = Manifold::extrude(&CrossSection::square(5.0).to_polygons(), 5.0, 0, 0.0, Vec2::new(1.0, 1.0));
+    assert!((a - b).volume().abs() < 1e-5, "Square: cube - extrude(square) should have 0 volume");
+}
+
+/// C++ TEST(CrossSection, Empty) — empty polygons yield empty cross section
+#[test]
+fn test_cpp_cross_section_empty() {
+    use crate::cross_section::CrossSection;
+    let polys: Vec<Vec<Vec2>> = vec![vec![], vec![]];
+    let e = CrossSection::new(polys);
+    assert!(e.is_empty(), "Empty cross section should be empty");
+}
+
+/// C++ TEST(Properties, CalculateCurvature) — sphere curvature
+#[test]
+fn test_cpp_properties_calculate_curvature() {
+    let precision = 0.015f64;
+    let gaussian_idx = 3usize;
+    let mean_idx = 4usize;
+
+    let sphere = Manifold::sphere(1.0, 64)
+        .calculate_curvature((gaussian_idx - 3) as i32, (mean_idx - 3) as i32);
+    let gl = sphere.get_mesh_gl(0);
+    assert_eq!(gl.num_prop, 5, "Should have 5 properties (3 pos + gaussian + mean)");
+
+    // Mean curvature of unit sphere = 2 (1/r1 + 1/r2 = 1+1 = 2)
+    let (min_mean, max_mean) = get_min_max_property(&gl, mean_idx);
+    assert!((min_mean - 2.0).abs() < 2.0 * precision as f32,
+        "min mean curvature: {}", min_mean);
+    assert!((max_mean - 2.0).abs() < 2.0 * precision as f32,
+        "max mean curvature: {}", max_mean);
+
+    // Gaussian curvature of unit sphere = 1
+    let (min_gauss, max_gauss) = get_min_max_property(&gl, gaussian_idx);
+    assert!((min_gauss - 1.0).abs() < precision as f32,
+        "min gaussian curvature: {}", min_gauss);
+    assert!((max_gauss - 1.0).abs() < precision as f32,
+        "max gaussian curvature: {}", max_gauss);
+
+    // Scaled sphere (radius 2): mean = 1, gaussian = 0.25
+    let sphere2 = sphere.scale(Vec3::splat(2.0))
+        .calculate_curvature((gaussian_idx - 3) as i32, (mean_idx - 3) as i32);
+    let gl2 = sphere2.get_mesh_gl(0);
+    assert_eq!(gl2.num_prop, 5);
+    let (min_mean2, max_mean2) = get_min_max_property(&gl2, mean_idx);
+    assert!((min_mean2 - 1.0).abs() < precision as f32, "scaled min mean: {}", min_mean2);
+    assert!((max_mean2 - 1.0).abs() < precision as f32, "scaled max mean: {}", max_mean2);
+    let (min_gauss2, max_gauss2) = get_min_max_property(&gl2, gaussian_idx);
+    assert!((min_gauss2 - 0.25).abs() < 0.25 * precision as f32, "scaled min gauss: {}", min_gauss2);
+    assert!((max_gauss2 - 0.25).abs() < 0.25 * precision as f32, "scaled max gauss: {}", max_gauss2);
+}
+
+fn get_min_max_property(gl: &MeshGL, channel: usize) -> (f32, f32) {
+    let num_prop = gl.num_prop as usize;
+    let mut min_val = f32::MAX;
+    let mut max_val = f32::MIN;
+    let num_vert = gl.vert_properties.len() / num_prop;
+    for i in 0..num_vert {
+        let v = gl.vert_properties[i * num_prop + channel];
+        if v < min_val { min_val = v; }
+        if v > max_val { max_val = v; }
+    }
+    (min_val, max_val)
+}
