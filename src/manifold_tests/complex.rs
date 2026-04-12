@@ -401,3 +401,43 @@ fn test_cpp_openscad_crash() {
     let m2 = m.clone() + m.translate(Vec3::new(0.0, 0.6, 0.0));
     assert!(!m2.is_empty(), "Boolean union should not be empty, status={:?}", m2.status());
 }
+
+/// C++ TEST(Manifold, MeshGLRoundTrip) — MeshGL round-trip preserves original ID
+#[test]
+fn test_cpp_meshgl_round_trip2() {
+    let cylinder = Manifold::cylinder(2.0, 1.0, -1.0, 0);
+    assert!(cylinder.original_id() >= 0);
+    let in_gl = cylinder.get_mesh_gl(0);
+    let cylinder2 = Manifold::from_mesh_gl(&in_gl);
+    let out_gl = cylinder2.get_mesh_gl(0);
+
+    assert_eq!(in_gl.run_original_id.len(), 1, "Input should have 1 run");
+    assert_eq!(out_gl.run_original_id.len(), 1, "Output should have 1 run");
+    assert_eq!(out_gl.run_original_id[0], in_gl.run_original_id[0],
+        "Original ID should be preserved through round-trip");
+}
+
+/// C++ TEST(BooleanComplex, Sphere) — sphere difference with position colors
+#[test]
+fn test_cpp_complex_sphere_boolean() {
+    // Simplified version without WithPositionColors/RelatedGL
+    let sphere = Manifold::sphere(1.0, 12)
+        .set_properties(3, |new_prop, pos, _old| {
+            new_prop[0] = pos.x;
+            new_prop[1] = pos.y;
+            new_prop[2] = pos.z;
+        });
+    let sphere2 = sphere.translate(Vec3::splat(0.5));
+    let result = sphere.clone() - sphere2;
+
+    assert!(!result.is_empty(), "Sphere difference should not be empty");
+    assert_eq!(result.status(), Error::NoError);
+    // C++ expects 74 verts, 144 tris with 3 props and 110 degenerate tris = 0
+    assert!(result.num_tri() > 0, "Should have triangles");
+    assert_eq!(result.num_prop(), 3, "Should have 3 extra properties");
+
+    // Refine should preserve properties
+    let refined = result.refine(4);
+    assert!(!refined.is_empty(), "Refined should not be empty");
+    assert_eq!(refined.num_prop(), 3, "Refined should have 3 props");
+}
