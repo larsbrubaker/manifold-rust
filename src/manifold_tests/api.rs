@@ -704,6 +704,21 @@ fn test_cpp_smooth_normal_transform() {
     assert!((out2.surface_area() - 12.0).abs() < 1e-4, "sa2={}", out2.surface_area());
 }
 
+/// C++ TEST(Smooth, FacetedNormals) — faceted smooth preserves geometry
+#[test]
+#[ignore = "Panics in sort.rs during smooth_by_normals + refine_to_length"]
+fn test_cpp_smooth_faceted_normals() {
+    let cylinder = Manifold::cylinder(10.0, 10.0, -1.0, 0);
+    let faceted = cylinder.calculate_normals(0, 0.0)
+        .smooth_by_normals(0)
+        .refine_to_length(0.1);
+    assert_eq!(faceted.status(), crate::types::Error::NoError);
+    assert!((cylinder.volume() - faceted.volume()).abs() < 0.01,
+        "FacetedNormals: volume {} vs {}", cylinder.volume(), faceted.volume());
+    assert!((cylinder.surface_area() - faceted.surface_area()).abs() < 0.01,
+        "FacetedNormals: area {} vs {}", cylinder.surface_area(), faceted.surface_area());
+}
+
 fn get_min_max_property(gl: &MeshGL, channel: usize) -> (f32, f32) {
     let num_prop = gl.num_prop as usize;
     let mut min_val = f32::MAX;
