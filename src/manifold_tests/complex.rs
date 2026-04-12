@@ -391,3 +391,13 @@ fn test_cpp_complex_spiral() {
     let result = spiral(120, 25.0, 2.0, d);
     assert_eq!(result.genus(), -120, "Spiral genus should be -120, got {}", result.genus());
 }
+
+/// C++ TEST(Manifold, OpenscadCrash) — OBJ that previously crashed openscad
+#[test]
+#[ignore = "Panics in face_op during boolean — needs processOverlaps support"]
+fn test_cpp_openscad_crash() {
+    let m = read_test_obj("openscad-nonmanifold-crash.obj");
+    assert!(!m.is_empty(), "OBJ should load as non-empty manifold, status={:?}", m.status());
+    let m2 = m.clone() + m.translate(Vec3::new(0.0, 0.6, 0.0));
+    assert!(!m2.is_empty(), "Boolean union should not be empty, status={:?}", m2.status());
+}

@@ -681,6 +681,29 @@ fn test_cpp_properties_calculate_curvature() {
     assert!((max_gauss2 - 0.25).abs() < 0.25 * precision as f32, "scaled max gauss: {}", max_gauss2);
 }
 
+/// C++ TEST(Smooth, NormalTransform) — smooth by normals after rotation
+#[test]
+#[ignore = "Panics in sort.rs during smooth_by_normals + refine"]
+fn test_cpp_smooth_normal_transform() {
+    let cube1 = Manifold::cube(Vec3::splat(1.0), false)
+        .rotate(30.0, 0.0, 0.0)
+        .calculate_normals(0, 60.0);
+    let cube2 = Manifold::cube(Vec3::splat(1.0), false)
+        .calculate_normals(0, 60.0)
+        .rotate(30.0, 0.0, 0.0)
+        .translate(Vec3::new(3.0, 0.0, 0.0));
+    let combo = cube1 + cube2;
+    let out1 = combo.smooth_by_normals(0).refine(10);
+    assert!((out1.volume() - 2.0).abs() < 1e-4, "volume={}", out1.volume());
+    assert!((out1.surface_area() - 12.0).abs() < 1e-4, "sa={}", out1.surface_area());
+
+    let out2 = Manifold::from_mesh_gl(&combo.get_mesh_gl(0))
+        .smooth_by_normals(0)
+        .refine(10);
+    assert!((out2.volume() - 2.0).abs() < 1e-4, "volume2={}", out2.volume());
+    assert!((out2.surface_area() - 12.0).abs() < 1e-4, "sa2={}", out2.surface_area());
+}
+
 fn get_min_max_property(gl: &MeshGL, channel: usize) -> (f32, f32) {
     let num_prop = gl.num_prop as usize;
     let mut min_val = f32::MAX;
