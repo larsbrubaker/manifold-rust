@@ -197,12 +197,17 @@ impl Manifold {
     // A Manifold created from input mesh is never an original
     imp.mesh_relation.original_id = -1;
 
+    // C++ pipeline: DedupePropVerts, SetNormalsAndCoplanar,
+    // RemoveDegenerates, RemoveUnreferencedVerts, SortGeometry
+    // Note: CleanupTopology omitted — it would fix opposite-face meshes but
+    // conflicts with is_manifold check ordering.
     imp.dedupe_prop_verts();
-    imp.remove_unreferenced_verts();
     imp.calculate_bbox();
     imp.set_epsilon(mesh.tolerance as f64, false);
-    imp.sort_geometry();
     imp.set_normals_and_coplanar();
+    crate::edge_op::remove_degenerates(&mut imp, 0);
+    imp.remove_unreferenced_verts();
+    imp.sort_geometry();
     Self { imp }
 }
 
