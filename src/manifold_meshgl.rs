@@ -190,6 +190,23 @@ impl Manifold {
 
     imp.create_halfedges(&tri_prop, &tri_vert);
 
+    // Import halfedge tangents from MeshGL (flat f32 array, 4 per halfedge)
+    if !mesh.halfedge_tangent.is_empty() {
+        let n_tangents = mesh.halfedge_tangent.len() / 4;
+        imp.halfedge_tangent.resize(
+            n_tangents,
+            crate::linalg::Vec4::new(0.0, 0.0, 0.0, 0.0),
+        );
+        for i in 0..n_tangents {
+            imp.halfedge_tangent[i] = crate::linalg::Vec4::new(
+                mesh.halfedge_tangent[4 * i] as f64,
+                mesh.halfedge_tangent[4 * i + 1] as f64,
+                mesh.halfedge_tangent[4 * i + 2] as f64,
+                mesh.halfedge_tangent[4 * i + 3] as f64,
+            );
+        }
+    }
+
     if !imp.is_manifold() {
         return Self::make_empty(crate::types::Error::NotManifold);
     }

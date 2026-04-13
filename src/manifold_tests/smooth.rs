@@ -4,10 +4,12 @@ use super::*;
 #[test]
 #[ignore = "Needs InterpTri for smooth vertex interpolation during subdivision"]
 fn test_cpp_smooth_normals() {
+    // C++ uses SmoothOut() which defaults to (60, 0)
     let cylinder = Manifold::cylinder(10.0, 5.0, 5.0, 8);
-    let out = cylinder.clone().smooth_out(0.0, 0.0).refine_to_length(0.1);
+    // C++ SmoothOut() defaults to (60, 0), CalculateNormals(0) defaults to (0, 60)
+    let out = cylinder.clone().smooth_out(60.0, 0.0).refine_to_length(0.1);
     let by_normals = cylinder
-        .calculate_normals(0, 0.0)
+        .calculate_normals(0, 60.0)
         .smooth_by_normals(0)
         .refine_to_length(0.1);
     assert!((out.volume() - by_normals.volume()).abs() < 1e-4,
@@ -21,7 +23,8 @@ fn test_cpp_smooth_normals() {
 #[ignore = "Needs InterpTri for smooth vertex interpolation during subdivision"]
 fn test_cpp_smooth_truncated_cone() {
     let cone = Manifold::cylinder(5.0, 10.0, 5.0, 12);
-    let smooth = cone.clone().smooth_out(0.0, 0.0).refine_to_length(0.5)
+    // C++ uses SmoothOut() which defaults to (60, 0)
+    let smooth = cone.clone().smooth_out(60.0, 0.0).refine_to_length(0.5)
         .calculate_normals(0, 0.0);
     assert!((smooth.volume() - 1158.61).abs() < 0.01,
         "TruncatedCone vol={}", smooth.volume());
@@ -36,10 +39,9 @@ fn test_cpp_smooth_truncated_cone() {
 
 /// C++ TEST(Smooth, Mirrored) — mirrored smooth tetrahedron
 #[test]
-#[ignore = "Needs InterpTri + Manifold::Smooth(MeshGL) constructor"]
 fn test_cpp_smooth_mirrored() {
     let tet_gl = Manifold::tetrahedron().scale(Vec3::new(1.0, 2.0, 3.0)).get_mesh_gl(0);
-    let smooth = Manifold::from_mesh_gl(&tet_gl);
+    let smooth = Manifold::smooth(&tet_gl, &[]);
     let mirror = smooth.clone().scale(Vec3::new(-2.0, 2.0, 2.0)).refine(10);
     let scaled = smooth.refine(10).scale(Vec3::new(2.0, 2.0, 2.0));
     assert!((scaled.volume() - mirror.volume()).abs() < 0.1,
@@ -50,10 +52,9 @@ fn test_cpp_smooth_mirrored() {
 
 /// C++ TEST(Smooth, Tetrahedron) — smooth tetrahedron with curvature check
 #[test]
-#[ignore = "Needs InterpTri + Manifold::Smooth(MeshGL) constructor"]
 fn test_cpp_smooth_tetrahedron() {
     let tet = Manifold::tetrahedron();
-    let smooth = Manifold::from_mesh_gl(&tet.get_mesh_gl(0));
+    let smooth = Manifold::smooth(&tet.get_mesh_gl(0), &[]);
     let n = 100;
     let refined = smooth.refine(n);
     assert_eq!(refined.num_vert(), 2 * n as usize * n as usize + 2);
@@ -64,10 +65,9 @@ fn test_cpp_smooth_tetrahedron() {
 
 /// C++ TEST(Smooth, Csaszar) — smooth Csaszar polyhedron
 #[test]
-#[ignore = "Needs InterpTri + Manifold::Smooth(MeshGL) constructor"]
 fn test_cpp_smooth_csaszar() {
     let csaszar = csaszar_gl();
-    let smooth = Manifold::from_mesh_gl(&csaszar);
+    let smooth = Manifold::smooth(&csaszar, &[]);
     let refined = smooth.refine(100);
     assert_eq!(refined.num_vert(), 70000);
     assert_eq!(refined.num_tri(), 140000);
@@ -77,11 +77,9 @@ fn test_cpp_smooth_csaszar() {
 
 /// C++ TEST(Smooth, Manual) — manually adjusted tangent weights
 #[test]
-#[ignore = "Needs InterpTri + Manifold::Smooth(MeshGL) constructor"]
 fn test_cpp_smooth_manual() {
     let oct = Manifold::sphere(1.0, 4).get_mesh_gl(0);
-    // TODO: Manifold::smooth() auto-computes tangents; placeholder
-    let smooth_m = Manifold::from_mesh_gl(&oct);
+    let smooth_m = Manifold::smooth(&oct, &[]);
     let mut smooth_gl = smooth_m.get_mesh_gl(0);
     if smooth_gl.halfedge_tangent.len() > 4 * 22 + 3 {
         smooth_gl.halfedge_tangent[4 * 6 + 3] = 0.0;
@@ -100,8 +98,9 @@ fn test_cpp_smooth_manual() {
 #[test]
 #[ignore = "Needs InterpTri for smooth vertex interpolation during subdivision"]
 fn test_cpp_smooth_refine_quads() {
+    // C++ uses SmoothOut() which defaults to (60, 0)
     let cylinder = with_position_colors(&Manifold::cylinder(2.0, 1.0, -1.0, 12))
-        .smooth_out(0.0, 0.0)
+        .smooth_out(60.0, 0.0)
         .refine_to_length(0.05);
     assert_eq!(cylinder.num_tri(), 17044, "RefineQuads tris={}", cylinder.num_tri());
     let pi = std::f64::consts::PI;
@@ -119,7 +118,8 @@ fn test_cpp_smooth_precision() {
     let radius = 10.0;
     let height = 10.0;
     let cylinder = Manifold::cylinder(height, radius, radius, 8);
-    let smoothed = cylinder.smooth_out(0.0, 0.0).refine_to_tolerance(tolerance);
+    // C++ uses SmoothOut() which defaults to (60, 0)
+    let smoothed = cylinder.smooth_out(60.0, 0.0).refine_to_tolerance(tolerance);
     assert_eq!(smoothed.num_tri(), 7984, "Precision tris={}", smoothed.num_tri());
 }
 

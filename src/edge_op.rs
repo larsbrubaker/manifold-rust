@@ -513,7 +513,11 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
     if paired < 0 {
         return;
     }
-    let mut current = mesh.halfedge[next_halfedge(edge as i32) as usize].paired_halfedge as usize;
+    let next_paired = mesh.halfedge[next_halfedge(edge as i32) as usize].paired_halfedge;
+    if next_paired < 0 {
+        return;
+    }
+    let mut current = next_paired as usize;
 
     while current != edge {
         let vert = mesh.halfedge[current].start_vert;
@@ -523,8 +527,12 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
             mesh.vert_pos.push(mesh.vert_pos[end_vert as usize]);
             // C++ advances current BEFORE building triangles:
             // current = halfedge_[NextHalfedge(current)].pairedHalfedge;
-            current = mesh.halfedge[next_halfedge(current as i32) as usize].paired_halfedge as usize;
-            let opposite = mesh.halfedge[next_halfedge(edge as i32) as usize].paired_halfedge as usize;
+            let next_p = mesh.halfedge[next_halfedge(current as i32) as usize].paired_halfedge;
+            if next_p < 0 { break; }
+            current = next_p as usize;
+            let opp_p = mesh.halfedge[next_halfedge(edge as i32) as usize].paired_halfedge;
+            if opp_p < 0 { break; }
+            let opposite = opp_p as usize;
 
             update_vert(mesh, new_vert, current, opposite);
 
@@ -568,7 +576,9 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
             }
             break;
         }
-        current = mesh.halfedge[next_halfedge(current as i32) as usize].paired_halfedge as usize;
+        let orbit_p = mesh.halfedge[next_halfedge(current as i32) as usize].paired_halfedge;
+        if orbit_p < 0 { break; }
+        current = orbit_p as usize;
     }
 
     if current == edge {
@@ -601,7 +611,9 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
         if v == end_vert {
             return; // Connected: not a pinched vert
         }
-        cur = mesh.halfedge[next_halfedge(cur as i32) as usize].paired_halfedge as usize;
+        let p = mesh.halfedge[next_halfedge(cur as i32) as usize].paired_halfedge;
+        if p < 0 { break; }
+        cur = p as usize;
     }
 
     if cur == pair {
@@ -779,7 +791,14 @@ pub fn collapse_colinear_edges(mesh: &mut ManifoldImpl, first_new_vert: i32) {
             let mut ref1_updated = !ref0.same_face(&ref1);
 
             let mut is_redundant = true;
+            let max_orbit = mesh.halfedge.len(); // orbit can't exceed total halfedges
+            let mut orbit_count = 0;
             while current != i {
+                orbit_count += 1;
+                if orbit_count > max_orbit {
+                    is_redundant = false;
+                    break;
+                }
                 // FlagEdge traversal: current = NextHalfedge(halfedge[current].pairedHalfedge)
                 let pair = mesh.halfedge[current].paired_halfedge;
                 if pair < 0 { is_redundant = false; break; }

@@ -672,7 +672,6 @@ impl ManifoldImpl {
         result.properties = self.properties.clone();
         result.bbox = self.bbox;
         result.halfedge = self.halfedge.clone();
-        result.halfedge_tangent.resize(self.halfedge_tangent.len(), Vec4::new(0.0, 0.0, 0.0, 0.0));
         result.mesh_relation.original_id = -1;
 
         // Update mesh transforms
@@ -702,6 +701,26 @@ impl ManifoldImpl {
         }).collect();
 
         let invert = m3.determinant() < 0.0;
+
+        // Transform tangents — C++ TransformTangents
+        // Must happen BEFORE FlipTris (matches C++ order)
+        if !self.halfedge_tangent.is_empty() {
+            result.halfedge_tangent = vec![Vec4::new(0.0, 0.0, 0.0, 0.0); self.halfedge_tangent.len()];
+            for edge_out in 0..self.halfedge_tangent.len() {
+                let edge_in = if invert {
+                    let tri = edge_out / 3;
+                    let vert = 2 - (edge_out - 3 * tri);
+                    let flipped = 3 * tri + vert;
+                    self.halfedge[flipped].paired_halfedge as usize
+                } else {
+                    edge_out
+                };
+                let old_t = self.halfedge_tangent[edge_in];
+                let xyz = m3 * Vec3::new(old_t.x, old_t.y, old_t.z);
+                result.halfedge_tangent[edge_out] = Vec4::new(xyz.x, xyz.y, xyz.z, old_t.w);
+            }
+        }
+
         if invert {
             // Flip triangle winding — matches C++ FlipTris
             for tri in 0..result.num_tri() {

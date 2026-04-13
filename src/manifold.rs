@@ -452,10 +452,67 @@ impl Manifold {
         Self::from_impl(out)
     }
 
+    /// Port of C++ Manifold::Smooth(MeshGL, sharpenedEdges)
+    /// Constructs a smooth version of the input mesh by creating tangents.
+    /// The actual triangle resolution is unchanged; use Refine() to
+    /// interpolate to a higher-resolution curve.
+    pub fn smooth(mesh_gl: &MeshGL, sharpened_edges: &[crate::types::Smoothness]) -> Self {
+        use crate::types::Smoothness;
+
+        // Assign sequential faceIDs if not present
+        let mut mesh_tmp = mesh_gl.clone();
+        let num_tri = mesh_tmp.num_tri();
+        mesh_tmp.face_id.resize(num_tri, 0);
+        for i in 0..num_tri {
+            mesh_tmp.face_id[i] = i as u32;
+        }
+
+        let mut m = Self::from_mesh_gl(&mesh_tmp);
+        if m.is_empty() {
+            return m;
+        }
+
+        // UpdateSharpenedEdges + CreateTangents
+        let sharpened: Vec<Smoothness> = sharpened_edges.to_vec();
+        let updated = m.imp.update_sharpened_edges(&sharpened);
+        m.imp.create_tangents(updated);
+
+        // Restore original faceIDs
+        let num_tri_impl = m.imp.num_tri();
+        for i in 0..num_tri_impl {
+            if i < m.imp.mesh_relation.tri_ref.len() {
+                let face_id = m.imp.mesh_relation.tri_ref[i].face_id;
+                if mesh_gl.face_id.len() == num_tri && face_id >= 0 && (face_id as usize) < num_tri {
+                    m.imp.mesh_relation.tri_ref[i].face_id = mesh_gl.face_id[face_id as usize] as i32;
+                } else {
+                    m.imp.mesh_relation.tri_ref[i].face_id = -1;
+                }
+            }
+        }
+
+        m
+    }
+
     pub fn smooth_out(&self, min_sharp_angle: f64, min_smoothness: f64) -> Self {
         let mut out = self.imp.clone();
-        let sharpened = out.sharpen_edges(min_sharp_angle, min_smoothness);
-        out.create_tangents(sharpened);
+        if self.is_empty() {
+            return Self::from_impl(out);
+        }
+        if min_smoothness == 0.0 {
+            // C++ path: use normals-based tangents, then restore original properties
+            let saved_num_prop = out.num_prop;
+            let saved_properties = out.properties.clone();
+            let saved_halfedge = out.halfedge.clone();
+            out.set_normals(0, min_sharp_angle);
+            out.create_tangents_from_normals(0);
+            // Restore original properties (removing temporary normals)
+            out.num_prop = saved_num_prop;
+            out.properties = saved_properties;
+            out.halfedge = saved_halfedge;
+        } else {
+            let sharpened = out.sharpen_edges(min_sharp_angle, min_smoothness);
+            out.create_tangents(sharpened);
+        }
         Self::from_impl(out)
     }
 
@@ -472,9 +529,12 @@ impl Manifold {
             return self.clone();
         }
         let mut out = self.imp.clone();
+        let old = out.clone();
         let had_tangents = out.halfedge_tangent.len() == out.halfedge.len();
-        let _vert_bary = out.subdivide(&|_vec, _t0, _t1| n - 1, false);
-        // TODO: InterpTri for smooth surface interpolation when tangents present
+        let vert_bary = out.subdivide(&|_vec, _t0, _t1| n - 1, false);
+        if had_tangents && !vert_bary.is_empty() {
+            crate::interp_tri::interp_tri(&mut out.vert_pos, &vert_bary, &old);
+        }
         out.halfedge_tangent.clear();
         out.calculate_bbox();
         out.set_epsilon(-1.0, false);
@@ -490,21 +550,26 @@ impl Manifold {
 
     /// Port of C++ Manifold::RefineToLength(double length)
     pub fn refine_to_length(&self, length: f64) -> Self {
-        if length <= 0.0 || self.imp.is_empty() {
+        let length = length.abs();
+        if length == 0.0 || self.imp.is_empty() {
             return self.clone();
         }
         let mut out = self.imp.clone();
+        let old = out.clone();
         let had_tangents = out.halfedge_tangent.len() == out.halfedge.len();
-        let _vert_bary = out.subdivide(
+        let vert_bary = out.subdivide(
             &|edge_vec, _t0, _t1| {
                 let edge_len = (edge_vec.x * edge_vec.x + edge_vec.y * edge_vec.y
                     + edge_vec.z * edge_vec.z)
                     .sqrt();
-                ((edge_len / length).ceil() as i32 - 1).max(0)
+                // C++: static_cast<int>(la::length(edge) / length) — truncation
+                (edge_len / length) as i32
             },
-            true,
+            false,
         );
-        // TODO: InterpTri for smooth surface interpolation when tangents present
+        if had_tangents && !vert_bary.is_empty() {
+            crate::interp_tri::interp_tri(&mut out.vert_pos, &vert_bary, &old);
+        }
         out.halfedge_tangent.clear();
         out.calculate_bbox();
         out.set_epsilon(-1.0, false);
@@ -520,13 +585,18 @@ impl Manifold {
 
     /// Port of C++ Manifold::RefineToTolerance(double tolerance)
     pub fn refine_to_tolerance(&self, tolerance: f64) -> Self {
-        if tolerance <= 0.0 || self.imp.is_empty() {
+        let tolerance = tolerance.abs();
+        if tolerance == 0.0 || self.imp.is_empty() {
             return self.clone();
         }
-        // Similar to C++ — uses tolerance with tangent-based divisions
+        // C++ only refines when tangents are present
         let mut out = self.imp.clone();
         let had_tangents = out.halfedge_tangent.len() == out.halfedge.len();
-        let _vert_bary = out.subdivide(
+        if !had_tangents {
+            return self.clone();
+        }
+        let old = out.clone();
+        let vert_bary = out.subdivide(
             &|edge_vec, tangent0, tangent1| {
                 let edge_len = (edge_vec.x * edge_vec.x + edge_vec.y * edge_vec.y
                     + edge_vec.z * edge_vec.z)
@@ -534,22 +604,50 @@ impl Manifold {
                 if edge_len == 0.0 {
                     return 0;
                 }
-                // Approximate curvature from tangent deviation
-                let t0_len = (tangent0.x * tangent0.x + tangent0.y * tangent0.y
-                    + tangent0.z * tangent0.z)
+                let edge_norm = Vec3::new(
+                    edge_vec.x / edge_len,
+                    edge_vec.y / edge_len,
+                    edge_vec.z / edge_len,
+                );
+                let t_start = Vec3::new(tangent0.x, tangent0.y, tangent0.z);
+                let t_end = Vec3::new(tangent1.x, tangent1.y, tangent1.z);
+                // Perpendicular to edge
+                let dot_s = edge_norm.x * t_start.x + edge_norm.y * t_start.y
+                    + edge_norm.z * t_start.z;
+                let start = Vec3::new(
+                    t_start.x - edge_norm.x * dot_s,
+                    t_start.y - edge_norm.y * dot_s,
+                    t_start.z - edge_norm.z * dot_s,
+                );
+                let dot_e = edge_norm.x * t_end.x + edge_norm.y * t_end.y
+                    + edge_norm.z * t_end.z;
+                let end = Vec3::new(
+                    t_end.x - edge_norm.x * dot_e,
+                    t_end.y - edge_norm.y * dot_e,
+                    t_end.z - edge_norm.z * dot_e,
+                );
+                // Circular arc result plus heuristic term for non-circular curves
+                let len_start = (start.x * start.x + start.y * start.y
+                    + start.z * start.z)
                     .sqrt();
-                let t1_len = (tangent1.x * tangent1.x + tangent1.y * tangent1.y
-                    + tangent1.z * tangent1.z)
-                    .sqrt();
-                if t0_len == 0.0 && t1_len == 0.0 {
-                    return 0; // flat edge
-                }
-                let max_sag = (t0_len + t1_len) * 0.5;
-                ((max_sag / tolerance).sqrt().ceil() as i32 - 1).max(0)
+                let len_end =
+                    (end.x * end.x + end.y * end.y + end.z * end.z).sqrt();
+                let diff = Vec3::new(
+                    start.x - end.x,
+                    start.y - end.y,
+                    start.z - end.z,
+                );
+                let len_diff =
+                    (diff.x * diff.x + diff.y * diff.y + diff.z * diff.z)
+                        .sqrt();
+                let d = 0.5 * (len_start + len_end) + len_diff;
+                (3.0 * d / (4.0 * tolerance)).sqrt() as i32
             },
             true,
         );
-        // C++ pattern: clear tangents after subdivide, before sort
+        if had_tangents && !vert_bary.is_empty() {
+            crate::interp_tri::interp_tri(&mut out.vert_pos, &vert_bary, &old);
+        }
         out.halfedge_tangent.clear();
         out.calculate_bbox();
         out.set_epsilon(-1.0, false);

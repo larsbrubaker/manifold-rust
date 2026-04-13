@@ -9,11 +9,8 @@ fn test_manifold_union_disjoint() {
 }
 
 /// C++ TEST(Boolean, Precision) — tiny cube near precision limit gets absorbed
-/// Note: C++ uses epsilon-based mesh precision tracking that absorbs tiny non-intersecting
-/// geometry. Our implementation doesn't yet have this feature, so both cubes remain separate.
-/// TODO: implement per-mesh epsilon tracking for precision-aware boolean operations.
+/// C++ TEST(Boolean, Precision) — per-mesh epsilon tracking
 #[test]
-#[ignore = "Requires per-mesh epsilon tracking (not yet implemented)"]
 fn test_boolean_precision() {
     let k_precision: f64 = 1e-12;
     let cube = Manifold::cube(Vec3::splat(1.0), false);

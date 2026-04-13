@@ -54,7 +54,7 @@ fn create_tmp_edges(halfedge: &[Halfedge]) -> Vec<TmpEdge> {
 
 impl ManifoldImpl {
     /// Port of C++ Manifold::Impl::GetNeighbor(int tri)
-    fn get_neighbor(&self, tri: i32) -> i32 {
+    pub fn get_neighbor(&self, tri: i32) -> i32 {
         let mut neighbor: i32 = -1;
         for i in 0..3 {
             if self.is_marked_inside_quad((3 * tri + i) as usize) {
@@ -65,7 +65,7 @@ impl ManifoldImpl {
     }
 
     /// Port of C++ Manifold::Impl::GetHalfedges(int tri)
-    fn get_halfedges_quad(&self, tri: i32) -> IVec4 {
+    pub fn get_halfedges_quad(&self, tri: i32) -> IVec4 {
         let mut halfedges = IVec4::new(-1, -1, -1, -1);
         for i in 0..3 {
             halfedges[i] = 3 * tri + i as i32;

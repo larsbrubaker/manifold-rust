@@ -27,3 +27,4 @@ pub mod minkowski;
 pub mod quickhull;
 pub mod disjoint_sets;
 pub mod math;
+pub mod interp_tri;

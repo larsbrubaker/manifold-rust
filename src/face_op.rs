@@ -619,6 +619,9 @@ pub fn reorder_halfedges(mesh: &mut ManifoldImpl) {
             if curr.start_vert < 0 {
                 break; // skip collapsed triangle
             }
+            if curr.paired_halfedge < 0 {
+                continue; // unpaired halfedge
+            }
             let opp_face = curr.paired_halfedge as usize / 3;
             let mut index = -1i32;
             for j in 0..3 {
