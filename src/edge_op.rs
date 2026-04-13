@@ -175,42 +175,31 @@ pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usi
     let mut start = start_orb as usize;
     let mut current = tri1edge[2];
 
-    if !short_edge && !mesh.mesh_relation.tri_ref.is_empty() {
+    if !short_edge {
         current = start;
-        let ref_check = mesh.mesh_relation.tri_ref[paired / 3];
+        let mut ref_check = mesh.mesh_relation.tri_ref[paired / 3];
         let mut p_last = mesh.vert_pos[mesh.halfedge[tri1edge[1]].end_vert as usize];
 
         while current != tri1edge[0] {
             current = next_halfedge(current as i32) as usize;
             let p_next = mesh.vert_pos[mesh.halfedge[current].end_vert as usize];
             let tri = current / 3;
-            if tri >= mesh.face_normal.len() {
-                current = mesh.halfedge[current].paired_halfedge as usize;
-                p_last = p_next;
-                continue;
-            }
             let ref_tri = mesh.mesh_relation.tri_ref[tri];
             let projection = get_axis_aligned_projection(mesh.face_normal[tri]);
 
+            // Don't collapse if the edge is not redundant (this may have changed
+            // due to the collapse of neighbors).
             if !ref_tri.same_face(&ref_check) {
                 let old_ref = ref_check;
-                let ref_check2 = if edge / 3 < mesh.mesh_relation.tri_ref.len() {
-                    mesh.mesh_relation.tri_ref[edge / 3]
-                } else {
-                    return false;
-                };
-                if !ref_tri.same_face(&ref_check2) {
+                ref_check = mesh.mesh_relation.tri_ref[edge / 3];
+                if !ref_tri.same_face(&ref_check) {
                     return false;
                 }
-                // Check for sharp edge: restrict to colinear collapse
-                let normal_dot = if paired / 3 < mesh.face_normal.len() && tri < mesh.face_normal.len() {
-                    dot(mesh.face_normal[paired / 3], mesh.face_normal[tri])
-                } else {
-                    0.0
-                };
+                // Restrict collapse to colinear edges when the edge separates
+                // faces or the edge is sharp.
                 if ref_tri.mesh_id != old_ref.mesh_id
                     || ref_tri.face_id != old_ref.face_id
-                    || normal_dot < -0.5
+                    || dot(mesh.face_normal[paired / 3], mesh.face_normal[tri]) < -0.5
                 {
                     let p_p_last = projection.apply(p_last);
                     let p_p_old = projection.apply(p_old);
@@ -221,11 +210,9 @@ pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usi
                 }
             }
 
-            // Check triangle inversion
-            let p_p_next = projection.apply(p_next);
-            let p_p_last = projection.apply(p_last);
-            let p_p_new = projection.apply(p_new);
-            if ccw(p_p_next, p_p_last, p_p_new, mesh.epsilon) < 0 {
+            // Don't collapse edge if it would cause a triangle to invert.
+            if ccw(projection.apply(p_next), projection.apply(p_last),
+                   projection.apply(p_new), mesh.epsilon) < 0 {
                 return false;
             }
 

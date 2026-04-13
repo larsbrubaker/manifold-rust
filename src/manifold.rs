@@ -472,11 +472,19 @@ impl Manifold {
             return self.clone();
         }
         let mut out = self.imp.clone();
+        let had_tangents = out.halfedge_tangent.len() == out.halfedge.len();
         let _vert_bary = out.subdivide(&|_vec, _t0, _t1| n - 1, false);
+        // TODO: InterpTri for smooth surface interpolation when tangents present
+        out.halfedge_tangent.clear();
         out.calculate_bbox();
         out.set_epsilon(-1.0, false);
         out.sort_geometry();
-        out.set_normals_and_coplanar();
+        if had_tangents {
+            out.set_normals_and_coplanar();
+        } else {
+            crate::face_op::calculate_vert_normals(&mut out);
+        }
+        out.mesh_relation.original_id = -1;
         Self::from_impl(out)
     }
 
@@ -486,6 +494,7 @@ impl Manifold {
             return self.clone();
         }
         let mut out = self.imp.clone();
+        let had_tangents = out.halfedge_tangent.len() == out.halfedge.len();
         let _vert_bary = out.subdivide(
             &|edge_vec, _t0, _t1| {
                 let edge_len = (edge_vec.x * edge_vec.x + edge_vec.y * edge_vec.y
@@ -495,10 +504,17 @@ impl Manifold {
             },
             true,
         );
+        // TODO: InterpTri for smooth surface interpolation when tangents present
+        out.halfedge_tangent.clear();
         out.calculate_bbox();
         out.set_epsilon(-1.0, false);
         out.sort_geometry();
-        out.set_normals_and_coplanar();
+        if had_tangents {
+            out.set_normals_and_coplanar();
+        } else {
+            crate::face_op::calculate_vert_normals(&mut out);
+        }
+        out.mesh_relation.original_id = -1;
         Self::from_impl(out)
     }
 
@@ -509,9 +525,9 @@ impl Manifold {
         }
         // Similar to C++ — uses tolerance with tangent-based divisions
         let mut out = self.imp.clone();
+        let had_tangents = out.halfedge_tangent.len() == out.halfedge.len();
         let _vert_bary = out.subdivide(
             &|edge_vec, tangent0, tangent1| {
-                use crate::linalg::Vec4;
                 let edge_len = (edge_vec.x * edge_vec.x + edge_vec.y * edge_vec.y
                     + edge_vec.z * edge_vec.z)
                     .sqrt();
@@ -533,10 +549,17 @@ impl Manifold {
             },
             true,
         );
+        // C++ pattern: clear tangents after subdivide, before sort
+        out.halfedge_tangent.clear();
         out.calculate_bbox();
         out.set_epsilon(-1.0, false);
         out.sort_geometry();
-        out.set_normals_and_coplanar();
+        if had_tangents {
+            out.set_normals_and_coplanar();
+        } else {
+            crate::face_op::calculate_vert_normals(&mut out);
+        }
+        out.mesh_relation.original_id = -1;
         Self::from_impl(out)
     }
 

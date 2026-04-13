@@ -64,6 +64,9 @@ impl CrossSection {
     }
 
     pub fn square(size: f64) -> Self {
+        if size <= 0.0 {
+            return Self { polygons: vec![] };
+        }
         Self::new(vec![vec![
             Vec2::new(0.0, 0.0),
             Vec2::new(size, 0.0),
@@ -73,6 +76,9 @@ impl CrossSection {
     }
 
     pub fn circle(radius: f64, segments: i32) -> Self {
+        if radius <= 0.0 {
+            return Self { polygons: vec![] };
+        }
         let segments = segments.max(3) as usize;
         let poly = (0..segments)
             .map(|i| {

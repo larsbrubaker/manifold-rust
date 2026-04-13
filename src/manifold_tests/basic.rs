@@ -301,7 +301,7 @@ fn test_cpp_mirror_union2() {
 /// Note: This mesh has degenerate/duplicate triangles (e.g., tri 5 and 6 share identical verts
 /// in opposite winding). Our halfedge builder rejects this. TODO: handle this edge case.
 #[test]
-#[ignore = "MeshGL import rejects mesh with duplicate/degenerate face pairs"]
+#[ignore = "MeshGL import rejects mesh with opposite-winding face pairs — needs CleanupTopology to handle this"]
 fn test_cpp_opposite_face() {
     let mut gl = MeshGL::default();
     gl.num_prop = 3;
@@ -491,7 +491,6 @@ fn test_cpp_invalid_constructors() {
 
 /// C++ TEST(Manifold, MeshDeterminism)
 #[test]
-#[ignore = "Boolean produces more tris than C++ (30 vs 24); needs colinear edge collapse improvement"]
 fn test_cpp_mesh_determinism() {
     let cube1 = Manifold::cube(Vec3::new(2.0, 2.0, 2.0), true);
     let cube2 = Manifold::cube(Vec3::new(2.0, 2.0, 2.0), true)

@@ -5,7 +5,7 @@ use super::*;
 // ============================================================================
 
 /// C++ TetGL() — tetrahedron with 5 properties per vert and merge vectors
-fn tet_gl() -> MeshGL {
+pub(super) fn tet_gl() -> MeshGL {
     let mut tet = MeshGL::default();
     tet.num_prop = 5;
     tet.vert_properties = vec![
@@ -61,7 +61,7 @@ fn cube_stl() -> MeshGL {
 }
 
 /// C++ CubeUV() — cube with UV coordinates
-fn cube_uv() -> MeshGL {
+pub(super) fn cube_uv() -> MeshGL {
     let mut mgl = MeshGL::default();
     mgl.num_prop = 5;
     mgl.vert_properties = vec![
@@ -526,7 +526,6 @@ fn test_cpp_warp_batch() {
 
 /// C++ TEST(Manifold, MeshDeterminism) — exact deterministic output from boolean
 #[test]
-#[ignore = "Boolean produces different triangle count than C++ (30 vs 24)"]
 fn test_cpp_mesh_determinism() {
     let cube1 = Manifold::cube(Vec3::new(2.0, 2.0, 2.0), true);
     let cube2 = Manifold::cube(Vec3::new(2.0, 2.0, 2.0), true)
@@ -683,7 +682,7 @@ fn test_cpp_properties_calculate_curvature() {
 
 /// C++ TEST(Smooth, NormalTransform) — smooth by normals after rotation
 #[test]
-#[ignore = "Panics in sort.rs during smooth_by_normals + refine"]
+#[ignore = "MeshGL round-trip loses normal properties, smooth_by_normals can't reconstruct"]
 fn test_cpp_smooth_normal_transform() {
     let cube1 = Manifold::cube(Vec3::splat(1.0), false)
         .rotate(30.0, 0.0, 0.0)
@@ -706,7 +705,6 @@ fn test_cpp_smooth_normal_transform() {
 
 /// C++ TEST(Smooth, FacetedNormals) — faceted smooth preserves geometry
 #[test]
-#[ignore = "Panics in sort.rs during smooth_by_normals + refine_to_length"]
 fn test_cpp_smooth_faceted_normals() {
     let cylinder = Manifold::cylinder(10.0, 10.0, -1.0, 0);
     let faceted = cylinder.calculate_normals(0, 0.0)

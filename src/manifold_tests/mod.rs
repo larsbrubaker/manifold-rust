@@ -67,3 +67,5 @@ mod advanced;
 mod hull;
 mod api;
 mod sdf;
+mod validation;
+mod smooth;
