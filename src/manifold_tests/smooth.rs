@@ -2,7 +2,6 @@ use super::*;
 
 /// C++ TEST(Smooth, Normals) — SmoothOut and SmoothByNormals produce same result
 #[test]
-#[ignore = "Needs InterpTri for smooth vertex interpolation during subdivision"]
 fn test_cpp_smooth_normals() {
     // C++ uses SmoothOut() which defaults to (60, 0)
     let cylinder = Manifold::cylinder(10.0, 5.0, 5.0, 8);
@@ -20,7 +19,6 @@ fn test_cpp_smooth_normals() {
 
 /// C++ TEST(Smooth, TruncatedCone) — smooth cylinder with different radii
 #[test]
-#[ignore = "Needs InterpTri for smooth vertex interpolation during subdivision"]
 fn test_cpp_smooth_truncated_cone() {
     let cone = Manifold::cylinder(5.0, 10.0, 5.0, 12);
     // C++ uses SmoothOut() which defaults to (60, 0)
@@ -96,7 +94,6 @@ fn test_cpp_smooth_manual() {
 
 /// C++ TEST(Smooth, RefineQuads) — smooth cylinder with position-color properties
 #[test]
-#[ignore = "Needs InterpTri for smooth vertex interpolation during subdivision"]
 fn test_cpp_smooth_refine_quads() {
     // C++ uses SmoothOut() which defaults to (60, 0)
     let cylinder = with_position_colors(&Manifold::cylinder(2.0, 1.0, -1.0, 12))
@@ -112,7 +109,6 @@ fn test_cpp_smooth_refine_quads() {
 
 /// C++ TEST(Smooth, Precision) — tolerance-based refinement precision
 #[test]
-#[ignore = "Needs InterpTri for smooth vertex interpolation during subdivision"]
 fn test_cpp_smooth_precision() {
     let tolerance = 0.001;
     let radius = 10.0;
@@ -125,7 +121,7 @@ fn test_cpp_smooth_precision() {
 
 /// C++ TEST(Smooth, SineSurface) — sine surface with smooth normals
 #[test]
-#[ignore = "Needs InterpTri for smooth vertex interpolation during subdivision"]
+#[ignore = "vol converges to 8.076 (simplified) vs 8.09 expected; C++ simplify collapses to different topology"]
 fn test_cpp_smooth_sine_surface() {
     let pi = std::f64::consts::PI;
     let surface = Manifold::level_set(
@@ -139,7 +135,6 @@ fn test_cpp_smooth_sine_surface() {
         },
         1.0,
     ).simplify(0.0);
-
     let smoothed = surface.clone()
         .calculate_normals(0, 50.0)
         .smooth_by_normals(0)
@@ -153,7 +148,6 @@ fn test_cpp_smooth_sine_surface() {
 
 /// C++ TEST(Smooth, SDF) — gyroid SDF with smooth normals
 #[test]
-#[ignore = "Needs InterpTri for smooth vertex interpolation during subdivision"]
 fn test_cpp_smooth_sdf() {
     let r = 10.0;
     let extra = 2.0;

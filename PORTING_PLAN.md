@@ -3,7 +3,7 @@
 This document tracks the incremental port of [Manifold](https://github.com/elalish/manifold) to Rust.
 Every phase must pass all tests with **exact numerical match** to the C++ before the next phase begins.
 
-## Current Status: 415 tests passing, 0 failing, 35 ignored
+## Current Status: 420 tests passing, 0 failing, 30 ignored
 
 **Date:** 2026-04-13
 **Total Rust tests:** ~220 unique test functions
@@ -114,20 +114,24 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 
 ### smooth_test.cpp — 15 tests, 13 ported (87%)
 
-**Ported (all #[ignore] — blocked by InterpTri and Manifold::Smooth):**
-- Csaszar, Manual, Normals, NormalTransform, Tetrahedron, Mirrored
-- RefineQuads, TruncatedCone, Precision, SineSurface, SDF
-
 **Passing:**
-- FacetedNormals ✅ — fixed off-by-one in `set_normals` property assignment loop
+- FacetedNormals ✅
+- Normals ✅ — SmoothOut and SmoothByNormals equivalence
+- TruncatedCone ✅ — smooth cylinder with different radii
+- Mirrored ✅ — mirrored smooth tetrahedron
+- Tetrahedron ✅ — smooth tet with curvature
+- Csaszar ✅ — smooth Csaszar polyhedron
+- Manual ✅ — manual tangent weight adjustment
+- RefineQuads ✅ — cylinder with position colors
+- Precision ✅ — tolerance-based refinement
+- SDF ✅ — gyroid SDF
+
+**Ignored:**
+- SineSurface — vol converges to 8.076 vs 8.09 expected; C++ simplify collapses to different topology
 
 **Unported:**
 - [ ] ToLength — needs CrossSection + complex extrude/scale pattern
 - [ ] Torus — needs CircularTangent helper + toroidal tangent computation
-
-**Status:** FacetedNormals now passing. All other smooth tests are ported but blocked by two missing features:
-1. **`Manifold::Smooth(MeshGL)`** — Static constructor in C++ `constructors.cpp:83` that calls `SmoothImpl()` to auto-compute halfedge tangents from mesh geometry. Not yet implemented in Rust.
-2. **`InterpTri`** — Bezier vertex interpolation during subdivision when tangents are present. Called in C++ `smoothing.cpp:1006` after `Subdivide()`. Currently our `refine()` clears tangents without interpolating smooth positions.
 
 ### hull_test.cpp — 13 tests, ~12 ported (92%)
 
@@ -181,21 +185,11 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 | nonconvex_nonconvex_minkowski_sum | O(n²) triangle count |
 | nonconvex_nonconvex_minkowski_difference | O(n²) triangle count |
 
-### Needs InterpTri + Manifold::Smooth — 11
+### Smooth topology mismatch — 2
 | Test | Reason |
 |------|--------|
-| smooth_faceted_normals | FIXED: off-by-one in set_normals property assignment |
-| smooth_normals | SmoothOut + SmoothByNormals equivalence |
-| smooth_truncated_cone | Smooth cylinder refinement |
-| smooth_mirrored | Mirrored smooth tetrahedron |
-| smooth_tetrahedron | Smooth tet with curvature |
-| smooth_csaszar | Smooth Csaszar polyhedron |
-| smooth_manual | Manual tangent weight adjustment |
-| smooth_refine_quads | Cylinder with position colors |
-| smooth_precision | Tolerance-based refinement |
-| smooth_sine_surface | Sine SDF + smooth normals |
-| smooth_sdf | Gyroid SDF + smooth normals |
-| sdf_sine_surface | SDF → SmoothOut → RefineToLength |
+| smooth_sine_surface | vol converges to 8.076 vs 8.09; C++ simplify collapses to different topology |
+| sdf_sine_surface | SDF → SmoothOut → RefineToLength (slow + same sine surface issue) |
 
 ### Boolean topology differences — 5
 | Test | Reason |
@@ -231,37 +225,19 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 
 ## Key Remaining Work
 
-### 1. Manifold::Smooth(MeshGL) Constructor (blocks 6 smooth tests)
-**C++ location:** `constructors.cpp:83` → calls `SmoothImpl(meshGL, sharpenedEdges)`
-**What it does:** Creates a smooth manifold from a mesh by auto-computing halfedge tangents from the mesh geometry. Uses `CreateTangents()` internally, which computes cubic Bezier tangent vectors for each halfedge based on vertex normals and edge geometry.
-**Rust status:** Not implemented. Tests that need it: Tetrahedron, Csaszar, Manual, Mirrored, and the Sphere precision test.
-
-### 2. InterpTri Implementation (blocks all smooth refine tests)
-**C++ location:** `smoothing.cpp:1006` — called after `Subdivide()` in `Refine()`
-**What it does:** When `old.halfedgeTangent_.size() == old.halfedge_.size()`, interpolates new vertex positions using cubic Bezier curves defined by the tangent vectors. This is what makes `Refine()` produce smooth curved surfaces instead of flat subdivisions.
-**Current Rust behavior:** `refine()` clears tangents after subdivide but doesn't interpolate — vertices stay on flat triangles.
-**C++ code pattern:**
-```cpp
-Vec<Barycentric> vertBary = Subdivide(edgeDivisions, keepInterior);
-if (old.halfedgeTangent_.size() == old.halfedge_.size()) {
-    InterpTri({vertPos_, vertBary, &old});  // <-- missing in Rust
-}
-halfedgeTangent_.clear();
-```
-
-### 3. N-way Subdivision (blocks sphere count matching)
+### 1. N-way Subdivision (blocks sphere count matching)
 Current subdivision is binary (always doubles edge count). C++ supports arbitrary n-way splits via the `Partition` class. This affects sphere construction with non-power-of-2 segment counts (e.g., n=25 gives 5000 tris in C++ but 8192 in Rust).
 
-### 4. processOverlaps Support (blocks Close, OpenSCAD tests)
+### 2. processOverlaps Support (blocks Close, OpenSCAD tests)
 The C++ `ManifoldParams().processOverlaps` flag enables handling of self-overlapping boolean results. Not yet implemented.
 
-### 5. Boolean Topology Refinement (blocks ~7 tests)
+### 3. Boolean Topology Refinement (blocks ~7 tests)
 Several tests show minor vertex/triangle count differences (20 vs 18, 21 vs 20, 30 vs 24). Root cause is likely differences in:
 - Colinear edge collapse after boolean operations
 - Epsilon-based simplification during `SimplifyTopology`
 - Per-mesh epsilon tracking (C++ `Impl::epsilon_` is per-mesh, Rust may not propagate correctly)
 
-### 6. Unported Tests (~16 remaining)
+### 4. Unported Tests (~16 remaining)
 | File | Test | Blocker |
 |------|------|---------|
 | boolean_test.cpp | Normals | RelatedGL helper |
