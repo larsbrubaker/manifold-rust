@@ -3,9 +3,9 @@
 This document tracks the incremental port of [Manifold](https://github.com/elalish/manifold) to Rust.
 Every phase must pass all tests with **exact numerical match** to the C++ before the next phase begins.
 
-## Current Status: 408 tests passing, 0 failing, 42 ignored
+## Current Status: 415 tests passing, 0 failing, 35 ignored
 
-**Date:** 2026-04-12
+**Date:** 2026-04-13
 **Total Rust tests:** ~220 unique test functions
 **Total C++ tests:** 191 (excluding manifoldc and samples)
 **Ported C++ tests:** ~175 (92%)
@@ -118,11 +118,14 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 - Csaszar, Manual, Normals, NormalTransform, Tetrahedron, Mirrored
 - RefineQuads, TruncatedCone, Precision, SineSurface, SDF
 
+**Passing:**
+- FacetedNormals ✅ — fixed off-by-one in `set_normals` property assignment loop
+
 **Unported:**
 - [ ] ToLength — needs CrossSection + complex extrude/scale pattern
 - [ ] Torus — needs CircularTangent helper + toroidal tangent computation
 
-**Status:** FacetedNormals now passing (tangent-clearing fix). All other smooth tests are ported but blocked by two missing features:
+**Status:** FacetedNormals now passing. All other smooth tests are ported but blocked by two missing features:
 1. **`Manifold::Smooth(MeshGL)`** — Static constructor in C++ `constructors.cpp:83` that calls `SmoothImpl()` to auto-compute halfedge tangents from mesh geometry. Not yet implemented in Rust.
 2. **`InterpTri`** — Bezier vertex interpolation during subdivision when tangents are present. Called in C++ `smoothing.cpp:1006` after `Subdivide()`. Currently our `refine()` clears tangents without interpolating smooth positions.
 
@@ -181,6 +184,7 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 ### Needs InterpTri + Manifold::Smooth — 11
 | Test | Reason |
 |------|--------|
+| smooth_faceted_normals | FIXED: off-by-one in set_normals property assignment |
 | smooth_normals | SmoothOut + SmoothByNormals equivalence |
 | smooth_truncated_cone | Smooth cylinder refinement |
 | smooth_mirrored | Mirrored smooth tetrahedron |

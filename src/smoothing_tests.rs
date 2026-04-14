@@ -41,3 +41,4 @@ fn test_create_tangents_from_normals_cube() {
     assert_eq!(m.halfedge_tangent.len(), m.num_halfedge());
     assert!(m.halfedge_tangent.iter().all(|t| t.w.is_finite()));
 }
+

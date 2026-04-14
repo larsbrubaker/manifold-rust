@@ -374,84 +374,75 @@ impl ManifoldImpl {
 
                 let end_edge = current;
 
-                // Calculate pseudo-normals between each sharp edge
-                // ForVert traversal with edge vector computation
-                normals.push(Vec3::splat(0.0));
-                let mut prev_edge_vec = Vec3::splat(0.0);
-                let mut first_iter = true;
-                current = end_edge;
-                let mut prev_face2 = end_edge / 3;
-                loop {
-                    let face = current / 3;
-                    let end_v = self.halfedge[current].end_vert as usize;
+                // Calculate pseudo-normals between each sharp edge.
+                // Mirrors C++ ForVert<FaceEdge>(endEdge, transform, binaryOp):
+                //   here = transform(endEdge); current = endEdge;
+                //   do { next = transform(NextHalfedge(current.paired));
+                //        binaryOp(current, here, next); here = next; current = next_halfedge;
+                //   } while (current != endEdge);
+                // normals starts EMPTY — first sharp edge creates group 0.
+                let get_edge_vec = |he: usize| -> Vec3 {
+                    if self.is_inside_quad(he) {
+                        return Vec3::new(f64::NAN, f64::NAN, f64::NAN);
+                    }
+                    let end_v = self.halfedge[he].end_vert as usize;
                     let mut pos = self.vert_pos[end_v];
-                    let edge_vec = if self.is_inside_quad(current) {
-                        Vec3::new(f64::NAN, f64::NAN, f64::NAN)
-                    } else {
-                        if vert_num_sharp[end_v] < 2 {
-                            let n = if vert_flat_face[end_v] >= 0 {
-                                self.face_normal[vert_flat_face[end_v] as usize]
-                            } else {
-                                self.vert_normal[end_v]
-                            };
-                            let tan = self.tangent_from_normal(
-                                n,
-                                self.halfedge[current].paired_halfedge as usize,
-                            );
-                            pos = pos + Vec3::new(tan.x, tan.y, tan.z);
-                        }
-                        safe_normalize(pos - center_pos)
-                    };
+                    if vert_num_sharp[end_v] < 2 {
+                        let n = if vert_flat_face[end_v] >= 0 {
+                            self.face_normal[vert_flat_face[end_v] as usize]
+                        } else {
+                            self.vert_normal[end_v]
+                        };
+                        let tan = self.tangent_from_normal(
+                            n,
+                            self.halfedge[he].paired_halfedge as usize,
+                        );
+                        pos = pos + Vec3::new(tan.x, tan.y, tan.z);
+                    }
+                    safe_normalize(pos - center_pos)
+                };
 
-                    if !first_iter {
-                        // Check for sharp edge between prev_face2 and face
-                        let d = dot(self.face_normal[prev_face2], self.face_normal[face]).clamp(-1.0, 1.0);
-                        let dihedral = math::acos(d).to_degrees();
-                        if dihedral > min_sharp_angle
-                            || tri_is_flat_face[prev_face2] != tri_is_flat_face[face]
-                            || (tri_is_flat_face[prev_face2]
-                                && tri_is_flat_face[face]
-                                && !self.mesh_relation.tri_ref[prev_face2]
-                                    .same_face(&self.mesh_relation.tri_ref[face]))
-                        {
-                            normals.push(Vec3::splat(0.0));
-                        }
+                let mut here_face = end_edge / 3;
+                let mut here_ev = get_edge_vec(end_edge);
+                current = end_edge;
+                loop {
+                    let next_he = crate::types::next_halfedge(
+                        self.halfedge[current].paired_halfedge,
+                    ) as usize;
+                    let next_face = next_he / 3;
+                    let mut next_ev = get_edge_vec(next_he);
 
-                        group.push(normals.len() - 1);
+                    // Check for sharp edge between here and next
+                    let d = dot(self.face_normal[here_face], self.face_normal[next_face]).clamp(-1.0, 1.0);
+                    let dihedral = math::acos(d).to_degrees();
+                    if dihedral > min_sharp_angle
+                        || tri_is_flat_face[here_face] != tri_is_flat_face[next_face]
+                        || (tri_is_flat_face[here_face]
+                            && tri_is_flat_face[next_face]
+                            && !self.mesh_relation.tri_ref[here_face]
+                                .same_face(&self.mesh_relation.tri_ref[next_face]))
+                    {
+                        normals.push(Vec3::splat(0.0));
+                    }
+                    group.push(normals.len() - 1);
 
-                        let ev = if edge_vec.x.is_finite() { edge_vec } else { prev_edge_vec };
-                        if prev_edge_vec.x.is_finite() && ev.x.is_finite() {
-                            let c = cross(ev, prev_edge_vec);
-                            let angle = angle_between(prev_edge_vec, ev);
+                    // Accumulate angle-weighted normal (C++: cross(next.edgeVec, here.edgeVec))
+                    if next_ev.x.is_finite() {
+                        if here_ev.x.is_finite() {
+                            let c = cross(next_ev, here_ev);
+                            let angle = angle_between(here_ev, next_ev);
                             *normals.last_mut().unwrap() = *normals.last().unwrap()
                                 + safe_normalize(c) * angle;
                         }
                     } else {
-                        first_iter = false;
+                        // Carry forward here_ev when next_ev is NaN (quad interior)
+                        next_ev = here_ev;
                     }
 
-                    prev_edge_vec = if edge_vec.x.is_finite() { edge_vec } else { prev_edge_vec };
-                    prev_face2 = face;
-
-                    current = crate::types::next_halfedge(
-                        self.halfedge[current].paired_halfedge,
-                    ) as usize;
+                    here_face = next_face;
+                    here_ev = next_ev;
+                    current = next_he;
                     if current == end_edge {
-                        // Handle the wrap-around: the last edge pairs with the first
-                        // We need to add the last group entry
-                        let face = current / 3;
-                        let d = dot(self.face_normal[prev_face2], self.face_normal[face]).clamp(-1.0, 1.0);
-                        let dihedral = math::acos(d).to_degrees();
-                        if dihedral > min_sharp_angle
-                            || tri_is_flat_face[prev_face2] != tri_is_flat_face[face]
-                            || (tri_is_flat_face[prev_face2]
-                                && tri_is_flat_face[face]
-                                && !self.mesh_relation.tri_ref[prev_face2]
-                                    .same_face(&self.mesh_relation.tri_ref[face]))
-                        {
-                            normals.push(Vec3::splat(0.0));
-                        }
-                        group.push(normals.len() - 1);
                         break;
                     }
                 }
@@ -461,12 +452,17 @@ impl ManifoldImpl {
                     *n = safe_normalize(*n);
                 }
 
-                // Assign property vertices
+                // Assign property vertices.
+                // Mirrors C++ ForVert(endEdge, func) which advances BEFORE visiting:
+                //   do { current = NextHalfedge(paired); func(current); } while (current != endEdge)
+                // So endEdge itself is visited LAST (gets group[N-1]), not first.
                 let mut last_group: usize = 0;
                 let mut last_prop: i32 = -1;
                 let mut new_prop: i32 = -1;
                 let mut idx = 0usize;
-                current = end_edge;
+                current = crate::types::next_halfedge(
+                    self.halfedge[end_edge].paired_halfedge,
+                ) as usize;
                 loop {
                     let prop = old_halfedge_prop[current];
                     let g = if idx < group.len() { group[idx] } else { 0 };
@@ -503,12 +499,14 @@ impl ManifoldImpl {
                     self.halfedge[current].prop_vert = new_prop;
                     idx += 1;
 
-                    current = crate::types::next_halfedge(
+                    let next_current = crate::types::next_halfedge(
                         self.halfedge[current].paired_halfedge,
                     ) as usize;
+                    // Stop after visiting end_edge (C++ stops when current == halfedge)
                     if current == end_edge {
                         break;
                     }
+                    current = next_current;
                 }
             }
         }
