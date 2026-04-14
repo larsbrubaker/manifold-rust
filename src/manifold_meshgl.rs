@@ -268,6 +268,8 @@ pub fn get_mesh_gl(&self, normal_idx: i32) -> MeshGL {
         }
         for i in 0..3 {
             let he = &self.imp.halfedge[3 * old_tri + i];
+            // First pass: set to geometric vertex (startVert). When numProp > 0,
+            // a second pass below will replace these with property-vertex indices.
             out.tri_verts[3 * new_tri + i] = he.start_vert as u32;
         }
         let mesh_id = if old_tri < tri_ref.len() { tri_ref[old_tri].mesh_id } else { 0 };
@@ -295,27 +297,81 @@ pub fn get_mesh_gl(&self, normal_idx: i32) -> MeshGL {
     }
     out.run_index.push(3 * num_tri as u32);
 
-    // Vertex properties
-    let prop_rows = if self.imp.num_prop == 0 { self.imp.num_vert() } else { self.imp.num_prop_vert() };
-    let mut prop_pos = vec![Vec3::splat(0.0); prop_rows];
-    let mut prop_seen = vec![false; prop_rows];
-    for edge in &self.imp.halfedge {
-        if edge.prop_vert >= 0 && edge.start_vert >= 0 {
-            let p = edge.prop_vert as usize;
-            if !prop_seen[p] {
-                prop_seen[p] = true;
-                prop_pos[p] = self.imp.vert_pos[edge.start_vert as usize];
-            }
+    let num_geom_vert = self.imp.num_vert();
+    let num_prop = self.imp.num_prop;
+    let total_prop = 3 + num_prop; // xyz + extra
+
+    if num_prop == 0 {
+        // No extra properties: positions only, indexed by geometric vertex
+        out.vert_properties.resize(3 * num_geom_vert, 0.0);
+        for i in 0..num_geom_vert {
+            let v = self.imp.vert_pos[i];
+            out.vert_properties[3 * i] = v.x as f32;
+            out.vert_properties[3 * i + 1] = v.y as f32;
+            out.vert_properties[3 * i + 2] = v.z as f32;
         }
+        return out;
     }
-    for row in 0..prop_rows {
-        let pos = prop_pos[row];
-        out.vert_properties.extend([pos.x as f32, pos.y as f32, pos.z as f32]);
-        if self.imp.num_prop > 0 {
-            let base = row * self.imp.num_prop;
-            for p in 0..self.imp.num_prop {
-                out.vert_properties.push(self.imp.properties[base + p] as f32);
+
+    // When properties exist: deduplicate (start_vert, prop_vert) pairs, matching
+    // C++ GetMeshGLImpl. Each unique (vert, prop) pair gets its own slot in
+    // vert_properties. Merge vectors record which slots share the same geometry.
+    //
+    // C++: vertPropPair[vert] = list of {prop, idx}; vert2idx[vert] = first idx
+    let mut vert2idx = vec![-1i32; num_geom_vert];
+    let mut vert_prop_pairs: Vec<Vec<(i32, u32)>> = vec![vec![]; num_geom_vert];
+
+    for new_tri in 0..num_tri {
+        let old_tri = tri_new2old[new_tri];
+        for i in 0..3 {
+            let he = &self.imp.halfedge[3 * old_tri + i];
+            if he.start_vert < 0 { continue; }
+            let vert = he.start_vert as usize;
+            let prop = he.prop_vert;
+
+            // Look for existing (vert, prop) pair
+            let pairs = &vert_prop_pairs[vert];
+            let mut found_idx: Option<u32> = None;
+            for &(p, idx) in pairs {
+                if p == prop {
+                    found_idx = Some(idx);
+                    break;
+                }
             }
+
+            let idx = if let Some(idx) = found_idx {
+                idx
+            } else {
+                let idx = (out.vert_properties.len() / total_prop) as u32;
+                // Write position
+                let pos = self.imp.vert_pos[vert];
+                out.vert_properties.push(pos.x as f32);
+                out.vert_properties.push(pos.y as f32);
+                out.vert_properties.push(pos.z as f32);
+                // Write extra properties (zeros if prop_vert is invalid)
+                if prop >= 0 {
+                    let base = prop as usize * num_prop;
+                    for p in 0..num_prop {
+                        out.vert_properties.push(self.imp.properties[base + p] as f32);
+                    }
+                } else {
+                    for _ in 0..num_prop { out.vert_properties.push(0.0); }
+                }
+                vert_prop_pairs[vert].push((prop, idx));
+
+                // First slot for this geometric vertex is the canonical merge target.
+                // Additional slots get merge entries so from_mesh_gl knows they
+                // are coincident with the first slot.
+                if vert2idx[vert] == -1 {
+                    vert2idx[vert] = idx as i32;
+                } else {
+                    out.merge_from_vert.push(idx);
+                    out.merge_to_vert.push(vert2idx[vert] as u32);
+                }
+                idx
+            };
+
+            out.tri_verts[3 * new_tri + i] = idx;
         }
     }
     out
