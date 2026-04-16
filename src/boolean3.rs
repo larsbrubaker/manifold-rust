@@ -746,12 +746,13 @@ pub fn boolean(mesh_a: &ManifoldImpl, mesh_b: &ManifoldImpl, op: OpType) -> Mani
     }
 
     if !mesh_a.bbox.does_overlap_box(&mesh_b.bbox) {
-        // Non-overlapping fast paths
-        return match op {
-            OpType::Add => compose_meshes(&[mesh_a.clone(), mesh_b.clone()]),
-            OpType::Intersect => ManifoldImpl::new(),
-            OpType::Subtract => mesh_a.clone(),
-        };
+        // Non-overlapping fast paths. For Subtract, we still run through the full
+        // boolean_result to preserve both meshes' run metadata (C++ behavior).
+        match op {
+            OpType::Add => return compose_meshes(&[mesh_a.clone(), mesh_b.clone()]),
+            OpType::Intersect => return ManifoldImpl::new(),
+            OpType::Subtract => {} // fall through to full boolean
+        }
     }
 
     // Full boolean — compute intersections

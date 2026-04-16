@@ -424,3 +424,98 @@ fn test_cpp_warp2() {
     assert!((shape.volume() - 321.0).abs() < 1.0,
         "Warp2: volume={}, expected ~321", shape.volume());
 }
+
+/// C++ TEST(Boolean, Precision2) — intersection at precision boundary
+#[test]
+fn test_cpp_boolean_precision2() {
+    let k_precision: f64 = 1e-12;
+    let scale = 1000.0f64;
+    let cube = Manifold::cube(Vec3::splat(scale), false);
+    let distance = scale * (1.0 - k_precision / 2.0);
+
+    // Overlap = scale - distance = scale * kPrecision / 2 = 5e-10 < epsilon (1e-9) → empty
+    let cube2 = cube.translate(Vec3::splat(-distance));
+    assert!(cube.intersection(&cube2).is_empty(),
+        "Precision2: intersection below epsilon should be empty");
+
+    // Add kPrecision * scale ≈ 1e-9 more overlap → now above epsilon → not empty
+    let cube2 = cube2.translate(Vec3::splat(scale * k_precision));
+    assert!(!cube.intersection(&cube2).is_empty(),
+        "Precision2: intersection above epsilon should not be empty");
+}
+
+/// C++ TEST(Boolean, TreeTransforms) — transforms are correctly applied through union trees.
+/// Two cubes overlapping → union volume = 2.
+#[test]
+fn test_cpp_tree_transforms() {
+    let a = (Manifold::cube(Vec3::splat(1.0), false)
+        .union(&Manifold::cube(Vec3::splat(1.0), false)))
+        .translate(Vec3::new(1.0, 0.0, 0.0));
+    let b = Manifold::cube(Vec3::splat(1.0), false)
+        .union(&Manifold::cube(Vec3::splat(1.0), false));
+    let vol = a.union(&b).volume();
+    assert!((vol - 2.0).abs() < 1e-5, "TreeTransforms: volume={:.6}, expected 2.0", vol);
+}
+
+/// C++ TEST(Boolean, Normals) — boolean result with normals validated via RelatedGL with checkNormals.
+/// Uses CubeSTL (6 props per vert: xyz+normal) and sphere with CalculateNormals, then checks
+/// the boolean result has valid unit normals pointing in the correct direction.
+#[test]
+fn test_cpp_boolean_normals() {
+    let mut cube_gl = super::cube_stl();
+    cube_gl.merge();
+    let cube = Manifold::from_mesh_gl(&cube_gl);
+    let sphere = Manifold::sphere(60.0, 0).calculate_normals(0, 60.0);
+    let sphere_gl = sphere.get_mesh_gl(0);
+
+    let result = cube.scale(Vec3::splat(100.0))
+        .difference(
+            &sphere.rotate(180.0, 0.0, 0.0)
+                .difference(&sphere.scale(Vec3::splat(0.5)).rotate(90.0, 0.0, 0.0).translate(Vec3::new(40.0, 40.0, 40.0)))
+        );
+
+    super::related_gl_check_normals(&result, &[&cube_gl, &sphere_gl]);
+
+    // Round-trip: export, clear merge verts, re-merge, re-import, check again
+    let mut output = result.get_mesh_gl(0);
+    output.merge_from_vert.clear();
+    output.merge_to_vert.clear();
+    output.merge();
+    let round_trip = Manifold::from_mesh_gl(&output);
+    super::related_gl_check_normals(&round_trip, &[&cube_gl, &sphere_gl]);
+}
+
+/// C++ TEST(Boolean, EmptyOriginal) — tet minus non-intersecting cube
+/// Verifies run metadata: 2 runs (tet with tris, cube with 0 tris),
+/// and that the cube's run transform preserves the translation.
+#[test]
+fn test_cpp_empty_original() {
+    let cube = Manifold::cube(Vec3::splat(1.0), false);
+    let tet = Manifold::tetrahedron();
+    let result = tet.difference(&cube.translate(Vec3::new(3.0, 4.0, 5.0)));
+    let mesh = result.get_mesh_gl(0);
+
+    assert_eq!(mesh.run_index.len(), 3,
+        "EmptyOriginal: expected 3 run_index entries, got {}", mesh.run_index.len());
+    assert_eq!(mesh.run_index[0], 0, "EmptyOriginal: first run starts at 0");
+    assert_eq!(mesh.run_index[1], mesh.tri_verts.len() as u32,
+        "EmptyOriginal: tet run ends at all tris");
+    assert_eq!(mesh.run_index[2], mesh.tri_verts.len() as u32,
+        "EmptyOriginal: cube run is empty");
+    assert_eq!(mesh.run_original_id.len(), 2,
+        "EmptyOriginal: expected 2 run_original_ids, got {}", mesh.run_original_id.len());
+    assert_eq!(mesh.run_original_id[0], tet.original_id() as u32,
+        "EmptyOriginal: first run is tet");
+    assert_eq!(mesh.run_original_id[1], cube.original_id() as u32,
+        "EmptyOriginal: second run is cube");
+    assert_eq!(mesh.run_transform.len(), 24,
+        "EmptyOriginal: expected 24 transform elements, got {}", mesh.run_transform.len());
+    // Tet transform: identity — translation at column 3 (indices 9,10,11) = 0,0,0
+    assert!((mesh.run_transform[9] - 0.0f32).abs() < 1e-5, "EmptyOriginal: tet tx=0");
+    assert!((mesh.run_transform[10] - 0.0f32).abs() < 1e-5, "EmptyOriginal: tet ty=0");
+    assert!((mesh.run_transform[11] - 0.0f32).abs() < 1e-5, "EmptyOriginal: tet tz=0");
+    // Cube transform: translated by (3,4,5) — indices 21,22,23
+    assert!((mesh.run_transform[12 + 9] - 3.0f32).abs() < 1e-4, "EmptyOriginal: cube tx=3");
+    assert!((mesh.run_transform[12 + 10] - 4.0f32).abs() < 1e-4, "EmptyOriginal: cube ty=4");
+    assert!((mesh.run_transform[12 + 11] - 5.0f32).abs() < 1e-4, "EmptyOriginal: cube tz=5");
+}

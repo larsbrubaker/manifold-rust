@@ -3,7 +3,7 @@
 This document tracks the incremental port of [Manifold](https://github.com/elalish/manifold) to Rust.
 Every phase must pass all tests with **exact numerical match** to the C++ before the next phase begins.
 
-## Current Status: 462 tests passing, 0 failing, 30 ignored
+## Current Status: 488 tests passing, 0 failing, 20 ignored
 
 **Date:** 2026-04-15
 **Total Rust tests:** ~262 unique test functions

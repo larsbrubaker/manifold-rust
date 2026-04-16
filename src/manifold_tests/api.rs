@@ -126,7 +126,6 @@ fn test_cpp_min_gap_sphere_sphere_out_of_bounds() {
 
 /// C++ TEST(Properties, MingapAfterTransformations) — rotated/scaled spheres
 #[test]
-#[ignore = "Slow in debug: 512-segment spheres"]
 fn test_cpp_min_gap_after_transformations() {
     let a = Manifold::sphere(1.0, 512).rotate(30.0, 30.0, 30.0);
     let b = Manifold::sphere(1.0, 512)
@@ -409,13 +408,9 @@ fn test_cpp_merge_empty() {
 #[test]
 fn test_cpp_mesh_relation_transform() {
     let cube = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false);
+    let cube_gl = cube.get_mesh_gl(0);
     let turned = cube.rotate(45.0, 90.0, 0.0);
-    // The rotated cube should still be valid
-    assert!(!turned.is_empty());
-    assert_eq!(turned.num_vert(), 8);
-    assert_eq!(turned.num_tri(), 12);
-    assert!((turned.volume() - 1.0).abs() < 1e-10,
-        "Rotated cube volume should still be 1.0, got {}", turned.volume());
+    super::related_gl(&turned, &[&cube_gl]);
 }
 
 // ============================================================================
@@ -735,4 +730,37 @@ fn get_min_max_property(gl: &MeshGL, channel: usize) -> (f32, f32) {
         if v > max_val { max_val = v; }
     }
     (min_val, max_val)
+}
+
+/// C++ TEST(Manifold, MeshID) — two Manifolds constructed from the same MeshGL
+/// must receive different run_original_ids (each import reserves its own ID).
+#[test]
+fn test_cpp_mesh_id() {
+    let cube = Manifold::cube(Vec3::splat(1.0), false);
+    let mut cube_gl = cube.get_mesh_gl(0);
+    cube_gl.run_index.clear();
+    cube_gl.run_original_id.clear();
+    let cube1 = Manifold::from_mesh_gl(&cube_gl);
+    let cube2 = Manifold::from_mesh_gl(&cube_gl);
+    let id1 = cube1.get_mesh_gl(0).run_original_id[0];
+    let id2 = cube2.get_mesh_gl(0).run_original_id[0];
+    assert_ne!(id1, id2, "MeshID: two imports of same MeshGL should have different run_original_ids");
+}
+
+/// C++ TEST(Manifold, MeshGLRoundTrip) — cylinder MeshGL round-trip preserves run_original_id
+/// and RelatedGL validates that vertex positions trace to source triangles.
+#[test]
+fn test_cpp_manifold_meshgl_round_trip2() {
+    let cylinder = Manifold::cylinder(2.0, 1.0, -1.0, 0);
+    assert!(cylinder.original_id() >= 0, "MeshGLRoundTrip: cylinder should have original_id >= 0");
+    let in_gl = cylinder.get_mesh_gl(0);
+    let cylinder2 = Manifold::from_mesh_gl(&in_gl);
+    let out_gl = cylinder2.get_mesh_gl(0);
+
+    assert_eq!(in_gl.run_original_id.len(), 1, "MeshGLRoundTrip: inGL should have 1 run");
+    assert_eq!(out_gl.run_original_id.len(), 1, "MeshGLRoundTrip: outGL should have 1 run");
+    assert_eq!(out_gl.run_original_id[0], in_gl.run_original_id[0],
+        "MeshGLRoundTrip: run_original_id should be preserved");
+
+    super::related_gl(&cylinder2, &[&in_gl]);
 }

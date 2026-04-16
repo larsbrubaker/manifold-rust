@@ -545,6 +545,8 @@ pub struct MeshGLP<P: Copy + Default, I: Copy + Default = u32> {
     pub face_id: Vec<I>,
     /// Optional: halfedge tangent vectors (4 per halfedge).
     pub halfedge_tangent: Vec<P>,
+    /// Optional: per-run flags; 1 = backside (normals need flipping).
+    pub run_flags: Vec<u8>,
     /// Tolerance for mesh simplification.
     pub tolerance: P,
 }
@@ -692,6 +694,95 @@ impl MeshGLP<f32, u32> {
         }
 
         true
+    }
+
+    /// Applies run transforms to normals stored at `normal_idx` in each vertex's properties,
+    /// then clears run_transform and run_flags. Matches C++ MeshGL::UpdateNormals(normalIdx).
+    ///
+    /// The normal transform is the inverse-transpose of the 3×3 rotation part of the run
+    /// transform. For backside runs (run_flags[run] == 1), normals are additionally negated.
+    pub fn update_normals(&mut self, normal_idx: usize) {
+        if normal_idx < 3 || normal_idx + 3 > self.num_prop as usize {
+            return;
+        }
+        let num_vert = self.num_vert();
+        let num_run = self.run_original_id.len();
+        let np = self.num_prop as usize;
+        let mut vert_updated = vec![false; num_vert];
+
+        for run in 0..num_run {
+            // Build the 3x3 normal transform from the column-major 3x4 run transform
+            let offset = 12 * run;
+            let has_transform = offset + 12 <= self.run_transform.len();
+
+            // Extract mat3 (upper-left 3x3 of the 3x4 transform)
+            let (m00, m01, m02,
+                 m10, m11, m12,
+                 m20, m21, m22) = if has_transform {
+                let t = &self.run_transform[offset..offset + 12];
+                // Column-major: col0=[t0,t1,t2], col1=[t3,t4,t5], col2=[t6,t7,t8]
+                (t[0] as f64, t[3] as f64, t[6] as f64,
+                 t[1] as f64, t[4] as f64, t[7] as f64,
+                 t[2] as f64, t[5] as f64, t[8] as f64)
+            } else {
+                (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+            };
+
+            // Normal transform = inverse(transpose(M)) = (M^T)^{-1}
+            // For a rotation matrix R: (R^T)^{-1} = R itself.
+            // For a general transform with scale s: det = s^3, inv_trans = M / s^2.
+            // We compute full adjugate/determinant to match C++ la::inverse(la::transpose(M)).
+            let det = m00*(m11*m22 - m12*m21) - m01*(m10*m22 - m12*m20) + m02*(m10*m21 - m11*m20);
+            let (n00, n01, n02, n10, n11, n12, n20, n21, n22) = if det.abs() < 1e-30 {
+                (1.0f64, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
+            } else {
+                let inv = 1.0 / det;
+                // Adjugate of transpose(M) = transpose of adjugate(M)
+                let a00 = (m11*m22 - m12*m21) * inv;
+                let a01 = (m02*m21 - m01*m22) * inv;
+                let a02 = (m01*m12 - m02*m11) * inv;
+                let a10 = (m12*m20 - m10*m22) * inv;
+                let a11 = (m00*m22 - m02*m20) * inv;
+                let a12 = (m02*m10 - m00*m12) * inv;
+                let a20 = (m10*m21 - m11*m20) * inv;
+                let a21 = (m01*m20 - m00*m21) * inv;
+                let a22 = (m00*m11 - m01*m10) * inv;
+                (a00, a01, a02, a10, a11, a12, a20, a21, a22)
+            };
+
+            let backside = run < self.run_flags.len() && self.run_flags[run] == 1;
+            let sign = if backside { -1.0f64 } else { 1.0 };
+
+            // Determine run's vertex range
+            let start = if run < self.run_index.len() { self.run_index[run] as usize } else { 0 };
+            let end = if run + 1 < self.run_index.len() { self.run_index[run + 1] as usize } else { self.tri_verts.len() };
+
+            for idx in (start..end).step_by(1) {
+                let vert = self.tri_verts[idx] as usize;
+                if vert >= num_vert || vert_updated[vert] { continue; }
+                vert_updated[vert] = true;
+                let prop_start = vert * np + normal_idx;
+                let nx = self.vert_properties[prop_start] as f64;
+                let ny = self.vert_properties[prop_start + 1] as f64;
+                let nz = self.vert_properties[prop_start + 2] as f64;
+                // Apply normal transform
+                let tx = n00*nx + n01*ny + n02*nz;
+                let ty = n10*nx + n11*ny + n12*nz;
+                let tz = n20*nx + n21*ny + n22*nz;
+                // SafeNormalize
+                let len = (tx*tx + ty*ty + tz*tz).sqrt();
+                let (tx, ty, tz) = if len > 0.0 {
+                    (sign * tx / len, sign * ty / len, sign * tz / len)
+                } else {
+                    (0.0, 0.0, 0.0)
+                };
+                self.vert_properties[prop_start] = tx as f32;
+                self.vert_properties[prop_start + 1] = ty as f32;
+                self.vert_properties[prop_start + 2] = tz as f32;
+            }
+        }
+        self.run_transform.clear();
+        self.run_flags.clear();
     }
 }
 

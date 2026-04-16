@@ -64,6 +64,20 @@ impl CrossSection {
         Self { polygons: from_paths(&result) }
     }
 
+    /// Create a CrossSection from a Rect (axis-aligned rectangle).
+    /// Matches C++ CrossSection(Rect) constructor.
+    pub fn from_rect(rect: &Rect) -> Self {
+        if rect.is_empty() {
+            return Self::default();
+        }
+        Self::new(vec![vec![
+            Vec2::new(rect.min.x, rect.min.y),
+            Vec2::new(rect.max.x, rect.min.y),
+            Vec2::new(rect.max.x, rect.max.y),
+            Vec2::new(rect.min.x, rect.max.y),
+        ]])
+    }
+
     pub fn square(size: f64) -> Self {
         if size <= 0.0 {
             return Self { polygons: vec![] };
@@ -73,6 +87,26 @@ impl CrossSection {
             Vec2::new(size, 0.0),
             Vec2::new(size, size),
             Vec2::new(0.0, size),
+        ]])
+    }
+
+    /// Create a rectangle of size (w, h), optionally centered at origin.
+    /// Matches C++ CrossSection::Square(vec2, center).
+    pub fn square_vec2(size: Vec2, center: bool) -> Self {
+        let (w, h) = (size.x, size.y);
+        if w <= 0.0 || h <= 0.0 {
+            return Self { polygons: vec![] };
+        }
+        let (x0, y0, x1, y1) = if center {
+            (-w / 2.0, -h / 2.0, w / 2.0, h / 2.0)
+        } else {
+            (0.0, 0.0, w, h)
+        };
+        Self::new(vec![vec![
+            Vec2::new(x0, y0),
+            Vec2::new(x1, y0),
+            Vec2::new(x1, y1),
+            Vec2::new(x0, y1),
         ]])
     }
 
@@ -309,6 +343,16 @@ impl CrossSection {
             3 => JoinType::Bevel,
             _ => JoinType::Round,
         };
+        // For round joins, compute arc_tolerance from circular_segments to get the
+        // exact segment count. Matches C++ CrossSection::Offset:
+        //   arc_tol = (cos(π/n) - 1) * -|delta|
+        let arc_tol = if jt == JoinType::Round && circular_segments > 2 {
+            let n = circular_segments as f64;
+            let abs_delta = delta.abs();
+            ((std::f64::consts::PI / n).cos() - 1.0) * -abs_delta
+        } else {
+            0.0
+        };
         Self::new(from_paths(&inflate_paths_d(
             &to_paths(&self.polygons),
             delta,
@@ -316,7 +360,7 @@ impl CrossSection {
             EndType::Polygon,
             miter_limit,
             6,
-            0.0,
+            arc_tol,
         )))
     }
 
@@ -431,6 +475,18 @@ impl CrossSection {
         hull.pop(); // last point == first
         if hull.len() < 3 { return Self::default(); }
         Self::new(vec![hull])
+    }
+
+    /// Compose (merge) multiple CrossSections by combining all their contours.
+    /// Matches C++ CrossSection::Compose(vector<CrossSection>) which unions all polygons.
+    pub fn compose(sections: &[Self]) -> Self {
+        let all: Vec<Vec<Vec2>> = sections.iter()
+            .flat_map(|s| s.polygons.iter().cloned())
+            .collect();
+        if all.is_empty() {
+            return Self::default();
+        }
+        Self::from_polygons_fill(all)
     }
 }
 

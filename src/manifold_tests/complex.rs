@@ -177,7 +177,6 @@ fn test_cpp_complex_cylinders() {
 
 /// C++ TEST(BooleanComplex, Close) — intersecting near-coincident spheres
 #[test]
-#[ignore = "Slow: 256-segment sphere iterated 10x boolean"]
 fn test_cpp_complex_close() {
     let r = 10.0;
     let a = Manifold::sphere(r, 256);

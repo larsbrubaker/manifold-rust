@@ -147,10 +147,11 @@ impl Manifold {
         } else {
             Mat3x4::identity()
         };
+        let back_side = i < mesh.run_flags.len() && mesh.run_flags[i] == 1;
         imp.mesh_relation.mesh_id_transform.insert(mesh_id, crate::types::Relation {
             original_id: orig_id as i32,
             transform,
-            back_side: false,
+            back_side,
         });
     }
 
@@ -234,7 +235,10 @@ pub fn get_mesh_gl(&self, normal_idx: i32) -> MeshGL {
     let num_tri = self.imp.num_tri();
     let extra_prop = self.imp.num_prop;
     out.num_prop = 3 + extra_prop as u32;
-    out.tolerance = self.imp.tolerance as f32;
+    // C++: for float output, floor tolerance at float_epsilon * bBox.Scale()
+    // to avoid catastrophic cancellation in RelatedGL checks.
+    let float_eps_floor = (f32::EPSILON as f64) * self.imp.bbox.scale();
+    out.tolerance = (self.imp.tolerance.max(float_eps_floor)) as f32;
 
     if !self.imp.halfedge_tangent.is_empty() {
         for t in &self.imp.halfedge_tangent {
@@ -277,9 +281,13 @@ pub fn get_mesh_gl(&self, normal_idx: i32) -> MeshGL {
             let rel = mesh_id_transform.remove(&mesh_id).unwrap_or_default();
             out.run_index.push(3 * new_tri as u32);
             out.run_original_id.push(rel.original_id.max(0) as u32);
-            for col in 0..4 {
-                for row in 0..3 {
-                    out.run_transform.push(rel.transform[col][row] as f32);
+            out.run_flags.push(if rel.back_side { 1 } else { 0 });
+            // C++: runTransform only emitted for non-original manifolds
+            if !is_original {
+                for col in 0..4 {
+                    for row in 0..3 {
+                        out.run_transform.push(rel.transform[col][row] as f32);
+                    }
                 }
             }
             last_mesh_id = mesh_id;
@@ -289,9 +297,12 @@ pub fn get_mesh_gl(&self, normal_idx: i32) -> MeshGL {
     for (_id, rel) in &mesh_id_transform {
         out.run_index.push(3 * num_tri as u32);
         out.run_original_id.push(rel.original_id.max(0) as u32);
-        for col in 0..4 {
-            for row in 0..3 {
-                out.run_transform.push(rel.transform[col][row] as f32);
+        out.run_flags.push(if rel.back_side { 1 } else { 0 });
+        if !is_original {
+            for col in 0..4 {
+                for row in 0..3 {
+                    out.run_transform.push(rel.transform[col][row] as f32);
+                }
             }
         }
     }
@@ -392,6 +403,7 @@ pub fn from_mesh_gl64(mesh: &MeshGL64) -> Self {
         run_transform: mesh.run_transform.iter().map(|&v| v as f32).collect(),
         face_id: mesh.face_id.iter().map(|&v| v as u32).collect(),
         halfedge_tangent: mesh.halfedge_tangent.iter().map(|&v| v as f32).collect(),
+        run_flags: mesh.run_flags.clone(),
         tolerance: mesh.tolerance as f32,
     };
     Self::from_mesh_gl(&mesh32)
@@ -410,6 +422,7 @@ pub fn get_mesh_gl64(&self, normal_idx: i32) -> MeshGL64 {
         run_transform: mesh.run_transform.into_iter().map(|v| v as f64).collect(),
         face_id: mesh.face_id.into_iter().map(|v| v as u64).collect(),
         halfedge_tangent: mesh.halfedge_tangent.into_iter().map(|v| v as f64).collect(),
+        run_flags: mesh.run_flags,
         tolerance: mesh.tolerance as f64,
     }
 }

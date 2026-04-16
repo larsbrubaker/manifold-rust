@@ -229,7 +229,6 @@ fn test_cpp_smooth_torus() {
 
 /// C++ TEST(Smooth, SineSurface) — sine surface with smooth normals
 #[test]
-#[ignore = "vol converges to 8.076 (simplified) vs 8.09 expected; C++ simplify collapses to different topology"]
 fn test_cpp_smooth_sine_surface() {
     let pi = std::f64::consts::PI;
     let surface = Manifold::level_set(
@@ -378,6 +377,9 @@ fn test_cpp_smooth_invalid_tangents() {
 fn test_cpp_mesh_relation_refine() {
     let csaszar_manifold = Manifold::from_mesh_gl(&csaszar_gl());
     let csaszar = with_position_colors(&csaszar_manifold).as_original();
+    let in_gl = csaszar.get_mesh_gl(0);
+
+    super::related_gl(&csaszar, &[&in_gl]);
 
     // Check mesh sizes after refine to length 1
     let refined = csaszar.refine_to_length(1.0);
@@ -389,16 +391,16 @@ fn test_cpp_mesh_relation_refine() {
         "MeshRelationRefine: expected 18038 tris, got {}", refined.num_tri());
     assert_eq!(refined.num_prop(), 3,
         "MeshRelationRefine: expected num_prop=3, got {}", refined.num_prop());
+    super::related_gl(&refined, &[&in_gl]);
 }
 
 /// C++ TEST(Manifold, MeshRelationRefinePrecision) — smooth mesh with RefineToTolerance
 #[test]
 fn test_cpp_mesh_relation_refine_precision() {
-    let csaszar_mesh = {
-        let csaszar_manifold = Manifold::from_mesh_gl(&csaszar_gl());
-        with_position_colors(&csaszar_manifold).get_mesh_gl(0)
-    };
-    let csaszar = Manifold::smooth(&csaszar_mesh, &[]);
+    let csaszar_manifold = Manifold::from_mesh_gl(&csaszar_gl());
+    let in_gl = with_position_colors(&csaszar_manifold).get_mesh_gl(0);
+    let id = in_gl.run_original_id[0];
+    let csaszar = Manifold::smooth(&in_gl, &[]);
 
     let refined = csaszar.refine_to_tolerance(0.05);
     assert!(!refined.is_empty(), "MeshRelationRefinePrecision: result is empty");
@@ -409,6 +411,11 @@ fn test_cpp_mesh_relation_refine_precision() {
         "MeshRelationRefinePrecision: expected 5368 tris, got {}", refined.num_tri());
     assert_eq!(refined.num_prop(), 3,
         "MeshRelationRefinePrecision: expected num_prop=3, got {}", refined.num_prop());
+    // Verify the run original ID is preserved
+    let out_gl = refined.get_mesh_gl(0);
+    assert_eq!(out_gl.run_original_id.len(), 1);
+    assert_eq!(out_gl.run_original_id[0], id,
+        "MeshRelationRefinePrecision: original ID not preserved");
 }
 
 /// C++ TEST(Smooth, Sphere) — smoothed sphere vertices stay near radius 1
@@ -456,6 +463,15 @@ fn test_cpp_smooth_fillet() {
     let fillet = chamfered.simplify(0.01).smooth_by_normals(0).refine(10);
     assert_eq!(fillet.status(), crate::types::Error::NoError,
         "Fillet status={:?}", fillet.status());
+}
+
+/// C++ TEST(Manifold, MeshRelation) — gyroid with position colors, RelatedGL after simplify
+#[test]
+fn test_cpp_mesh_relation() {
+    let gyroid = super::with_position_colors(&super::gyroid());
+    let gyroid_gl = gyroid.get_mesh_gl(0);
+    let simplified = gyroid.simplify(0.0);
+    super::related_gl(&simplified, &[&gyroid_gl]);
 }
 
 /// C++ WithPositionColors() — set properties to normalized position

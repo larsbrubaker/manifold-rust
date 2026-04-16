@@ -700,20 +700,9 @@ fn test_cpp_mixed_num_prop() {
     assert_eq!(result.num_prop(), 2, "MixedNumProp: num_prop should be 2, got {}", result.num_prop());
 }
 
-/// C++ TEST(Boolean, EmptyOriginal) — tet minus translated cube
-#[test]
-fn test_cpp_empty_original() {
-    let cube = Manifold::cube(Vec3::splat(1.0), false);
-    let tet = Manifold::tetrahedron();
-    let result = tet.difference(&cube.translate(Vec3::new(3.0, 4.0, 5.0)));
-    let mesh = result.get_mesh_gl(0);
-    // Result should be the tet unchanged (no intersection with far-away cube)
-    assert!(mesh.tri_verts.len() > 0, "EmptyOriginal: result should have triangles");
-}
 
 /// C++ TEST(Boolean, CreatePropertiesSlow) — position colors via set_properties, boolean
 #[test]
-#[ignore = "Slow: sphere(10, 1024) boolean takes too long in debug"]
 fn test_cpp_create_properties_slow() {
     let a = Manifold::sphere(10.0, 1024)
         .set_properties(3, |props, _pos, _old| {
@@ -782,3 +771,30 @@ fn test_cpp_simplify_cracks() {
 }
 
 // test_cpp_perturb2 and test_cpp_perturb3 are in complex.rs
+
+/// C++ TEST(Boolean, MeshGLRoundTrip) — union of two translated cubes, verify RelatedGL
+/// before and after a MeshGL round-trip (export + re-import).
+#[test]
+fn test_cpp_mesh_gl_round_trip() {
+    let cube = Manifold::cube(Vec3::splat(2.0), false);
+    assert!(cube.original_id() >= 0, "MeshGLRoundTrip: cube should have original_id >= 0");
+    let original = cube.get_mesh_gl(0);
+
+    let result = cube.union(&cube.translate(Vec3::new(1.0, 1.0, 0.0)));
+    assert!(result.original_id() < 0, "MeshGLRoundTrip: union result should have negative original_id");
+    assert_eq!(result.num_vert(), 18, "MeshGLRoundTrip: expected 18 verts");
+    assert_eq!(result.num_tri(), 32, "MeshGLRoundTrip: expected 32 tris");
+    super::related_gl(&result, &[&original]);
+
+    let in_gl = result.get_mesh_gl(0);
+    assert_eq!(in_gl.run_original_id.len(), 2, "MeshGLRoundTrip: expected 2 runs");
+    let result2 = Manifold::from_mesh_gl(&in_gl);
+
+    assert!(result2.original_id() < 0, "MeshGLRoundTrip: result2 should have negative original_id");
+    assert_eq!(result2.num_vert(), 18, "MeshGLRoundTrip: result2 expected 18 verts");
+    assert_eq!(result2.num_tri(), 32, "MeshGLRoundTrip: result2 expected 32 tris");
+    super::related_gl(&result2, &[&original]);
+
+    let out_gl = result2.get_mesh_gl(0);
+    assert_eq!(out_gl.run_original_id.len(), 2, "MeshGLRoundTrip: outGL expected 2 runs");
+}

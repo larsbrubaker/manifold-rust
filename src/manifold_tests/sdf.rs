@@ -30,7 +30,6 @@ fn test_cpp_sdf_resize() {
 
 /// C++ TEST(SDF, SineSurface) — SDF sine surface with smooth + refine
 #[test]
-#[ignore = "Requires SmoothOut implementation"]
 fn test_cpp_sdf_sine_surface() {
     let pi = std::f64::consts::PI;
     let surface = Manifold::level_set(

@@ -22,7 +22,7 @@ use crate::minkowski;
 use crate::quickhull;
 use crate::sdf;
 use crate::subdivision;
-use crate::types::{Error, MeshGL, MeshGL64, OpType, Polygons, RayHit};
+use crate::types::{Error, MeshGL, MeshGL64, OpType, Polygons, RayHit, Rect};
 
 #[derive(Clone)]
 pub struct Manifold {
@@ -162,7 +162,7 @@ impl Manifold {
     pub fn surface_area(&self) -> f64 { self.imp.get_property(crate::properties::Property::SurfaceArea) }
     pub fn matches_tri_normals(&self) -> bool { self.imp.matches_tri_normals() }
     pub fn num_degenerate_tris(&self) -> i32 { self.imp.num_degenerate_tris() }
-    pub fn get_tolerance(&self) -> f64 { self.imp.epsilon }
+    pub fn get_tolerance(&self) -> f64 { self.imp.tolerance }
 
     /// Port of C++ Manifold::Genus()
     pub fn genus(&self) -> i32 {
