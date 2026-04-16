@@ -682,7 +682,6 @@ fn test_cpp_properties_calculate_curvature() {
 
 /// C++ TEST(Smooth, NormalTransform) — smooth by normals after rotation
 #[test]
-#[ignore = "MeshGL round-trip loses normal properties, smooth_by_normals can't reconstruct"]
 fn test_cpp_smooth_normal_transform() {
     let cube1 = Manifold::cube(Vec3::splat(1.0), false)
         .rotate(30.0, 0.0, 0.0)
@@ -691,11 +690,20 @@ fn test_cpp_smooth_normal_transform() {
         .calculate_normals(0, 60.0)
         .rotate(30.0, 0.0, 0.0)
         .translate(Vec3::new(3.0, 0.0, 0.0));
+
     let combo = cube1 + cube2;
     let out1 = combo.smooth_by_normals(0).refine(10);
     assert!((out1.volume() - 2.0).abs() < 1e-4, "volume={}", out1.volume());
     assert!((out1.surface_area() - 12.0).abs() < 1e-4, "sa={}", out1.surface_area());
 
+    let cube1 = Manifold::cube(Vec3::splat(1.0), false)
+        .rotate(30.0, 0.0, 0.0)
+        .calculate_normals(0, 60.0);
+    let cube2 = Manifold::cube(Vec3::splat(1.0), false)
+        .calculate_normals(0, 60.0)
+        .rotate(30.0, 0.0, 0.0)
+        .translate(Vec3::new(3.0, 0.0, 0.0));
+    let combo = cube1 + cube2;
     let out2 = Manifold::from_mesh_gl(&combo.get_mesh_gl(0))
         .smooth_by_normals(0)
         .refine(10);

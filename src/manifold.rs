@@ -530,6 +530,10 @@ impl Manifold {
             return self.clone();
         }
         let mut out = self.imp.clone();
+        if !out.valid_tangents() {
+            out.make_empty(crate::types::Error::InvalidTangents);
+            return Self::from_impl(out);
+        }
         let old = out.clone();
         let had_tangents = out.halfedge_tangent.len() == out.halfedge.len();
         let vert_bary = out.subdivide(&|_vec, _t0, _t1| n - 1, false);
@@ -556,6 +560,10 @@ impl Manifold {
             return self.clone();
         }
         let mut out = self.imp.clone();
+        if !out.valid_tangents() {
+            out.make_empty(crate::types::Error::InvalidTangents);
+            return Self::from_impl(out);
+        }
         let old = out.clone();
         let had_tangents = out.halfedge_tangent.len() == out.halfedge.len();
         let vert_bary = out.subdivide(
@@ -595,6 +603,10 @@ impl Manifold {
         let had_tangents = out.halfedge_tangent.len() == out.halfedge.len();
         if !had_tangents {
             return self.clone();
+        }
+        if !out.valid_tangents() {
+            out.make_empty(crate::types::Error::InvalidTangents);
+            return Self::from_impl(out);
         }
         let old = out.clone();
         let vert_bary = out.subdivide(

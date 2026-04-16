@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 
 use crate::impl_mesh::ManifoldImpl;
-use crate::linalg::{cross, dot, length, Vec3, Vec4};
+use crate::linalg::{cross, dot, length, Mat3, Vec3, Vec4};
 use crate::math;
 use crate::types::{K_PI, K_TWO_PI, Smoothness, TriRef};
 
@@ -101,11 +101,19 @@ impl ManifoldImpl {
     pub fn get_normal(&self, halfedge: usize, normal_idx: usize) -> Vec3 {
         let prop = self.halfedge[halfedge].prop_vert as usize;
         let base = prop * self.num_prop + normal_idx;
-        Vec3::new(
+        let normal = Vec3::new(
             self.properties[base],
             self.properties[base + 1],
             self.properties[base + 2],
-        )
+        );
+        // Apply the mesh transform to convert stored (original-space) normals to world space.
+        // Matches C++ GetNormal which multiplies by GetNormalTransform().
+        let mesh_id = self.mesh_relation.tri_ref[halfedge / 3].mesh_id;
+        if let Some(rel) = self.mesh_relation.mesh_id_transform.get(&mesh_id) {
+            rel.get_normal_transform() * normal
+        } else {
+            normal
+        }
     }
 
     pub fn tangent_from_normal(&self, normal: Vec3, halfedge: usize) -> Vec4 {
@@ -155,7 +163,8 @@ impl ManifoldImpl {
     }
 
     pub fn is_marked_inside_quad(&self, halfedge: usize) -> bool {
-        !self.halfedge_tangent.is_empty() && self.halfedge_tangent[halfedge].w < 0.0
+        // Check for kInsideQuad == -1.0 exactly (distinct from kMissingNormal == -3.0)
+        !self.halfedge_tangent.is_empty() && self.halfedge_tangent[halfedge].w == -1.0
     }
 
     pub fn update_sharpened_edges(&self, sharpened_edges: &[Smoothness]) -> Vec<Smoothness> {
@@ -281,6 +290,12 @@ impl ManifoldImpl {
             h.prop_vert = -1;
         }
 
+        // Build per-mesh-id inverse normal transform cache.
+        // Matches C++ SetNormals which applies GetInverseNormalTransform() to each vertex's normal
+        // before writing to properties, so that GetNormal (which applies GetNormalTransform()) can
+        // correctly reconstruct the world-space normal.
+        let mut mesh_id_to_inv_transform: HashMap<i32, Mat3> = HashMap::new();
+
         let num_edge = self.halfedge.len();
         for start_edge in 0..num_edge {
             if self.halfedge[start_edge].prop_vert >= 0 {
@@ -288,13 +303,25 @@ impl ManifoldImpl {
             }
             let vert = self.halfedge[start_edge].start_vert as usize;
 
+            // Look up the inverse normal transform for this vertex's mesh.
+            let mesh_id = self.mesh_relation.tri_ref[start_edge / 3].mesh_id;
+            let inv_transform = *mesh_id_to_inv_transform.entry(mesh_id).or_insert_with(|| {
+                self.mesh_relation
+                    .mesh_id_transform
+                    .get(&mesh_id)
+                    .map(|rel| rel.get_inverse_normal_transform())
+                    .unwrap_or_else(Mat3::identity)
+            });
+
             if vert_num_sharp[vert] < 2 {
-                // Vertex has single normal
-                let normal = if vert_flat_face[vert] >= 0 {
+                // Vertex has single normal (in world space from face_normal/vert_normal)
+                let world_normal = if vert_flat_face[vert] >= 0 {
                     self.face_normal[vert_flat_face[vert] as usize]
                 } else {
                     self.vert_normal[vert]
                 };
+                // Store in original space so GetNormal can reconstruct world normal
+                let normal = inv_transform * world_normal;
 
                 let mut last_prop: i32 = -1;
                 // ForVert traversal
@@ -431,9 +458,10 @@ impl ManifoldImpl {
                     }
                 }
 
-                // Normalize all normals
+                // Normalize and transform to original space
+                // Matches C++: normal = transform * SafeNormalize(normal)
                 for n in normals.iter_mut() {
-                    *n = safe_normalize(*n);
+                    *n = inv_transform * safe_normalize(*n);
                 }
 
                 // Assign property vertices.

@@ -3,13 +3,33 @@
 This document tracks the incremental port of [Manifold](https://github.com/elalish/manifold) to Rust.
 Every phase must pass all tests with **exact numerical match** to the C++ before the next phase begins.
 
-## Current Status: 428 tests passing, 0 failing, 31 ignored
+## Current Status: 435 tests passing, 0 failing, 30 ignored
 
 **Date:** 2026-04-15
-**Total Rust tests:** ~230 unique test functions
+**Total Rust tests:** ~235 unique test functions
 **Total C++ tests:** 191 (excluding manifoldc and samples)
-**Ported C++ tests:** ~183 (96%)
-**Remaining C++ tests to port:** ~8
+**Ported C++ tests:** ~186 (97%)
+**Remaining C++ tests to port:** ~5
+
+### Recent Bug Fixes
+
+**`compose_meshes` losing mesh transforms** (2026-04-15): Fast-path boolean union was
+calling `initialize_original()` which discards triRef/meshIDtransform from inputs.
+Fixed to concatenate tri_refs (adjusting coplanar_id by triangle offset) and merge
+mesh_id_transform maps from all input meshes. Fixed `test_cpp_smooth_normal_transform`.
+
+**`create_halfedges` reordering bug** (2026-04-15): When detecting opposed triangle pairs
+(two halfedges with same undirected edge and same third vertex), the reordering step
+only set `ids[i+numEdge] = pair1` but missed the preceding `ids[k] = ids[i+numEdge]`
+step. This caused the valid unpaired forward halfedge to be orphaned (never processed
+in the final pairing pass) while the opposed halfedge was referenced twice. Fixed by
+replacing with `ids.swap(k, i+num_edge)` matching C++ behavior. Fixed `test_cpp_merge_refine`.
+
+**`MeshGL::merge()` open_verts collection** (2026-04-15): Was collecting both endpoints
+of each open boundary halfedge, but C++ only collects the start vertex (edge.first after
+swap). Collecting the end vertex too caused incorrect merges (e.g., end vertex at same
+position as some interior vertex). Fixed to collect only edge.1 (= start vertex) matching
+C++ `MergeMeshGLP`. Also part of fixing `test_cpp_merge_refine`.
 
 ## Guiding Principles
 
@@ -88,19 +108,21 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 - perturb3 — BatchBoolean precision
 - openscad_crash — panics in face_op (needs processOverlaps)
 
-### manifold_test.cpp — 51 tests, ~47 ported (92%)
+### manifold_test.cpp — 51 tests, ~50 ported (98%)
 
 **Unported:**
 - [ ] ObjRoundTrip — needs OBJ write support
-- [ ] MeshRelationRefine — needs Csaszar helper + RelatedGL
-- [ ] MeshRelationRefinePrecision — needs RefineToTolerance + RelatedGL
-- [ ] MergeRefine — merge with high-precision tolerance meshes
+
+**Passing (newly ported):**
+- MeshRelationRefine ✅ — csaszar with position colors, RefineToLength(1) → 9019 verts/18038 tris
+- MeshRelationRefinePrecision ✅ — smooth csaszar, RefineToTolerance(0.05) → 2684 verts/5368 tris
+- MergeRefine ✅ — merge with 1e-5 tolerance, RefineToLength(1) → volume≈31.21
+- SmoothNormalTransform ✅ — compose_meshes preserves mesh transforms
 
 **Ignored (ported but not passing):**
 - opposite_face — MeshGL import rejects mesh with duplicate face pairs
 - mesh_determinism (×2) — boolean produces 30 vs 24 tris
 - merge_empty — flat degenerate mesh handling differs
-- smooth_normal_transform — MeshGL round-trip loses normal properties
 - sphere_tri_count_n25 — binary subdivision (8192 vs 5000)
 
 ### properties_test.cpp — 22 tests, ~20 ported (91%)

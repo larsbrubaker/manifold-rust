@@ -46,6 +46,14 @@ cargo test -- --nocapture
   The test block has been extracted to `linalg_tests.rs`. `edge_op.rs` and
   `quickhull_algo.rs` are slightly over (~900/~820) with tightly coupled algorithms.
 
+### Documentation
+- Every file must begin with a comment block describing its purpose and how it relates
+  to other modules in the project.
+- Add doc comments to functions when they clarify intent, non-obvious behavior, or
+  relationships to other parts of the codebase. Skip them when the function name and
+  signature already tell the full story.
+- Explain *why*, not *what*. A comment that restates the code is noise.
+
 ### Bug workflow — always follow this order
 1. **Write a failing test** that reproduces the bug.
 2. **Fix the bug.**

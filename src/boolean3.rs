@@ -35,7 +35,7 @@ use crate::disjoint_sets::DisjointSets;
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{IVec3, Vec2, Vec3, Vec4};
 use crate::sort::get_face_box_morton;
-use crate::types::{Box as BBox, OpType};
+use crate::types::{Box as BBox, OpType, TriRef};
 
 // ---------------------------------------------------------------------------
 // Intersections — sparse intersection data between two meshes
@@ -681,12 +681,37 @@ pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
         vert_offset += mesh.num_vert() as i32;
     }
 
+    // Concatenate tri_refs and merge mesh_id_transforms from all input meshes.
+    // Each mesh's coplanar_id is a triangle-local group index, so offset by tri_offset.
+    let mut all_tri_refs: Vec<TriRef> = Vec::new();
+    let mut merged_transforms = std::collections::HashMap::new();
+    let mut tri_offset = 0i32;
+    for mesh in meshes {
+        let mesh_tri_count = mesh.num_tri() as i32;
+        for tri_ref in &mesh.mesh_relation.tri_ref {
+            all_tri_refs.push(TriRef {
+                mesh_id: tri_ref.mesh_id,
+                original_id: tri_ref.original_id,
+                face_id: tri_ref.face_id,
+                coplanar_id: tri_ref.coplanar_id + tri_offset,
+            });
+        }
+        for (id, rel) in &mesh.mesh_relation.mesh_id_transform {
+            merged_transforms.insert(*id, rel.clone());
+        }
+        tri_offset += mesh_tri_count;
+    }
+
     let mut out = ManifoldImpl::new();
     out.vert_pos = vert_pos;
     out.num_prop = num_prop;
     out.properties = properties;
     out.create_halfedges(&tri_prop, &tri_vert);
-    out.initialize_original();
+    // Preserve tri_refs and transforms from input meshes instead of
+    // calling initialize_original(), which would lose mesh transform data.
+    out.mesh_relation.tri_ref = all_tri_refs;
+    out.mesh_relation.mesh_id_transform = merged_transforms;
+    out.mesh_relation.original_id = -1;
     out.calculate_bbox();
     out.set_epsilon(-1.0, false);
     // required to remove parts that are smaller than the tolerance (matches C++)

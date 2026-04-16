@@ -414,6 +414,12 @@ pub fn interp_tri(
             pos_h = pos_h + homogeneous_4(Vec4::new(p_y.x, p_y.y, p_y.z, y * (1.0 - y)));
         }
 
-        vert_pos[vert] = hnormalize(pos_h);
+        let pos = hnormalize(pos_h);
+        // Guard against NaN/inf from degenerate Bezier weights (matches C++ la::isfinite check)
+        vert_pos[vert] = if pos.x.is_finite() && pos.y.is_finite() && pos.z.is_finite() {
+            pos
+        } else {
+            corners[0]
+        };
     }
 }

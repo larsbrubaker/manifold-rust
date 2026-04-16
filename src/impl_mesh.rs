@@ -356,11 +356,14 @@ impl ManifoldImpl {
                     let next0 = next_halfedge(pair0 as i32) as usize;
                     let next1 = next_halfedge(pair1 as i32) as usize;
                     if self.halfedge[next0].end_vert == self.halfedge[next1].end_vert {
-                        // Opposed triangles: mark both for removal
+                        // Opposed triangles: mark both for removal.
+                        // Reorder ids so the remaining valid forward halfedge (at i+num_edge)
+                        // moves to position k, and pair1 (the opposed one) goes to i+num_edge.
+                        // This matches C++ which does: ids[k] = ids[i+numEdge]; ids[i+numEdge] = pair1;
                         self.halfedge[pair0].paired_halfedge = K_REMOVED_HALFEDGE;
                         self.halfedge[pair1].paired_halfedge = K_REMOVED_HALFEDGE;
                         if i + num_edge != k {
-                            ids[i + num_edge] = pair1;
+                            ids.swap(k, i + num_edge);
                         }
                         break 'inner;
                     }

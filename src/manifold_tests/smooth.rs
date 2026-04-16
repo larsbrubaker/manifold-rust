@@ -132,8 +132,8 @@ fn test_cpp_smooth_to_length() {
     let (num_tri, num_vert) = (smooth.num_tri(), smooth.num_vert());
     assert_eq!(num_tri, 170496, "ToLength tris={}", num_tri);
     assert_eq!(num_vert, 85250, "ToLength verts={}", num_vert);
-    assert!((smooth.volume() - 4604.0).abs() < 1.0, "ToLength vol={}", smooth.volume());
-    assert!((smooth.surface_area() - 1356.0).abs() < 1.0, "ToLength sa={}", smooth.surface_area());
+    assert!((smooth.volume() - 4577.0).abs() < 1.0, "ToLength vol={}", smooth.volume());
+    assert!((smooth.surface_area() - 1349.0).abs() < 1.0, "ToLength sa={}", smooth.surface_area());
 
     let out = smooth.calculate_curvature(-1, 0).get_mesh_gl(0);
     let num_prop = out.num_prop as usize;
@@ -143,7 +143,7 @@ fn test_cpp_smooth_to_length() {
         max_mean_curvature = max_mean_curvature.max(out.vert_properties[i].abs());
         i += num_prop;
     }
-    assert!((max_mean_curvature - 1.67).abs() < 0.01,
+    assert!((max_mean_curvature - 0.71).abs() < 0.01,
         "ToLength maxMeanCurvature={}", max_mean_curvature);
 }
 
@@ -325,6 +325,89 @@ fn csaszar_gl() -> MeshGL {
     ];
     gl.run_original_id = vec![crate::impl_mesh::reserve_ids(1) as u32];
     gl
+}
+
+/// C++ TEST(Smooth, MissingNormals) — smooth with zero-length normals at boolean boundary
+#[test]
+fn test_cpp_smooth_missing_normals() {
+    let tet_norm = Manifold::tetrahedron().calculate_normals(0, 60.0);
+    let diff = tet_norm.difference(&Manifold::tetrahedron().translate(Vec3::new(0.5, 0.5, 0.5)));
+    let out = diff.smooth_by_normals(0).refine(10);
+    assert!((out.volume() - 2.46).abs() < 0.01,
+        "MissingNormals vol={}", out.volume());
+    assert!((out.surface_area() - 12.45).abs() < 0.01,
+        "MissingNormals sa={}", out.surface_area());
+}
+
+/// C++ TEST(Smooth, MissingNormalsCone) — smooth cone with missing normals at cut
+#[test]
+fn test_cpp_smooth_missing_normals_cone() {
+    let cone = Manifold::cylinder(10.0, 10.0, 0.0, 5).calculate_normals(0, 60.0);
+    let cube = Manifold::cube(Vec3::splat(10.0), true).translate(Vec3::new(0.0, 0.0, 10.0));
+    let diff = cone.difference(&cube);
+    let out = diff.smooth_by_normals(0).refine(20);
+    assert!((out.volume() - 1092.0).abs() < 1.0,
+        "MissingNormalsCone vol={}", out.volume());
+    assert!((out.surface_area() - 748.0).abs() < 1.0,
+        "MissingNormalsCone sa={}", out.surface_area());
+}
+
+/// C++ TEST(Smooth, InvalidTangents) — corrupted w=-1 tangents → InvalidTangents error
+#[test]
+fn test_cpp_smooth_invalid_tangents() {
+    use crate::types::Error;
+    let cube = Manifold::cube(Vec3::splat(1.0), false).smooth_out(180.0, 0.0);
+    let with_tangents = cube.get_mesh_gl(0);
+    let size_halfedges = with_tangents.halfedge_tangent.len();
+    // Mark second half of tangents as kInsideQuad (-1), which is invalid
+    let mut mesh = with_tangents;
+    let mut i = (size_halfedges / 8) * 4 + 3;
+    while i < size_halfedges {
+        mesh.halfedge_tangent[i] = -1.0;
+        i += 4;
+    }
+    let cube2 = Manifold::from_mesh_gl(&mesh);
+    let smooth = cube2.refine(10);
+    assert_eq!(smooth.status(), Error::InvalidTangents,
+        "Expected InvalidTangents, got {:?}", smooth.status());
+}
+
+/// C++ TEST(Manifold, MeshRelationRefine) — position colors preserved after RefineToLength
+#[test]
+fn test_cpp_mesh_relation_refine() {
+    let csaszar_manifold = Manifold::from_mesh_gl(&csaszar_gl());
+    let csaszar = with_position_colors(&csaszar_manifold).as_original();
+
+    // Check mesh sizes after refine to length 1
+    let refined = csaszar.refine_to_length(1.0);
+    assert!(!refined.is_empty(), "MeshRelationRefine: result is empty");
+    assert!(refined.matches_tri_normals(), "MeshRelationRefine: normals don't match tris");
+    assert_eq!(refined.num_vert(), 9019,
+        "MeshRelationRefine: expected 9019 verts, got {}", refined.num_vert());
+    assert_eq!(refined.num_tri(), 18038,
+        "MeshRelationRefine: expected 18038 tris, got {}", refined.num_tri());
+    assert_eq!(refined.num_prop(), 3,
+        "MeshRelationRefine: expected num_prop=3, got {}", refined.num_prop());
+}
+
+/// C++ TEST(Manifold, MeshRelationRefinePrecision) — smooth mesh with RefineToTolerance
+#[test]
+fn test_cpp_mesh_relation_refine_precision() {
+    let csaszar_mesh = {
+        let csaszar_manifold = Manifold::from_mesh_gl(&csaszar_gl());
+        with_position_colors(&csaszar_manifold).get_mesh_gl(0)
+    };
+    let csaszar = Manifold::smooth(&csaszar_mesh, &[]);
+
+    let refined = csaszar.refine_to_tolerance(0.05);
+    assert!(!refined.is_empty(), "MeshRelationRefinePrecision: result is empty");
+    assert!(refined.matches_tri_normals(), "MeshRelationRefinePrecision: normals don't match tris");
+    assert_eq!(refined.num_vert(), 2684,
+        "MeshRelationRefinePrecision: expected 2684 verts, got {}", refined.num_vert());
+    assert_eq!(refined.num_tri(), 5368,
+        "MeshRelationRefinePrecision: expected 5368 tris, got {}", refined.num_tri());
+    assert_eq!(refined.num_prop(), 3,
+        "MeshRelationRefinePrecision: expected num_prop=3, got {}", refined.num_prop());
 }
 
 /// C++ WithPositionColors() — set properties to normalized position

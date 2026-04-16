@@ -2,7 +2,7 @@
 // include/manifold/manifold.h (MeshGLP/Error), src/shared.h (Halfedge, TriRef, Barycentric, TmpEdge)
 
 use std::collections::HashMap;
-use crate::linalg::{Vec2, Vec3, Vec4, Mat3x4};
+use crate::linalg::{Vec2, Vec3, Vec4, Mat3, Mat3x4};
 use crate::math;
 
 // ---------------------------------------------------------------------------
@@ -388,6 +388,7 @@ pub enum Error {
     FaceIdWrongLength,
     InvalidConstruction,
     ResultTooLarge,
+    InvalidTangents,
 }
 
 impl Error {
@@ -406,6 +407,7 @@ impl Error {
             Error::FaceIdWrongLength => "Face ID Wrong Length",
             Error::InvalidConstruction => "Invalid Construction",
             Error::ResultTooLarge => "Result Too Large",
+            Error::InvalidTangents => "Invalid Tangents",
         }
     }
 }
@@ -617,8 +619,16 @@ impl MeshGLP<f32, u32> {
             return false;
         }
 
-        // Collect unique open vertices
-        let open_verts: Vec<usize> = open_edges.iter().map(|e| e.0).collect();
+        // Collect unique open vertices — only the START vertex of each open
+        // halfedge, matching C++ which stores (start,end) and takes edge.first=start.
+        // Our BTreeSet stores (end,start) so we take edge.1 (= b = start vertex).
+        let open_verts: Vec<usize> = {
+            let mut vset = std::collections::BTreeSet::new();
+            for (_a, b) in &open_edges {
+                vset.insert(*b);
+            }
+            vset.into_iter().collect()
+        };
         let num_open = open_verts.len();
 
         // Compute bounding box
@@ -848,6 +858,26 @@ impl Default for Relation {
     }
 }
 
+impl Relation {
+    /// Normal transform: inverse-transpose of the 3×3 linear part.
+    /// Multiply stored-property normals by this to get world-space normals.
+    /// Matches C++ Relation::GetNormalTransform()
+    pub fn get_normal_transform(&self) -> Mat3 {
+        let sign = if self.back_side { -1.0 } else { 1.0 };
+        // NormalTransform(M) = inverse(transpose(M)) = (M^T)^{-1}
+        self.transform.rotation().transpose().inverse() * sign
+    }
+
+    /// Inverse normal transform: transpose of the 3×3 linear part.
+    /// Multiply world-space normals by this before storing in properties.
+    /// Matches C++ Relation::GetInverseNormalTransform()
+    pub fn get_inverse_normal_transform(&self) -> Mat3 {
+        let sign = if self.back_side { -1.0 } else { 1.0 };
+        // InverseNormalTransform(M) = M^T
+        self.transform.rotation().transpose() * sign
+    }
+}
+
 /// Mesh relation table stored on ManifoldImpl.
 #[derive(Clone, Debug, Default)]
 pub struct MeshRelationD {
@@ -876,6 +906,14 @@ impl MeshRelationD {
 pub fn next_halfedge(current: i32) -> i32 {
     let n = current + 1;
     if n % 3 == 0 { n - 3 } else { n }
+}
+
+/// Returns the previous halfedge index within the same triangle.
+/// For triangle t: PrevHalfedge(3t+i) = 3t + (i+2)%3
+pub fn prev_halfedge(current: i32) -> i32 {
+    let base = current - (current % 3);
+    let pos = (current % 3 + 2) % 3;
+    base + pos
 }
 
 /// Return next index within 0..3 (wraps 0→1→2→0).
