@@ -299,9 +299,9 @@ fn test_cpp_mirror_union2() {
 
 /// C++ TEST(Manifold, OppositeFace) — two cubes sharing a face (12 verts, volume=2)
 /// Note: This mesh has degenerate/duplicate triangles (e.g., tri 5 and 6 share identical verts
-/// in opposite winding). Our halfedge builder rejects this. TODO: handle this edge case.
+/// in opposite winding). Our halfedge builder now handles opposite-winding pairs via
+/// create_halfedges opposed-triangle detection and removal.
 #[test]
-#[ignore = "MeshGL import rejects mesh with opposite-winding face pairs — needs CleanupTopology to handle this"]
 fn test_cpp_opposite_face() {
     let mut gl = MeshGL::default();
     gl.num_prop = 3;

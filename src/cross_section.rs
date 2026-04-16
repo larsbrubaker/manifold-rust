@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use clipper2_rust::{difference_d, inflate_paths_d, intersect_d, minkowski_sum_d, union_d, EndType, FillRule, JoinType, PathD, PathsD, Point};
+use clipper2_rust::{area, difference_d, inflate_paths_d, intersect_d, minkowski_sum_d, simplify_paths, union_d, EndType, FillRule, JoinType, PathD, PathsD, Point};
 use crate::types::OpType;
 
 use crate::linalg::Vec2;
@@ -256,6 +256,38 @@ impl CrossSection {
                 Self::new(component_polys)
             })
             .collect()
+    }
+
+    /// Simplify contours by removing near-collinear vertices.
+    /// Mirrors C++ CrossSection::Simplify(epsilon=1e-6): normalizes via union,
+    /// filters tiny polygons, then applies SimplifyPaths with epsilon.
+    pub fn simplify(&self, epsilon: f64) -> Self {
+        if self.polygons.is_empty() {
+            return Self::default();
+        }
+        // Normalize via union (removes overlaps/inversions).
+        let paths = to_paths(&self.polygons);
+        let unified = union_d(&paths, &PathsD::new(), FillRule::Positive, 6);
+        // Filter out contours smaller than epsilon (area vs bounding box).
+        let filtered: PathsD = unified
+            .into_iter()
+            .filter(|poly| {
+                let a = area(poly).abs();
+                // Compute bounding box max extent
+                let (mut min_x, mut min_y) = (f64::MAX, f64::MAX);
+                let (mut max_x, mut max_y) = (f64::MIN, f64::MIN);
+                for p in poly {
+                    if p.x < min_x { min_x = p.x; }
+                    if p.x > max_x { max_x = p.x; }
+                    if p.y < min_y { min_y = p.y; }
+                    if p.y > max_y { max_y = p.y; }
+                }
+                let max_size = (max_x - min_x).max(max_y - min_y);
+                a > max_size * epsilon
+            })
+            .collect();
+        let simplified = simplify_paths(&filtered, epsilon, true);
+        Self::new(from_paths(&simplified))
     }
 
     pub fn offset(&self, delta: f64) -> Self {

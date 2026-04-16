@@ -22,7 +22,7 @@ use crate::minkowski;
 use crate::quickhull;
 use crate::sdf;
 use crate::subdivision;
-use crate::types::{Error, MeshGL, MeshGL64, OpType, Polygons};
+use crate::types::{Error, MeshGL, MeshGL64, OpType, Polygons, RayHit};
 
 #[derive(Clone)]
 pub struct Manifold {
@@ -178,6 +178,7 @@ impl Manifold {
     /// Port of C++ Manifold::AsOriginal()
     /// Removes all mesh relations and recreates as an original mesh.
     pub fn as_original(&self) -> Self {
+        if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         out.initialize_original();
         out.set_normals_and_coplanar();
@@ -191,6 +192,7 @@ impl Manifold {
 
     /// Port of C++ Manifold::SetTolerance()
     pub fn set_tolerance(&self, tolerance: f64) -> Self {
+        if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         if tolerance >= out.epsilon {
             out.epsilon = tolerance;
@@ -204,6 +206,7 @@ impl Manifold {
 
     /// Port of C++ Manifold::Simplify()
     pub fn simplify(&self, tolerance: f64) -> Self {
+        if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         // C++ uses tolerance_ (not epsilon_) throughout Simplify()
         let old_tolerance = out.tolerance;
@@ -397,6 +400,7 @@ impl Manifold {
     }
 
     pub fn calculate_curvature(&self, gaussian_idx: i32, mean_idx: i32) -> Self {
+        if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         out.calculate_curvature(gaussian_idx, mean_idx);
         Self::from_impl(out)
@@ -410,6 +414,7 @@ impl Manifold {
     where
         F: Fn(&mut [f64], Vec3, &[f64]),
     {
+        if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         let old_num_prop = out.num_prop;
         let old_properties = out.properties.clone();
@@ -448,6 +453,7 @@ impl Manifold {
     /// Fills in vertex properties for normals. Edges sharper than
     /// min_sharp_angle (degrees) get separate normals on each side.
     pub fn calculate_normals(&self, normal_idx: usize, min_sharp_angle: f64) -> Self {
+        if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         out.set_normals(normal_idx as i32, min_sharp_angle);
         Self::from_impl(out)
@@ -495,10 +501,8 @@ impl Manifold {
     }
 
     pub fn smooth_out(&self, min_sharp_angle: f64, min_smoothness: f64) -> Self {
+        if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
-        if self.is_empty() {
-            return Self::from_impl(out);
-        }
         if min_smoothness == 0.0 {
             // C++ path: use normals-based tangents, then restore original properties
             let saved_num_prop = out.num_prop;
@@ -518,6 +522,7 @@ impl Manifold {
     }
 
     pub fn smooth_by_normals(&self, normal_idx: usize) -> Self {
+        if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         out.create_tangents_from_normals(normal_idx);
         Self::from_impl(out)
@@ -684,6 +689,10 @@ impl Manifold {
 
         let num_vert = self.imp.num_vert();
         if num_vert == 0 {
+            // Propagate error status: errored manifolds decompose to [self]
+            if self.imp.status != Error::NoError {
+                return vec![self.clone()];
+            }
             return vec![];
         }
 
@@ -764,6 +773,7 @@ impl Manifold {
 
     /// Compute the convex hull of this manifold's vertices.
     pub fn convex_hull(&self) -> Self {
+        if self.is_empty() { return self.clone(); }
         Self::from_impl(quickhull::convex_hull(&self.imp.vert_pos))
     }
 
@@ -773,8 +783,22 @@ impl Manifold {
         self.imp.min_gap(&other.imp, search_length)
     }
 
+    /// Cast a ray segment from `origin` to `endpoint`, returning all triangle
+    /// intersections sorted by parametric distance along the segment.
+    /// Mirrors C++ `Manifold::RayCast(vec3, vec3)`.
+    pub fn ray_cast(&self, origin: Vec3, endpoint: Vec3) -> Vec<RayHit> {
+        crate::boolean3::ray_cast(&self.imp, origin, endpoint)
+    }
+
     /// Compute the convex hull of multiple manifolds' combined vertices.
+    /// If any manifold is errored, propagates its error status.
     pub fn hull_manifolds(manifolds: &[Self]) -> Self {
+        // Propagate any error from inputs
+        for m in manifolds {
+            if m.imp.status != Error::NoError {
+                return m.clone();
+            }
+        }
         let all_verts: Vec<Vec3> = manifolds
             .iter()
             .flat_map(|m| m.imp.vert_pos.iter().copied())

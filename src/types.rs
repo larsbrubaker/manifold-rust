@@ -732,6 +732,24 @@ pub type MeshGL = MeshGLP<f32, u32>;
 pub type MeshGL64 = MeshGLP<f64, u64>;
 
 // ---------------------------------------------------------------------------
+// RayHit (from include/manifold/common.h)
+// ---------------------------------------------------------------------------
+
+/// Result of a RayCast query: a single triangle-ray intersection.
+#[derive(Clone, Debug, Default)]
+pub struct RayHit {
+    /// Triangle index that was hit.
+    pub face_id: u64,
+    /// Parametric distance along the ray segment in [0, 1].
+    /// 0 = origin, 1 = endpoint.
+    pub distance: f64,
+    /// 3D position of the hit point.
+    pub position: crate::linalg::Vec3,
+    /// Geometric face normal at the hit.
+    pub normal: crate::linalg::Vec3,
+}
+
+// ---------------------------------------------------------------------------
 // Halfedge (from src/shared.h)
 // ---------------------------------------------------------------------------
 

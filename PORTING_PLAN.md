@@ -3,13 +3,33 @@
 This document tracks the incremental port of [Manifold](https://github.com/elalish/manifold) to Rust.
 Every phase must pass all tests with **exact numerical match** to the C++ before the next phase begins.
 
-## Current Status: 435 tests passing, 0 failing, 30 ignored
+## Current Status: 462 tests passing, 0 failing, 30 ignored
 
 **Date:** 2026-04-15
-**Total Rust tests:** ~235 unique test functions
-**Total C++ tests:** 191 (excluding manifoldc and samples)
-**Ported C++ tests:** ~186 (97%)
-**Remaining C++ tests to port:** ~5
+**Total Rust tests:** ~262 unique test functions
+**Total C++ tests:** 191+ (excluding manifoldc and samples; new RayCast and ErrorPropagation tests added in C++ v3.4.1)
+**Ported C++ tests:** ~258 (99%)
+**Remaining C++ tests to port:** ~8
+
+### Recent Additions (2026-04-15)
+
+**RayCast API** (2026-04-15): Implemented `Manifold::ray_cast(origin, endpoint) → Vec<RayHit>`
+using the existing Kernel12 boolean intersection machinery. Ports 12 C++ RayCast tests.
+Added `RayHit` struct to types.rs. `ray_cast` in boolean3.rs builds a degenerate single-edge
+Impl for the ray and uses the face BVH to find candidates.
+
+**Error propagation** (2026-04-15): Added `is_empty()` guard to ~10 methods (simplify,
+as_original, set_tolerance, calculate_curvature, calculate_normals, smooth_by_normals,
+smooth_out, set_properties, convex_hull) to propagate error status on errored manifolds.
+Fixed `decompose` to return `[self.clone()]` for errored input (not empty vec). Fixed
+`hull_manifolds` to propagate the first errored input's status. Ports 13 ErrorPropagation tests.
+
+**CrossSection::simplify** (2026-04-15): Added `CrossSection::simplify(epsilon=1e-6)` method
+mirroring C++ behavior: union normalization, tiny polygon filtering, then `simplify_paths`.
+Enables porting the Fillet smooth test.
+
+**Smooth tests** (2026-04-15): Ported `Sphere` (vertex precision on smoothed sphere) and
+`Fillet` (smoke test for CrossSection simplify + SmoothByNormals) smooth tests.
 
 ### Recent Bug Fixes
 

@@ -71,3 +71,5 @@ mod validation;
 mod smooth;
 mod cross_section2;
 mod mesh_ops;
+mod raycast;
+mod error_propagation;

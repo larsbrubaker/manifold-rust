@@ -40,9 +40,9 @@ export function init(container: HTMLElement): () => void {
   const controlsEl = document.getElementById('controls')!;
   const viewer = new ThreeViewer(viewerEl);
 
-  let shapeA = loadSetting(DEMO, 'shapeA', 1);
-  let shapeB = loadSetting(DEMO, 'shapeB', 0);
-  let op = loadSetting(DEMO, 'op', 2);
+  let shapeA = loadSetting(DEMO, 'shapeA', 3);
+  let shapeB = loadSetting(DEMO, 'shapeB', 3);
+  let op = loadSetting(DEMO, 'op', 0);
   let offsetX = loadSetting(DEMO, 'offsetX', 0.3);
   let offsetY = loadSetting(DEMO, 'offsetY', 0.0);
   let offsetZ = loadSetting(DEMO, 'offsetZ', 0.0);

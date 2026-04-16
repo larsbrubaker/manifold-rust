@@ -296,7 +296,6 @@ fn test_cpp_hull_empty() {
 
 /// C++ TEST(Properties, Tolerance) — refine_to_tolerance, check tri count
 #[test]
-#[ignore = "Tolerance-based simplification not yet matching C++ behavior"]
 fn test_cpp_properties_tolerance() {
     let degrees = 1.0_f64;
     let tol = degrees.to_radians().sin();

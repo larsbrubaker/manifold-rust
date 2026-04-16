@@ -33,9 +33,9 @@ use std::collections::HashSet;
 use crate::collider::Collider;
 use crate::disjoint_sets::DisjointSets;
 use crate::impl_mesh::ManifoldImpl;
-use crate::linalg::{IVec3, Vec2, Vec3, Vec4};
+use crate::linalg::{dot, IVec3, Vec2, Vec3, Vec4};
 use crate::sort::get_face_box_morton;
-use crate::types::{Box as BBox, OpType, TriRef};
+use crate::types::{Box as BBox, Halfedge, OpType, RayHit, TriRef};
 
 // ---------------------------------------------------------------------------
 // Intersections — sparse intersection data between two meshes
@@ -762,6 +762,79 @@ pub fn boolean(mesh_a: &ManifoldImpl, mesh_b: &ManifoldImpl, op: OpType) -> Mani
 
     let result = crate::boolean_result::boolean_result(mesh_a, mesh_b, op, &bool3);
     result
+}
+
+/// Cast a ray segment from `origin` to `endpoint` against `mesh`, returning
+/// all triangle intersections sorted by parametric distance.
+///
+/// Mirrors C++ `Manifold::Impl::RayCast(vec3, vec3)` in boolean3.cpp.
+/// Builds a degenerate single-edge Impl representing the ray, then uses
+/// Kernel12 (edge-face intersection) with the mesh BVH to find hits.
+pub fn ray_cast(mesh: &ManifoldImpl, origin: Vec3, endpoint: Vec3) -> Vec<RayHit> {
+    if mesh.is_empty() {
+        return vec![];
+    }
+    let dir = endpoint - origin;
+    if dot(dir, dir) == 0.0 {
+        return vec![];
+    }
+
+    // Build a minimal single-edge Impl representing the ray segment.
+    // halfedge[0]: forward (0→1), halfedge[1]: backward (1→0).
+    let mut ray_impl = ManifoldImpl::new();
+    ray_impl.vert_pos = vec![origin, endpoint];
+    ray_impl.vert_normal = vec![Vec3::splat(0.0), Vec3::splat(0.0)];
+    ray_impl.halfedge = vec![
+        Halfedge { start_vert: 0, end_vert: 1, paired_halfedge: 1, prop_vert: 0 },
+        Halfedge { start_vert: 1, end_vert: 0, paired_halfedge: 0, prop_vert: 0 },
+    ];
+    ray_impl.face_normal = vec![Vec3::splat(0.0)];
+
+    // Build BVH over mesh triangles.
+    let (face_box, face_morton) = get_face_box_morton(mesh);
+    let collider = Collider::new(face_box, face_morton);
+
+    // Ray AABB for BVH query.
+    let ray_box = BBox::from_points(
+        Vec3::new(origin.x.min(endpoint.x), origin.y.min(endpoint.y), origin.z.min(endpoint.z)),
+        Vec3::new(origin.x.max(endpoint.x), origin.y.max(endpoint.y), origin.z.max(endpoint.z)),
+    );
+
+    // Determine which component axis is largest for stable t computation.
+    let abs_dir = Vec3::new(dir.x.abs(), dir.y.abs(), dir.z.abs());
+    let t_axis = if abs_dir.x > abs_dir.y && abs_dir.x > abs_dir.z {
+        0usize
+    } else if abs_dir.y > abs_dir.z {
+        1
+    } else {
+        2
+    };
+
+    let mut hits: Vec<RayHit> = Vec::new();
+
+    // Query BVH with ray AABB and test each candidate triangle.
+    collider.collisions_with_boxes(std::slice::from_ref(&ray_box), false, |_qi, tri| {
+        // halfedge 0 (forward) vs triangle tri; expand_p=false, forward=true.
+        let (s, v) = kernel12(0, tri, &ray_impl, mesh, &ray_impl, mesh, false, true);
+        if s != 0 && v.x.is_finite() {
+            // Compute parametric t along the ray.
+            let origin_t = [origin.x, origin.y, origin.z][t_axis];
+            let dir_t = [dir.x, dir.y, dir.z][t_axis];
+            let v_t = [v.x, v.y, v.z][t_axis];
+            let t = (v_t - origin_t) / dir_t;
+            if t >= 0.0 && t <= 1.0 {
+                hits.push(RayHit {
+                    face_id: tri as u64,
+                    distance: t,
+                    position: v,
+                    normal: mesh.face_normal[tri],
+                });
+            }
+        }
+    });
+
+    hits.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
+    hits
 }
 
 #[cfg(test)]

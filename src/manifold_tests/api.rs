@@ -349,7 +349,6 @@ fn test_cpp_merge_degenerates() {
 
 /// C++ TEST(Manifold, MergeEmpty) — shape that becomes empty after merge
 #[test]
-#[ignore = "Flat degenerate mesh handling differs from C++ CollapseShortEdges"]
 fn test_cpp_merge_empty() {
     let mut shape = MeshGL::default();
     shape.num_prop = 7;

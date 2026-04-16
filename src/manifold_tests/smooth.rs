@@ -1,4 +1,5 @@
 use super::*;
+use crate::cross_section::CrossSection;
 use crate::linalg::{dot, length, normalize};
 
 /// C++ TEST(Smooth, Normals) — SmoothOut and SmoothByNormals produce same result
@@ -408,6 +409,53 @@ fn test_cpp_mesh_relation_refine_precision() {
         "MeshRelationRefinePrecision: expected 5368 tris, got {}", refined.num_tri());
     assert_eq!(refined.num_prop(), 3,
         "MeshRelationRefinePrecision: expected num_prop=3, got {}", refined.num_prop());
+}
+
+/// C++ TEST(Smooth, Sphere) — smoothed sphere vertices stay near radius 1
+#[test]
+fn test_cpp_smooth_sphere() {
+    let ns = [4i32, 8, 16, 32, 64];
+    // Tests vertex precision of interpolation. Refine(6) makes a center point,
+    // which is the worst case for deviation from the unit sphere.
+    let precisions = [0.04_f64, 0.003, 0.003, 0.0005, 0.00006];
+    for (i, &n) in ns.iter().enumerate() {
+        let sphere = Manifold::sphere(1.0, n);
+        let smoothed = Manifold::smooth(&sphere.get_mesh_gl(0), &[]).refine(6);
+        let mesh = smoothed.get_mesh_gl64(0);
+        let num_vert = mesh.num_vert();
+        let mut max_r2 = 0.0_f64;
+        let mut min_r2 = 2.0_f64;
+        for v in 0..num_vert {
+            let p = mesh.get_vert_pos(v);
+            let r2 = p[0] * p[0] + p[1] * p[1] + p[2] * p[2];
+            if r2 > max_r2 { max_r2 = r2; }
+            if r2 < min_r2 { min_r2 = r2; }
+        }
+        let prec = precisions[i];
+        assert!((min_r2.sqrt() - 1.0).abs() < prec,
+            "Sphere n={n}: min_r={:.6} expected ≈1.0 within {prec}", min_r2.sqrt());
+        assert!((max_r2.sqrt() - 1.0).abs() < prec,
+            "Sphere n={n}: max_r={:.6} expected ≈1.0 within {prec}", max_r2.sqrt());
+    }
+}
+
+/// C++ TEST(Smooth, Fillet) — smoke test: Simplify+SmoothByNormals must not crash
+#[test]
+fn test_cpp_smooth_fillet() {
+    let depth = 3.0_f64;
+    let cylinder = Manifold::cylinder(40.0, 10.0, 10.0, 6).calculate_normals(0, 80.0);
+    let slice = cylinder.slice(0.0);
+    let section = CrossSection::new(slice.to_polygons()).simplify(1e-6);
+    let chamfer = Manifold::extrude(
+        &section.to_polygons(), depth, 0, 0.0, crate::linalg::Vec2::new(1.2, 1.3),
+    ).mirror(Vec3::new(0.0, 0.0, 1.0));
+    let base = Manifold::cube(Vec3::splat(40.0), true)
+        .translate(Vec3::new(0.0, 0.0, -20.0 - depth + 0.001))
+        .calculate_normals(0, 60.0);
+    let chamfered = (cylinder + chamfer).difference(&base);
+    let fillet = chamfered.simplify(0.01).smooth_by_normals(0).refine(10);
+    assert_eq!(fillet.status(), crate::types::Error::NoError,
+        "Fillet status={:?}", fillet.status());
 }
 
 /// C++ WithPositionColors() — set properties to normalized position
