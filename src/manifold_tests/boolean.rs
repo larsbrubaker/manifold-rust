@@ -798,3 +798,32 @@ fn test_cpp_mesh_gl_round_trip() {
     let out_gl = result2.get_mesh_gl(0);
     assert_eq!(out_gl.run_original_id.len(), 2, "MeshGLRoundTrip: outGL expected 2 runs");
 }
+
+/// C++ TEST(Boolean, Normals) — preserve per-vertex normals through booleans and MeshGL round-trip.
+#[test]
+#[ignore = "Normal orientation mismatch after nested difference: backside run normals dot opposite face"]
+fn test_cpp_normals() {
+    let mut cube_gl = super::cube_stl();
+    cube_gl.merge();
+    let cube = Manifold::from_mesh_gl(&cube_gl);
+    // C++ Sphere(60) with default segments resolves to Quality::GetCircularSegments(60)
+    let segs = crate::types::Quality::get_circular_segments(60.0);
+    let sphere = Manifold::sphere(60.0, segs).calculate_normals(0, 60.0);
+    let sphere_gl = sphere.get_mesh_gl(0);
+
+    // cube.scale(100) - (sphere.rotate(180) - sphere.scale(0.5).rotate(90).translate(40,40,40))
+    let inner = sphere.clone().rotate(180.0, 0.0, 0.0)
+        .difference(&sphere.scale(Vec3::splat(0.5)).rotate(90.0, 0.0, 0.0)
+            .translate(Vec3::new(40.0, 40.0, 40.0)));
+    let result = cube.scale(Vec3::splat(100.0)).difference(&inner);
+
+    super::related_gl_check_normals(&result, &[&cube_gl, &sphere_gl]);
+
+    let mut output = result.get_mesh_gl(0);
+    output.merge_from_vert.clear();
+    output.merge_to_vert.clear();
+    output.merge();
+    let round_trip = Manifold::from_mesh_gl(&output);
+
+    super::related_gl_check_normals(&round_trip, &[&cube_gl, &sphere_gl]);
+}

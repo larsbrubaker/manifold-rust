@@ -19,7 +19,7 @@ fn square_hole(x_offset: f64) -> Polygons {
 }
 
 /// Port of C++ Gyroid() — gyroid surface via SDF.
-fn gyroid() -> Manifold {
+pub(super) fn gyroid() -> Manifold {
     use std::f64::consts::PI;
     let two_pi = 2.0 * PI;
     Manifold::level_set(
@@ -39,7 +39,7 @@ fn gyroid() -> Manifold {
 }
 
 /// Port of C++ WithPositionColors(m) — adds normalized position as 3 extra properties.
-fn with_position_colors(m: &Manifold) -> Manifold {
+pub(super) fn with_position_colors(m: &Manifold) -> Manifold {
     let bb = m.bounding_box();
     let size = bb.size();
     m.set_properties(3, move |props, pos, _old| {

@@ -764,3 +764,45 @@ fn test_cpp_manifold_meshgl_round_trip2() {
 
     super::related_gl(&cylinder2, &[&in_gl]);
 }
+
+/// C++ TEST(Manifold, MeshRelationRefine) — refine-to-length preserves mesh relation.
+#[test]
+fn test_cpp_mesh_relation_refine() {
+    let csaszar_src = Manifold::from_mesh_gl(&super::smooth::csaszar_gl());
+    let csaszar = super::with_position_colors(&csaszar_src).as_original();
+    let in_gl = csaszar.get_mesh_gl(0);
+
+    super::related_gl(&csaszar, &[&in_gl]);
+
+    let refined = csaszar.refine_to_length(1.0);
+    assert!(!refined.is_empty(), "MeshRelationRefine: refined not empty");
+    assert!(refined.matches_tri_normals(), "MeshRelationRefine: matches_tri_normals");
+    let parts = refined.decompose();
+    assert_eq!(parts.len(), 1, "MeshRelationRefine: 1 component");
+    assert_eq!(parts[0].num_vert(), 9019, "MeshRelationRefine: num_vert");
+    assert_eq!(parts[0].num_tri(), 18038, "MeshRelationRefine: num_tri");
+    assert_eq!(parts[0].num_prop(), 3, "MeshRelationRefine: num_prop");
+
+    super::related_gl(&refined, &[&in_gl]);
+}
+
+/// C++ TEST(Manifold, MeshRelationRefinePrecision) — smooth + refine-to-tolerance preserves
+/// run_original_id.
+#[test]
+fn test_cpp_mesh_relation_refine_precision() {
+    let in_gl = super::with_position_colors(&Manifold::from_mesh_gl(&super::smooth::csaszar_gl()))
+        .get_mesh_gl(0);
+    let id = in_gl.run_original_id[0];
+    let csaszar = Manifold::smooth(&in_gl, &[]);
+    let refined = csaszar.refine_to_tolerance(0.05);
+    assert!(!refined.is_empty(), "MeshRelationRefinePrecision: not empty");
+    let parts = refined.decompose();
+    assert_eq!(parts.len(), 1, "MeshRelationRefinePrecision: 1 component");
+    assert_eq!(parts[0].num_vert(), 2684, "MeshRelationRefinePrecision: num_vert");
+    assert_eq!(parts[0].num_tri(), 5368, "MeshRelationRefinePrecision: num_tri");
+    assert_eq!(parts[0].num_prop(), 3, "MeshRelationRefinePrecision: num_prop");
+
+    let run_ids = refined.get_mesh_gl(0).run_original_id;
+    assert_eq!(run_ids.len(), 1, "MeshRelationRefinePrecision: 1 run");
+    assert_eq!(run_ids[0], id, "MeshRelationRefinePrecision: original_id preserved");
+}

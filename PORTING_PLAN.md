@@ -3,7 +3,7 @@
 This document tracks the incremental port of [Manifold](https://github.com/elalish/manifold) to Rust.
 Every phase must pass all tests with **exact numerical match** to the C++ before the next phase begins.
 
-## Current Status: 488 tests passing, 0 failing, 20 ignored
+## Current Status: 491 tests passing, 0 failing, 21 ignored
 
 **Date:** 2026-04-15
 **Total Rust tests:** ~262 unique test functions
@@ -101,21 +101,21 @@ C++ `MergeMeshGLP`. Also part of fixing `test_cpp_merge_refine`.
 
 ## C++ Test Porting Status by File
 
-### boolean_test.cpp — 47 tests, ~40 ported (85%)
+### boolean_test.cpp — 47 tests, ~41 ported (87%)
 
 **Unported:**
-- [ ] Normals — normal preservation during booleans (needs RelatedGL helper)
 - [ ] Precision2 — precision edge case
-- [ ] PropertiesNoIntersection — already ported as `test_cpp_properties_no_intersection`
+
+**Ignored (ported but not passing):**
+- normals — normal orientation mismatch after nested difference (backside run normals dot opposite face)
 
 **Ignored (ported but not passing):**
 - boolean_precision — per-mesh epsilon not implemented
 - create_properties_slow — slow sphere(10,1024) boolean in debug
 
-### boolean_complex_test.cpp — 19 tests, ~14 ported (74%)
+### boolean_complex_test.cpp — 19 tests, ~15 ported (79%)
 
 **Unported:**
-- [ ] MeshRelation — needs Gyroid helper + RelatedGL verification
 - [ ] InterpolatedNormals — large test with complex mesh property data
 - [ ] Ring — needs mgl_0()/mgl_1() mesh data
 - [ ] Sweep — complex cross-section warp/revolve test

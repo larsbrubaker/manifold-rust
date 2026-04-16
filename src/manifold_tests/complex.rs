@@ -440,3 +440,26 @@ fn test_cpp_complex_sphere_boolean() {
     assert!(!refined.is_empty(), "Refined should not be empty");
     assert_eq!(refined.num_prop(), 3, "Refined should have 3 props");
 }
+
+/// C++ TEST(BooleanComplex, MeshRelation) — gyroid + translated gyroid, refine, RelatedGL.
+#[test]
+fn test_cpp_complex_mesh_relation() {
+    let gyroid_src = super::with_position_colors(&super::gyroid());
+    let gyroid_gl = gyroid_src.get_mesh_gl(0);
+    let gyroid = gyroid_src.simplify(0.0);
+    let gyroid2 = gyroid.translate(Vec3::splat(2.0));
+
+    assert!(!gyroid.is_empty(), "MeshRelation: gyroid not empty");
+    assert!(gyroid.matches_tri_normals(), "MeshRelation: matches_tri_normals");
+    assert!(gyroid.num_degenerate_tris() <= 0, "MeshRelation: num_degenerate_tris <= 0");
+
+    let result = gyroid.union(&gyroid2).refine_to_length(0.1);
+    assert!(result.matches_tri_normals(), "MeshRelation: result matches_tri_normals");
+    assert!(result.num_degenerate_tris() <= 12, "MeshRelation: num_degenerate_tris <= 12");
+    assert_eq!(result.decompose().len(), 1, "MeshRelation: 1 component");
+    assert!((result.volume() - 226.0).abs() < 1.0, "MeshRelation: vol={}", result.volume());
+    assert!((result.surface_area() - 387.0).abs() < 1.0,
+        "MeshRelation: sa={}", result.surface_area());
+
+    super::related_gl(&result, &[&gyroid_gl]);
+}

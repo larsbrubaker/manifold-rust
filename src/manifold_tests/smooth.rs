@@ -306,7 +306,7 @@ fn circular_tangent(tangent: Vec3, edge_vec: Vec3) -> [f64; 4] {
 }
 
 /// C++ Csaszar() — Csaszar polyhedron MeshGL
-fn csaszar_gl() -> MeshGL {
+pub(super) fn csaszar_gl() -> MeshGL {
     let mut gl = MeshGL::default();
     gl.num_prop = 3;
     gl.vert_properties = vec![
