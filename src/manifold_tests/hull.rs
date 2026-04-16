@@ -161,6 +161,57 @@ fn test_cpp_hull_empty_hull() {
     assert!(hull.is_empty(), "EmptyHull should be empty");
 }
 
+/// C++ MengerSponge(n) — recursive cubic fractal via CSG subtraction
+fn menger_sponge(n: i32) -> Manifold {
+    let result = Manifold::cube(Vec3::splat(1.0), true);
+    let mut holes: Vec<Manifold> = Vec::new();
+    fractal(&mut holes, &result, 1.0, Vec2::new(0.0, 0.0), 1, n);
+    let hole = Manifold::batch_boolean(&holes, OpType::Add);
+    let result = result.difference(&hole);
+    let hole = hole.rotate(90.0, 0.0, 0.0);
+    let result = result.difference(&hole);
+    let hole = hole.rotate(0.0, 0.0, 90.0);
+    result.difference(&hole)
+}
+
+fn fractal(holes: &mut Vec<Manifold>, hole: &Manifold, w: f64, position: Vec2, depth: i32, max_depth: i32) {
+    let w = w / 3.0;
+    holes.push(hole.scale(Vec3::new(w, w, 1.0)).translate(Vec3::new(position.x, position.y, 0.0)));
+    if depth == max_depth { return; }
+    let offsets = [
+        Vec2::new(-w, -w), Vec2::new(-w, 0.0), Vec2::new(-w, w), Vec2::new(0.0, w),
+        Vec2::new(w, w),   Vec2::new(w, 0.0),  Vec2::new(w, -w), Vec2::new(0.0, -w),
+    ];
+    for off in &offsets {
+        fractal(holes, hole, w, position + *off, depth + 1, max_depth);
+    }
+}
+
+/// Quick version: depth-2 sponge hull is still a cube (same expected results)
+#[test]
+fn test_cpp_hull_menger_sponge_depth2() {
+    let sponge = menger_sponge(2).rotate(10.0, 20.0, 30.0);
+    let hull = sponge.convex_hull();
+    assert_eq!(hull.num_tri(), 12, "MengerSponge(2) hull tris={}", hull.num_tri());
+    assert!((hull.surface_area() - 6.0).abs() < 1e-4,
+        "MengerSponge(2) hull sa={}", hull.surface_area());
+    assert!((hull.volume() - 1.0).abs() < 1e-4,
+        "MengerSponge(2) hull vol={}", hull.volume());
+}
+
+/// C++ TEST(Hull, MengerSponge) — hull of a Menger sponge is a cube
+#[test]
+#[ignore = "Slow: depth-4 CSG generates ~400k tris in debug mode"]
+fn test_cpp_hull_menger_sponge() {
+    let sponge = menger_sponge(4).rotate(10.0, 20.0, 30.0);
+    let hull = sponge.convex_hull();
+    assert_eq!(hull.num_tri(), 12, "MengerSponge hull tris={}", hull.num_tri());
+    assert!((hull.surface_area() - 6.0).abs() < 1e-4,
+        "MengerSponge hull sa={}", hull.surface_area());
+    assert!((hull.volume() - 1.0).abs() < 1e-4,
+        "MengerSponge hull vol={}", hull.volume());
+}
+
 /// C++ TEST(Hull, Sphere) — hull of a sphere is the sphere itself
 #[test]
 #[ignore = "Slow: 1500-segment sphere hull"]

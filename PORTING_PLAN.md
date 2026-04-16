@@ -3,13 +3,13 @@
 This document tracks the incremental port of [Manifold](https://github.com/elalish/manifold) to Rust.
 Every phase must pass all tests with **exact numerical match** to the C++ before the next phase begins.
 
-## Current Status: 420 tests passing, 0 failing, 30 ignored
+## Current Status: 428 tests passing, 0 failing, 31 ignored
 
-**Date:** 2026-04-13
-**Total Rust tests:** ~220 unique test functions
+**Date:** 2026-04-15
+**Total Rust tests:** ~230 unique test functions
 **Total C++ tests:** 191 (excluding manifoldc and samples)
-**Ported C++ tests:** ~175 (92%)
-**Remaining C++ tests to port:** ~16
+**Ported C++ tests:** ~183 (96%)
+**Remaining C++ tests to port:** ~8
 
 ## Guiding Principles
 
@@ -112,7 +112,7 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 - tolerance — simplification not matching C++
 - tolerance_sphere — set_tolerance not matching C++
 
-### smooth_test.cpp — 15 tests, 13 ported (87%)
+### smooth_test.cpp — 15 tests, 15 ported (100%) ✅
 
 **Passing:**
 - FacetedNormals ✅
@@ -125,18 +125,19 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 - RefineQuads ✅ — cylinder with position colors
 - Precision ✅ — tolerance-based refinement
 - SDF ✅ — gyroid SDF
+- ToLength ✅ — CrossSection extrude + smooth + curvature check
+- Torus ✅ — manual CircularTangent toroidal smoothing
 
 **Ignored:**
 - SineSurface — vol converges to 8.076 vs 8.09 expected; C++ simplify collapses to different topology
 
-**Unported:**
-- [ ] ToLength — needs CrossSection + complex extrude/scale pattern
-- [ ] Torus — needs CircularTangent helper + toroidal tangent computation
+**Bug fixed:** `set_normals` used wrong stride (new `num_prop`) to index old compact properties.
+Fixed to use `old_num_prop` stride for source, `num_prop` stride for destination.
 
-### hull_test.cpp — 13 tests, ~12 ported (92%)
+### hull_test.cpp — 13 tests, ~13 ported (100%) ✅
 
-**Unported:**
-- [ ] MengerSponge — needs recursive Menger sponge helper
+**Ported:**
+- MengerSponge ✅ — depth-2 version passes; depth-4 ignored (slow in debug)
 
 **Ignored (ported but not passing):**
 - hull_tictac — wrong vertex count
@@ -152,14 +153,14 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 - sdf_blobs — slow (263s in debug, fine edge_length=0.05)
 - sdf_sphere_shell — slow (fine edge_length=0.01 for thin shell)
 
-### cross_section_test.cpp — 15 tests, ~10 ported (67%)
+### cross_section_test.cpp — 15 tests, ~15 ported (100%) ✅
 
-**Unported:**
-- [ ] BevelOffset — Clipper2 offset with bevel join
-- [ ] FillRule — fill rule handling
-- [ ] HullError — hull edge case
-- [ ] BatchBoolean — cross-section batch operations
-- [ ] Warp — cross-section warp
+**Newly ported:**
+- BevelOffset ✅ — Clipper2 JoinType::Bevel offset
+- FillRule ✅ — fill rule (Positive/Negative/EvenOdd/NonZero) area differences
+- HullError ✅ — rounded rectangle via 2D convex hull of circles
+- BatchBoolean ✅ — CrossSection batch union/subtract/intersect
+- Warp ✅ — vertex warp function on cross sections
 
 ---
 
@@ -237,7 +238,7 @@ Several tests show minor vertex/triangle count differences (20 vs 18, 21 vs 20, 
 - Epsilon-based simplification during `SimplifyTopology`
 - Per-mesh epsilon tracking (C++ `Impl::epsilon_` is per-mesh, Rust may not propagate correctly)
 
-### 4. Unported Tests (~16 remaining)
+### 4. Unported Tests (~8 remaining)
 | File | Test | Blocker |
 |------|------|---------|
 | boolean_test.cpp | Normals | RelatedGL helper |
@@ -252,10 +253,6 @@ Several tests show minor vertex/triangle count differences (20 vs 18, 21 vs 20, 
 | manifold_test.cpp | MeshRelationRefinePrecision | RefineToTolerance + RelatedGL |
 | manifold_test.cpp | MergeRefine | Complex merge + tolerance |
 | properties_test.cpp | MingapStretchyBracelet | StretchyBracelet helper |
-| smooth_test.cpp | ToLength | Complex extrude + scale pattern |
-| smooth_test.cpp | Torus | CircularTangent helper |
-| hull_test.cpp | MengerSponge | Recursive Menger sponge helper |
-| cross_section_test.cpp | BevelOffset, FillRule, etc. | Clipper2 features |
 
 ---
 

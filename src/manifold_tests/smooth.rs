@@ -1,4 +1,5 @@
 use super::*;
+use crate::linalg::{dot, length, normalize};
 
 /// C++ TEST(Smooth, Normals) — SmoothOut and SmoothByNormals produce same result
 #[test]
@@ -119,6 +120,112 @@ fn test_cpp_smooth_precision() {
     assert_eq!(smoothed.num_tri(), 7984, "Precision tris={}", smoothed.num_tri());
 }
 
+/// C++ TEST(Smooth, ToLength) — smooth cone with RefineToLength and curvature check
+#[test]
+fn test_cpp_smooth_to_length() {
+    let circle = CrossSection::circle(10.0, 10).translate(Vec2::new(10.0, 0.0));
+    let polygons = circle.to_polygons();
+    let cone = Manifold::extrude(&polygons, 2.0, 0, 0.0, Vec2::new(0.0, 0.0));
+    let cone = cone.union(&cone.scale(Vec3::new(1.0, 1.0, -5.0)));
+    let smooth = cone.as_original().simplify(0.0).smooth_out(180.0, 0.0).refine_to_length(0.1);
+
+    let (num_tri, num_vert) = (smooth.num_tri(), smooth.num_vert());
+    assert_eq!(num_tri, 170496, "ToLength tris={}", num_tri);
+    assert_eq!(num_vert, 85250, "ToLength verts={}", num_vert);
+    assert!((smooth.volume() - 4604.0).abs() < 1.0, "ToLength vol={}", smooth.volume());
+    assert!((smooth.surface_area() - 1356.0).abs() < 1.0, "ToLength sa={}", smooth.surface_area());
+
+    let out = smooth.calculate_curvature(-1, 0).get_mesh_gl(0);
+    let num_prop = out.num_prop as usize;
+    let mut max_mean_curvature: f32 = 0.0;
+    let mut i = 3;
+    while i < out.vert_properties.len() {
+        max_mean_curvature = max_mean_curvature.max(out.vert_properties[i].abs());
+        i += num_prop;
+    }
+    assert!((max_mean_curvature - 1.67).abs() < 0.01,
+        "ToLength maxMeanCurvature={}", max_mean_curvature);
+}
+
+/// C++ TEST(Smooth, Torus) — manually-smoothed torus with CircularTangent
+#[test]
+fn test_cpp_smooth_torus() {
+    let circle = CrossSection::circle(1.0, 8).translate(Vec2::new(2.0, 0.0));
+    let polygons = circle.to_polygons();
+    let mut torus_mesh = Manifold::revolve(&polygons, 6, 360.0).get_mesh_gl64(0);
+    let num_tri = torus_mesh.num_tri();
+
+    // Set toroidal halfedge tangents (CircularTangent for each halfedge)
+    torus_mesh.halfedge_tangent.resize(4 * 3 * num_tri, 0.0);
+    for tri in 0..num_tri {
+        let tri_verts = torus_mesh.get_tri_verts(tri);
+        for i in 0..3usize {
+            let vi = tri_verts[i] as usize;
+            let vi1 = tri_verts[(i + 1) % 3] as usize;
+            let vp = torus_mesh.get_vert_pos(vi);
+            let vp1 = torus_mesh.get_vert_pos(vi1);
+            let v = Vec3::new(vp[0], vp[1], vp[2]);
+            let v1 = Vec3::new(vp1[0], vp1[1], vp1[2]);
+            let edge = v1 - v;
+            let tangent = if edge.z == 0.0 {
+                // Horizontal edge — tangent is circumferential
+                let mut tan = Vec3::new(v.y, -v.x, 0.0);
+                if dot(tan, edge) < 0.0 { tan = -tan; }
+                circular_tangent(tan, edge)
+            } else {
+                let det = v.x * edge.y - v.y * edge.x; // 2D determinant of xy parts
+                if det.abs() < 1e-5 {
+                    // Vertical edge — tangent is poloidal
+                    let theta = v.z.asin();
+                    let xy = Vec2::new(v.x, v.y);
+                    let r = (xy.x * xy.x + xy.y * xy.y).sqrt();
+                    let scale = v.z * if r > 2.0 { -1.0 } else { 1.0 };
+                    let xy_tan = if r > 0.0 { Vec2::new(xy.x / r * scale, xy.y / r * scale) } else { Vec2::new(0.0, 0.0) };
+                    let mut tan = Vec3::new(xy_tan.x, xy_tan.y, theta.cos());
+                    if dot(tan, edge) < 0.0 { tan = -tan; }
+                    circular_tangent(tan, edge)
+                } else {
+                    // Diagonal edge — no smooth tangent
+                    [0.0, 0.0, 0.0, -1.0]
+                }
+            };
+            let e = 3 * tri + i;
+            for j in 0..4 {
+                torus_mesh.halfedge_tangent[4 * e + j] = tangent[j];
+            }
+        }
+    }
+
+    let smooth = Manifold::from_mesh_gl64(&torus_mesh)
+        .refine_to_length(0.1)
+        .calculate_curvature(-1, 0)
+        .calculate_normals(1, 60.0);
+    let out = smooth.get_mesh_gl(0);
+    let num_prop = out.num_prop as usize;
+
+    // Each vertex has 7 properties: xyz (pos), mean-curvature, normal (3)
+    let mut max_mean_curvature: f32 = 0.0;
+    let mut i = 0;
+    while i + num_prop <= out.vert_properties.len() {
+        let x = out.vert_properties[i] as f64;
+        let y = out.vert_properties[i + 1] as f64;
+        let z = out.vert_properties[i + 2] as f64;
+        let v = Vec3::new(x, y, z);
+        // Project to nearest torus centerline (circle of radius 2 in xy-plane)
+        let mut p = Vec3::new(x, y, 0.0);
+        let plen = (p.x * p.x + p.y * p.y).sqrt();
+        if plen > 1e-10 {
+            p = p * (2.0 / plen);
+        }
+        let r = length(v - p);
+        assert!((r - 1.0).abs() < 0.006, "Torus vertex r={} (expected 1.0)", r);
+        max_mean_curvature = max_mean_curvature.max(out.vert_properties[i + 3].abs());
+        i += num_prop;
+    }
+    assert!((max_mean_curvature - 1.63).abs() < 0.01,
+        "Torus maxMeanCurvature={}", max_mean_curvature);
+}
+
 /// C++ TEST(Smooth, SineSurface) — sine surface with smooth normals
 #[test]
 #[ignore = "vol converges to 8.076 (simplified) vs 8.09 expected; C++ simplify collapses to different topology"]
@@ -172,6 +279,31 @@ fn test_cpp_smooth_sdf() {
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// C++ CircularTangent() — quadratic bezier tangent for circular interpolation
+fn circular_tangent(tangent: Vec3, edge_vec: Vec3) -> [f64; 4] {
+    let dir = {
+        let len = length(tangent);
+        if len > 0.0 { tangent * (1.0 / len) } else { tangent }
+    };
+    let edge_len = length(edge_vec);
+    let mut weight = dot(dir, edge_vec * (1.0 / edge_len)).abs();
+    if weight == 0.0 { weight = 1.0; }
+    // Quadratic weighted bezier for circular interpolation
+    let bz2_xyz = dir * (edge_len / (2.0 * weight));
+    let bz2 = [bz2_xyz.x * weight, bz2_xyz.y * weight, bz2_xyz.z * weight, weight];
+    // Equivalent cubic weighted bezier: lerp(identity, bz2, 2/3)
+    let t = 2.0 / 3.0;
+    let bz3 = [
+        (1.0 - t) * 0.0 + t * bz2[0],
+        (1.0 - t) * 0.0 + t * bz2[1],
+        (1.0 - t) * 0.0 + t * bz2[2],
+        (1.0 - t) * 1.0 + t * bz2[3],
+    ];
+    // Convert from homogeneous to geometric form
+    let w = bz3[3];
+    [bz3[0] / w, bz3[1] / w, bz3[2] / w, w]
+}
 
 /// C++ Csaszar() — Csaszar polyhedron MeshGL
 fn csaszar_gl() -> MeshGL {

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 use clipper2_rust::{difference_d, inflate_paths_d, intersect_d, minkowski_sum_d, union_d, EndType, FillRule, JoinType, PathD, PathsD, Point};
+use crate::types::OpType;
 
 use crate::linalg::Vec2;
 use crate::math;
@@ -273,6 +274,7 @@ impl CrossSection {
         let jt = match join_type {
             0 => JoinType::Square,
             2 => JoinType::Miter,
+            3 => JoinType::Bevel,
             _ => JoinType::Round,
         };
         Self::new(from_paths(&inflate_paths_d(
@@ -294,6 +296,109 @@ impl CrossSection {
             }
         }
         Self::new(from_paths(&result))
+    }
+
+    /// Create CrossSection from a simple polygon with a specified fill rule.
+    /// fill_rule: 0=EvenOdd, 1=NonZero, 2=Positive, 3=Negative
+    pub fn from_polygon_with_fill_rule(polygon: Vec<Vec2>, fill_rule: i32) -> Self {
+        let fr = match fill_rule {
+            0 => FillRule::EvenOdd,
+            1 => FillRule::NonZero,
+            2 => FillRule::Positive,
+            3 => FillRule::Negative,
+            _ => FillRule::Positive,
+        };
+        let path: PathD = polygon.iter().map(|v| Point::new(v.x, v.y)).collect();
+        let paths = PathsD::from(vec![path]);
+        let empty = PathsD::new();
+        let result = union_d(&paths, &empty, fr, 6);
+        Self { polygons: from_paths(&result) }
+    }
+
+    /// Apply a function to every vertex in-place.
+    pub fn warp<F: FnMut(&mut Vec2)>(&self, mut f: F) -> Self {
+        let polys = self.polygons.iter().map(|poly| {
+            poly.iter().map(|&v| { let mut v2 = v; f(&mut v2); v2 }).collect()
+        }).collect();
+        Self { polygons: polys }
+    }
+
+    /// Batch boolean operation on a slice of CrossSections.
+    /// OpType::Add = union, Subtract = difference, Intersect = intersection.
+    pub fn batch_boolean(sections: &[Self], op: OpType) -> Self {
+        if sections.is_empty() {
+            return Self::default();
+        }
+        match op {
+            OpType::Add => {
+                let mut paths = PathsD::new();
+                for s in sections {
+                    for p in to_paths(&s.polygons) {
+                        paths.push(p);
+                    }
+                }
+                let empty = PathsD::new();
+                Self { polygons: from_paths(&union_d(&paths, &empty, FillRule::NonZero, 6)) }
+            }
+            OpType::Subtract => {
+                let mut result = sections[0].clone();
+                for s in &sections[1..] {
+                    result = result.difference(s);
+                }
+                result
+            }
+            OpType::Intersect => {
+                let mut result = sections[0].clone();
+                for s in &sections[1..] {
+                    result = result.intersection(s);
+                }
+                result
+            }
+        }
+    }
+
+    /// Compute convex hull of all vertices in a slice of CrossSections.
+    pub fn hull_cross_sections(sections: &[Self]) -> Self {
+        let points: Vec<Vec2> = sections.iter()
+            .flat_map(|s| s.polygons.iter().flat_map(|p| p.iter().cloned()))
+            .collect();
+        Self::hull_points(&points)
+    }
+
+    /// Compute convex hull of a set of 2D points (Andrew's monotone chain).
+    pub fn hull_points(points: &[Vec2]) -> Self {
+        if points.len() < 3 {
+            return Self::default();
+        }
+        let mut pts: Vec<Vec2> = points.to_vec();
+        pts.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap().then(a.y.partial_cmp(&b.y).unwrap()));
+        pts.dedup_by(|a, b| (a.x - b.x).abs() < 1e-10 && (a.y - b.y).abs() < 1e-10);
+
+        let cross = |o: Vec2, a: Vec2, b: Vec2| -> f64 {
+            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+        };
+
+        let n = pts.len();
+        if n < 3 { return Self::default(); }
+        let mut hull: Vec<Vec2> = Vec::with_capacity(2 * n);
+        // Lower hull
+        for &p in &pts {
+            while hull.len() >= 2 && cross(hull[hull.len()-2], hull[hull.len()-1], p) <= 0.0 {
+                hull.pop();
+            }
+            hull.push(p);
+        }
+        // Upper hull
+        let lower_len = hull.len();
+        for &p in pts.iter().rev() {
+            while hull.len() > lower_len && cross(hull[hull.len()-2], hull[hull.len()-1], p) <= 0.0 {
+                hull.pop();
+            }
+            hull.push(p);
+        }
+        hull.pop(); // last point == first
+        if hull.len() < 3 { return Self::default(); }
+        Self::new(vec![hull])
     }
 }
 

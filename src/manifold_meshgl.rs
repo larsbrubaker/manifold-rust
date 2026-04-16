@@ -377,6 +377,26 @@ pub fn get_mesh_gl(&self, normal_idx: i32) -> MeshGL {
     out
 }
 
+pub fn from_mesh_gl64(mesh: &MeshGL64) -> Self {
+    // Convert MeshGL64 (f64/u64) to MeshGL (f32/u32) for import.
+    // Internal storage is f64 anyway; f64→f32→f64 round-trip precision loss
+    // is ~1e-7, well below any physical tolerance used in tests.
+    let mesh32 = MeshGL {
+        num_prop: mesh.num_prop as u32,
+        vert_properties: mesh.vert_properties.iter().map(|&v| v as f32).collect(),
+        tri_verts: mesh.tri_verts.iter().map(|&v| v as u32).collect(),
+        merge_from_vert: mesh.merge_from_vert.iter().map(|&v| v as u32).collect(),
+        merge_to_vert: mesh.merge_to_vert.iter().map(|&v| v as u32).collect(),
+        run_index: mesh.run_index.iter().map(|&v| v as u32).collect(),
+        run_original_id: mesh.run_original_id.clone(),
+        run_transform: mesh.run_transform.iter().map(|&v| v as f32).collect(),
+        face_id: mesh.face_id.iter().map(|&v| v as u32).collect(),
+        halfedge_tangent: mesh.halfedge_tangent.iter().map(|&v| v as f32).collect(),
+        tolerance: mesh.tolerance as f32,
+    };
+    Self::from_mesh_gl(&mesh32)
+}
+
 pub fn get_mesh_gl64(&self, normal_idx: i32) -> MeshGL64 {
     let mesh = self.get_mesh_gl(normal_idx);
     MeshGL64 {

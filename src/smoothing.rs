@@ -265,32 +265,13 @@ impl ManifoldImpl {
             }
         }
 
-        // Expand properties to accommodate normals
+        // Expand properties to accommodate normals.
+        // orig_props: old data at old stride (old_num_prop per vert)
+        // new_properties: output buffer at new stride (num_prop per vert)
         let num_prop = old_num_prop.max(normal_idx + 3);
         let num_prop_vert = self.num_prop_vert();
-        let mut old_properties = vec![0.0f64; num_prop * num_prop_vert];
-        // Copy old properties into wider array
-        for v in 0..num_prop_vert {
-            for p in 0..old_num_prop.min(num_prop) {
-                if v * old_num_prop + p < self.properties.len() {
-                    old_properties[v * num_prop + p] = self.properties[v * old_num_prop + p];
-                }
-            }
-        }
-        // Swap: old_properties now has the expanded copy, self.properties will be rebuilt
-        std::mem::swap(&mut self.properties, &mut old_properties);
-        // Now old_properties has the ORIGINAL properties data in expanded form
-        // and self.properties has the expanded layout too
-        // But actually we need self.properties to be the output. Let me redo this properly.
-        // old_properties = original expanded data
-        // self.properties = will be built up
-
-        // Actually match C++ more closely:
-        // old_properties gets original data (in new wider format), self.properties starts fresh
+        let orig_props = std::mem::take(&mut self.properties); // compact original
         let mut new_properties = vec![0.0f64; num_prop * num_prop_vert];
-        // Copy old props into old_properties for reading
-        let orig_props = old_properties; // this already has the expanded copy
-        // new_properties will be written to
 
         self.num_prop = num_prop;
 
@@ -323,10 +304,13 @@ impl ManifoldImpl {
                     self.halfedge[current].prop_vert = prop;
                     if prop != last_prop {
                         last_prop = prop;
-                        // Copy old properties to new
-                        let src_start = (prop as usize) * num_prop;
+                        // Copy old properties using old stride, write into new stride
+                        let dst_start = (prop as usize) * num_prop;
+                        let src_start = (prop as usize) * old_num_prop;
                         for p in 0..old_num_prop.min(num_prop) {
-                            new_properties[src_start + p] = orig_props[src_start + p];
+                            if src_start + p < orig_props.len() {
+                                new_properties[dst_start + p] = orig_props[src_start + p];
+                            }
                         }
                         // Set normal
                         new_properties[prop as usize * num_prop + normal_idx] = normal.x;
@@ -472,9 +456,11 @@ impl ManifoldImpl {
                         last_group = g;
                         new_prop = (new_properties.len() / num_prop) as i32;
                         new_properties.resize(new_properties.len() + num_prop, 0.0);
-                        let src_start = (prop as usize) * num_prop;
+                        let src_start = (prop as usize) * old_num_prop;
                         for p in 0..old_num_prop.min(num_prop) {
-                            new_properties[new_prop as usize * num_prop + p] = orig_props[src_start + p];
+                            if src_start + p < orig_props.len() {
+                                new_properties[new_prop as usize * num_prop + p] = orig_props[src_start + p];
+                            }
                         }
                         if g < normals.len() {
                             new_properties[new_prop as usize * num_prop + normal_idx] = normals[g].x;
@@ -485,9 +471,12 @@ impl ManifoldImpl {
                         // Update property vertex
                         last_prop = prop;
                         new_prop = prop;
-                        let src_start = (prop as usize) * num_prop;
+                        let dst_start = (prop as usize) * num_prop;
+                        let src_start = (prop as usize) * old_num_prop;
                         for p in 0..old_num_prop.min(num_prop) {
-                            new_properties[src_start + p] = orig_props[src_start + p];
+                            if src_start + p < orig_props.len() {
+                                new_properties[dst_start + p] = orig_props[src_start + p];
+                            }
                         }
                         if g < normals.len() {
                             new_properties[prop as usize * num_prop + normal_idx] = normals[g].x;
