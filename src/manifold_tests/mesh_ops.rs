@@ -278,3 +278,15 @@ fn test_cpp_merge_refine() {
     assert!((refined.volume() - 31.21).abs() < 0.01,
         "MergeRefine: expected volume≈31.21, got {}", refined.volume());
 }
+
+/// C++ TEST(Manifold, ObjRoundTrip) — cube → OBJ string → cube, volume preserved.
+#[test]
+fn test_cpp_obj_round_trip() {
+    let m = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false);
+    let obj = m.write_obj();
+    let m2 = Manifold::read_obj(&obj);
+    assert_eq!(m2.status(), crate::types::Error::NoError,
+        "ObjRoundTrip: status={:?}", m2.status());
+    assert!((m2.volume() - 1.0).abs() < 1e-9,
+        "ObjRoundTrip: volume={}, expected 1", m2.volume());
+}

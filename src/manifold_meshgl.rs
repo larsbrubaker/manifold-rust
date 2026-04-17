@@ -426,4 +426,96 @@ pub fn get_mesh_gl64(&self, normal_idx: i32) -> MeshGL64 {
         tolerance: mesh.tolerance as f64,
     }
 }
+
+/// Write the manifold to a Wavefront OBJ-format string.
+/// Mirrors C++ `Manifold::WriteOBJ`, using 19-digit fixed precision and
+/// sorting faces for deterministic output. Also emits `# tolerance` and
+/// `# epsilon` comment metadata.
+pub fn write_obj(&self) -> String {
+    let mesh = self.get_mesh_gl64(-1);
+    let epsilon = self.imp.epsilon;
+    let mut out = String::new();
+    out.push_str("# ======= begin mesh ======\n");
+    out.push_str(&format!("# tolerance = {:.19}\n", mesh.tolerance));
+    out.push_str(&format!("# epsilon = {:.19}\n", epsilon));
+    let num_prop = mesh.num_prop as usize;
+    for i in 0..mesh.num_vert() {
+        let offset = i * num_prop;
+        out.push_str(&format!(
+            "v {:.19} {:.19} {:.19}\n",
+            mesh.vert_properties[offset],
+            mesh.vert_properties[offset + 1],
+            mesh.vert_properties[offset + 2]
+        ));
+    }
+    let mut tris: Vec<[u64; 3]> = (0..mesh.num_tri())
+        .map(|i| [
+            mesh.tri_verts[3 * i] + 1,
+            mesh.tri_verts[3 * i + 1] + 1,
+            mesh.tri_verts[3 * i + 2] + 1,
+        ])
+        .collect();
+    tris.sort();
+    for t in &tris {
+        out.push_str(&format!("f {} {} {}\n", t[0], t[1], t[2]));
+    }
+    out.push_str("# ======== end mesh =======\n");
+    out
+}
+
+/// Read a manifold from a Wavefront OBJ-format string. Recognizes the
+/// `# tolerance` and `# epsilon` comment metadata emitted by `write_obj`.
+pub fn read_obj(source: &str) -> Self {
+    let mut mesh = MeshGL64 {
+        num_prop: 3,
+        ..Default::default()
+    };
+    let mut epsilon: Option<f64> = None;
+    for line in source.lines() {
+        let trimmed = line.trim_end_matches(|c: char| c == '\r' || c == '\n');
+        if let Some(rest) = trimmed.strip_prefix("# tolerance = ") {
+            if let Ok(v) = rest.trim().parse::<f64>() { mesh.tolerance = v; }
+        } else if let Some(rest) = trimmed.strip_prefix("# epsilon = ") {
+            if let Ok(v) = rest.trim().parse::<f64>() { epsilon = Some(v); }
+        } else if let Some(rest) = trimmed.strip_prefix("v ") {
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if parts.len() >= 3 {
+                if let (Ok(x), Ok(y), Ok(z)) = (
+                    parts[0].parse::<f64>(),
+                    parts[1].parse::<f64>(),
+                    parts[2].parse::<f64>(),
+                ) {
+                    mesh.vert_properties.push(x);
+                    mesh.vert_properties.push(y);
+                    mesh.vert_properties.push(z);
+                }
+            }
+        } else if let Some(rest) = trimmed.strip_prefix("f ") {
+            let parts: Vec<&str> = rest.split_whitespace().collect();
+            if parts.len() >= 3 {
+                let parse_vert = |s: &str| -> Option<u64> {
+                    // OBJ face entries may be "v", "v/vt", or "v/vt/vn"
+                    let first = s.split('/').next()?;
+                    first.parse::<u64>().ok().map(|n| n - 1)
+                };
+                if let (Some(a), Some(b), Some(c)) = (
+                    parse_vert(parts[0]),
+                    parse_vert(parts[1]),
+                    parse_vert(parts[2]),
+                ) {
+                    mesh.tri_verts.push(a);
+                    mesh.tri_verts.push(b);
+                    mesh.tri_verts.push(c);
+                }
+            }
+        }
+    }
+    let mut m = Self::from_mesh_gl64(&mesh);
+    if let Some(e) = epsilon { m.apply_epsilon(e); }
+    m
+}
+
+fn apply_epsilon(&mut self, epsilon: f64) {
+    self.imp.set_epsilon(epsilon, false);
+}
 } // impl Manifold

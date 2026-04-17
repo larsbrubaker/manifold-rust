@@ -291,3 +291,4 @@ mod cross_section2;
 mod mesh_ops;
 mod raycast;
 mod error_propagation;
+mod properties;

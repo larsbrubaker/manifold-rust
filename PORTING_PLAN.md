@@ -3,13 +3,25 @@
 This document tracks the incremental port of [Manifold](https://github.com/elalish/manifold) to Rust.
 Every phase must pass all tests with **exact numerical match** to the C++ before the next phase begins.
 
-## Current Status: 491 tests passing, 0 failing, 21 ignored
+## Current Status: 492 tests passing, 0 failing, 22 ignored
 
-**Date:** 2026-04-15
-**Total Rust tests:** ~262 unique test functions
+**Date:** 2026-04-16
+**Total Rust tests:** ~263 unique test functions
 **Total C++ tests:** 191+ (excluding manifoldc and samples; new RayCast and ErrorPropagation tests added in C++ v3.4.1)
-**Ported C++ tests:** ~258 (99%)
-**Remaining C++ tests to port:** ~8
+**Ported C++ tests:** ~261 (99%)
+**Remaining C++ tests to port:** ~5 (all blocked on processOverlaps or huge inline mesh data)
+
+### Recent Additions (2026-04-16)
+
+**ObjRoundTrip** (2026-04-16): Added `Manifold::write_obj()` and `Manifold::read_obj()`
+matching C++ `WriteOBJ`/`ReadOBJ` — 19-digit fixed-precision vertex output, sorted face
+order, `# tolerance`/`# epsilon` comment metadata round-tripped. Ports the cube
+round-trip test in `manifold_tests/mesh_ops.rs`.
+
+**StretchyBracelet + MingapStretchyBracelet** (2026-04-16): Ported the bracelet sample
+(`bracelet_base`, `stretchy_bracelet`) into a new `manifold_tests/properties.rs` module,
+together with the min-gap test. Marked `#[ignore]` — slow boolean composition in debug,
+passes in release (~8 s).
 
 ### Recent Additions (2026-04-15)
 
@@ -101,24 +113,19 @@ C++ `MergeMeshGLP`. Also part of fixing `test_cpp_merge_refine`.
 
 ## C++ Test Porting Status by File
 
-### boolean_test.cpp — 47 tests, ~41 ported (87%)
-
-**Unported:**
-- [ ] Precision2 — precision edge case
+### boolean_test.cpp — 47 tests, ~42 ported (89%)
 
 **Ignored (ported but not passing):**
 - normals — normal orientation mismatch after nested difference (backside run normals dot opposite face)
-
-**Ignored (ported but not passing):**
 - boolean_precision — per-mesh epsilon not implemented
 - create_properties_slow — slow sphere(10,1024) boolean in debug
 
-### boolean_complex_test.cpp — 19 tests, ~15 ported (79%)
+### boolean_complex_test.cpp — 19 tests, ~16 ported (84%)
 
 **Unported:**
 - [ ] InterpolatedNormals — large test with complex mesh property data
-- [ ] Ring — needs mgl_0()/mgl_1() mesh data
-- [ ] Sweep — complex cross-section warp/revolve test
+- [ ] Ring — processOverlaps not implemented (and mgl_0()/mgl_1() mesh data)
+- [ ] Sweep — processOverlaps not implemented
 - [ ] Close — processOverlaps not implemented
 
 **Ignored (ported but not passing):**
@@ -128,10 +135,7 @@ C++ `MergeMeshGLP`. Also part of fixing `test_cpp_merge_refine`.
 - perturb3 — BatchBoolean precision
 - openscad_crash — panics in face_op (needs processOverlaps)
 
-### manifold_test.cpp — 51 tests, ~50 ported (98%)
-
-**Unported:**
-- [ ] ObjRoundTrip — needs OBJ write support
+### manifold_test.cpp — 51 tests, ~51 ported (100%) ✅
 
 **Passing (newly ported):**
 - MeshRelationRefine ✅ — csaszar with position colors, RefineToLength(1) → 9019 verts/18038 tris
@@ -145,10 +149,10 @@ C++ `MergeMeshGLP`. Also part of fixing `test_cpp_merge_refine`.
 - merge_empty — flat degenerate mesh handling differs
 - sphere_tri_count_n25 — binary subdivision (8192 vs 5000)
 
-### properties_test.cpp — 22 tests, ~20 ported (91%)
+### properties_test.cpp — 22 tests, ~22 ported (100%) ✅
 
-**Unported:**
-- [ ] MingapStretchyBracelet — needs StretchyBracelet helper mesh
+**Ignored (ported but passing only in release):**
+- mingap_stretchy_bracelet — slow debug; ~8 s in release
 
 **Ignored (ported but not passing):**
 - tolerance — simplification not matching C++
@@ -280,21 +284,13 @@ Several tests show minor vertex/triangle count differences (20 vs 18, 21 vs 20, 
 - Epsilon-based simplification during `SimplifyTopology`
 - Per-mesh epsilon tracking (C++ `Impl::epsilon_` is per-mesh, Rust may not propagate correctly)
 
-### 4. Unported Tests (~8 remaining)
+### 4. Unported Tests (~4 remaining)
 | File | Test | Blocker |
 |------|------|---------|
-| boolean_test.cpp | Normals | RelatedGL helper |
-| boolean_test.cpp | Precision2 | Per-mesh epsilon |
-| boolean_complex_test.cpp | MeshRelation | Gyroid helper + RelatedGL |
-| boolean_complex_test.cpp | InterpolatedNormals | Large mesh data |
-| boolean_complex_test.cpp | Ring | mgl_0()/mgl_1() mesh data |
-| boolean_complex_test.cpp | Sweep | Complex cross-section warp |
+| boolean_complex_test.cpp | InterpolatedNormals | Large inline mesh data |
+| boolean_complex_test.cpp | Ring | processOverlaps |
+| boolean_complex_test.cpp | Sweep | processOverlaps |
 | boolean_complex_test.cpp | Close | processOverlaps |
-| manifold_test.cpp | ObjRoundTrip | OBJ write support |
-| manifold_test.cpp | MeshRelationRefine | Csaszar + RelatedGL |
-| manifold_test.cpp | MeshRelationRefinePrecision | RefineToTolerance + RelatedGL |
-| manifold_test.cpp | MergeRefine | Complex merge + tolerance |
-| properties_test.cpp | MingapStretchyBracelet | StretchyBracelet helper |
 
 ---
 
