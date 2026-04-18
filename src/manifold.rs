@@ -163,6 +163,7 @@ impl Manifold {
     pub fn matches_tri_normals(&self) -> bool { self.imp.matches_tri_normals() }
     pub fn num_degenerate_tris(&self) -> i32 { self.imp.num_degenerate_tris() }
     pub fn get_tolerance(&self) -> f64 { self.imp.tolerance }
+    pub fn get_epsilon(&self) -> f64 { self.imp.epsilon }
 
     /// Port of C++ Manifold::Genus()
     pub fn genus(&self) -> i32 {

@@ -107,7 +107,6 @@ fn test_cpp_hull_disabled_face_test() {
 
 /// C++ TEST(Hull, Degenerate2D) — hull of coplanar points (issue 1491)
 #[test]
-#[ignore = "Degenerate 2D hull not yet producing correct bounding box"]
 fn test_cpp_hull_degenerate_2d() {
     let hull = Manifold::hull(&[
         Vec3::new(0.0, 0.0, 0.0),

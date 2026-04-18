@@ -290,9 +290,16 @@ impl QuickHull {
         self.create_convex_halfedge_mesh();
 
         if self.planar {
-            // Reset the extra point coordinate
-            let last = self.planar_point_cloud_temp.len() - 1;
-            self.planar_point_cloud_temp[last] = self.planar_point_cloud_temp[0];
+            // Reset the synthetic extra point back to coincide with verts[0] so
+            // the final hull vertices lie on the input plane. Matches C++
+            // `planarPointCloudTemp.back() = planarPointCloudTemp.front();`
+            // where `originalVertexData` is a view sharing that storage.
+            let last = self.verts.len() - 1;
+            self.verts[last] = self.verts[0];
+            if !self.planar_point_cloud_temp.is_empty() {
+                let tlast = self.planar_point_cloud_temp.len() - 1;
+                self.planar_point_cloud_temp[tlast] = self.planar_point_cloud_temp[0];
+            }
         }
 
         // Reorder halfedges into 3-consecutive-per-face layout

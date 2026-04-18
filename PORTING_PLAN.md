@@ -3,15 +3,28 @@
 This document tracks the incremental port of [Manifold](https://github.com/elalish/manifold) to Rust.
 Every phase must pass all tests with **exact numerical match** to the C++ before the next phase begins.
 
-## Current Status: 492 tests passing, 0 failing, 22 ignored
+## Current Status: 493 tests passing, 0 failing, 22 ignored
 
-**Date:** 2026-04-16
-**Total Rust tests:** ~263 unique test functions
+**Date:** 2026-04-17
+**Total Rust tests:** ~264 unique test functions
 **Total C++ tests:** 191+ (excluding manifoldc and samples; new RayCast and ErrorPropagation tests added in C++ v3.4.1)
-**Ported C++ tests:** ~261 (99%)
-**Remaining C++ tests to port:** ~5 (all blocked on processOverlaps or huge inline mesh data)
+**Ported C++ tests:** ~262 (99%)
+**Remaining C++ tests to port:** ~2 (InterpolatedNormals — huge inline mesh; Ring — needs mgl_0/mgl_1 mesh data)
 
-### Recent Additions (2026-04-16)
+### Recent Additions (2026-04-17)
+
+**Sweep test** (2026-04-17): Ported `BooleanComplex.Sweep` — profile + partial-revolve
++ extrusion sweep + BatchBoolean with ~90 path points. Marked `#[ignore]` — exposes a
+real bug in `edge_op::update_vert` (follows an unpaired halfedge with pairedHalfedge=-1,
+triggering an out-of-bounds index). C++ masks this behind `processOverlaps=true`.
+
+**Degenerate 2D hull fix** (2026-04-17): `quickhull_algo::build_mesh` now resets the
+synthetic extra point in `self.verts` (not just the secondary `planar_point_cloud_temp`
+buffer) after a planar hull, so final vertex positions stay on the input plane. C++ gets
+this for free via a shared `VecView`; Rust's `verts` is an independent `Vec`. Un-ignores
+`test_cpp_hull_degenerate_2d`.
+
+### Earlier additions (2026-04-16)
 
 **ObjRoundTrip** (2026-04-16): Added `Manifold::write_obj()` and `Manifold::read_obj()`
 matching C++ `WriteOBJ`/`ReadOBJ` — 19-digit fixed-precision vertex output, sorted face
@@ -120,13 +133,14 @@ C++ `MergeMeshGLP`. Also part of fixing `test_cpp_merge_refine`.
 - boolean_precision — per-mesh epsilon not implemented
 - create_properties_slow — slow sphere(10,1024) boolean in debug
 
-### boolean_complex_test.cpp — 19 tests, ~16 ported (84%)
+### boolean_complex_test.cpp — 19 tests, ~18 ported (95%)
 
 **Unported:**
-- [ ] InterpolatedNormals — large test with complex mesh property data
-- [ ] Ring — processOverlaps not implemented (and mgl_0()/mgl_1() mesh data)
-- [ ] Sweep — processOverlaps not implemented
-- [ ] Close — processOverlaps not implemented
+- [ ] InterpolatedNormals — large inline mesh property data
+- [ ] Ring — needs mgl_0()/mgl_1() mesh data (~600 lines of inline vertex data)
+
+**Ignored (ported but fails):**
+- complex_sweep — exposes bug in `edge_op::update_vert` (unpaired halfedge chase)
 
 **Ignored (ported but not passing):**
 - generic_twin_7081 — hangs (loop termination bug in boolean)
@@ -253,6 +267,7 @@ Fixed to use `old_num_prop` stride for source, `num_prop` stride for destination
 | opposite_face | CleanupTopology vs is_manifold ordering |
 | craycloud (×2) | sort.rs assertion (odd halfedge count) |
 | openscad_crash | Panics in face_op |
+| complex_sweep | edge_op::update_vert chases unpaired halfedge (paired=-1) |
 
 ### Missing features — 4
 | Test | Reason |
@@ -284,13 +299,11 @@ Several tests show minor vertex/triangle count differences (20 vs 18, 21 vs 20, 
 - Epsilon-based simplification during `SimplifyTopology`
 - Per-mesh epsilon tracking (C++ `Impl::epsilon_` is per-mesh, Rust may not propagate correctly)
 
-### 4. Unported Tests (~4 remaining)
+### 4. Unported Tests (~2 remaining)
 | File | Test | Blocker |
 |------|------|---------|
 | boolean_complex_test.cpp | InterpolatedNormals | Large inline mesh data |
-| boolean_complex_test.cpp | Ring | processOverlaps |
-| boolean_complex_test.cpp | Sweep | processOverlaps |
-| boolean_complex_test.cpp | Close | processOverlaps |
+| boolean_complex_test.cpp | Ring | Huge inline mgl_0/mgl_1 mesh data |
 
 ---
 

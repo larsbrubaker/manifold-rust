@@ -463,3 +463,194 @@ fn test_cpp_complex_mesh_relation() {
 
     super::related_gl(&result, &[&gyroid_gl]);
 }
+
+/// C++ TEST(BooleanComplex, Sweep) — sweep a fillet profile along a closed 2D
+/// path, building an `Extrude`+`Warp` primitive per segment and batch-unioning.
+/// Expects final volume ≈ 3757.
+#[test]
+#[ignore = "panics in edge_op update_vert (paired_halfedge=-1). C++ uses processOverlaps=true which suppresses a geometry check; Rust hits a different code path during edge collapse"]
+fn test_cpp_complex_sweep() {
+    use std::f64::consts::PI;
+    let k_two_pi = 2.0 * PI;
+
+    // profile: (filletWidth-filletRadius, 0) → arc of 10 pts → (0, filletWidth) → (0,0)
+    let fillet_radius: f64 = 2.5;
+    let fillet_width: f64 = 5.0;
+    let num_arc_points: i32 = 10;
+    let arc_cp = Vec2::new(fillet_width - fillet_radius, fillet_radius);
+
+    let mut profile: Vec<Vec2> = vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(fillet_width - fillet_radius, 0.0),
+    ];
+    for i in 0..num_arc_points {
+        let angle = i as f64 * PI / num_arc_points as f64;
+        let y = arc_cp.y - angle.cos() * fillet_radius;
+        let x = arc_cp.x + angle.sin() * fillet_radius;
+        profile.push(Vec2::new(x, y));
+    }
+    profile.push(Vec2::new(0.0, fillet_width));
+    let profile_polys: Polygons = vec![profile];
+
+    let min_pos_angle = |angle: f64| -> f64 {
+        let div = angle / k_two_pi;
+        let whole = div.floor();
+        angle - whole * k_two_pi
+    };
+
+    let partial_revolve = |start_angle: f64, end_angle: f64, n_segments_per_rotation: i32| -> Manifold {
+        let pos_end = min_pos_angle(end_angle);
+        let total = if start_angle < 0.0 && end_angle < 0.0 && start_angle < end_angle {
+            end_angle - start_angle
+        } else {
+            pos_end - start_angle
+        };
+        let mut n_segments = (total / k_two_pi * n_segments_per_rotation as f64 + 1.0).ceil() as i32;
+        if n_segments < 2 { n_segments = 2; }
+        let angle_step = total / (n_segments - 1) as f64;
+        let n_segments_f = (n_segments - 1) as f64;
+        Manifold::extrude(&profile_polys, n_segments_f, n_segments - 2, 0.0, Vec2::new(1.0, 1.0))
+            .warp(move |v: &mut Vec3| {
+                let z_index = n_segments_f - v.z;
+                let angle = z_index * angle_step + start_angle;
+                let old_x = v.x;
+                let old_y = v.y;
+                v.z = old_y;
+                v.y = old_x * angle.sin();
+                v.x = old_x * angle.cos();
+            })
+    };
+
+    let det = |a: Vec2, b: Vec2| -> f64 { a.x * b.y - a.y * b.x };
+
+    let cutter_primitives = |p1: Vec2, p2: Vec2, p3: Vec2| -> Vec<Manifold> {
+        let diff = p2 - p1;
+        let v1 = p1 - p2;
+        let v2 = p3 - p2;
+        let determinant = det(v1, v2);
+        let start_angle = v1.x.atan2(-v1.y);
+        let end_angle = (-v2.x).atan2(v2.y);
+        let round = partial_revolve(start_angle, end_angle, 20)
+            .translate(Vec3::new(p2.x, p2.y, 0.0));
+        let distance = (diff.x * diff.x + diff.y * diff.y).sqrt();
+        let angle = diff.y.atan2(diff.x);
+        let extrusion = Manifold::extrude(&profile_polys, distance, 0, 0.0, Vec2::new(1.0, 1.0))
+            .rotate(90.0, 0.0, -90.0)
+            .translate(Vec3::new(distance, 0.0, 0.0))
+            .rotate(0.0, 0.0, angle * 180.0 / PI)
+            .translate(Vec3::new(p1.x, p1.y, 0.0));
+        if determinant < 0.0 { vec![round, extrusion] } else { vec![extrusion] }
+    };
+
+    // Exact C++ path_points, scaled by 0.9
+    let path_points_raw: [(f64, f64); 90] = [
+        (-21.707751473606564, 10.04202769267855),
+        (-21.840846948218307, 9.535474475521578),
+        (-21.940954413815387, 9.048287386171369),
+        (-22.005569458385835, 8.587741145234093),
+        (-22.032187669917704, 8.16111047331591),
+        (-22.022356960178296, 7.755456475810721),
+        (-21.9823319178086, 7.356408291345673),
+        (-21.91208498286602, 6.964505631629036),
+        (-21.811437268778267, 6.579251589515578),
+        (-21.68020988897306, 6.200149257860059),
+        (-21.51822395687812, 5.82670172951726),
+        (-21.254086890521585, 5.336709200579579),
+        (-21.01963533308061, 4.974523796623895),
+        (-20.658228140926262, 4.497743844638198),
+        (-20.350337020134603, 4.144115181723373),
+        (-19.9542029967, 3.7276501717684054),
+        (-20.6969129296381, 3.110639833377638),
+        (-21.026318197401537, 2.793796378245609),
+        (-21.454710558515973, 2.3418076758544806),
+        (-21.735944543382722, 2.014266362004704),
+        (-21.958999535447845, 1.7205197644485681),
+        (-22.170169612837164, 1.3912359628761894),
+        (-22.376940405634056, 1.0213515348242117),
+        (-22.62545385249271, 0.507889651991388),
+        (-22.77620002102207, 0.13973666928102288),
+        (-22.8689989640578, -0.135962138067232),
+        (-22.974385239894364, -0.5322784681448909),
+        (-23.05966775687304, -0.9551466941218276),
+        (-23.102914137841445, -1.2774406685179822),
+        (-23.14134824916783, -1.8152432718003662),
+        (-23.152085124298473, -2.241104719188421),
+        (-23.121576743285054, -2.976332948223073),
+        (-23.020491352156856, -3.6736813934577914),
+        (-22.843552165110886, -4.364810769710428),
+        (-22.60334013490563, -5.033012850282157),
+        (-22.305015243491663, -5.67461444847819),
+        (-21.942709324216615, -6.330962778427178),
+        (-21.648491707764062, -6.799117771996025),
+        (-21.15330508818782, -7.496539096945377),
+        (-21.10687739725184, -7.656798276710632),
+        (-21.01253055778545, -8.364144493707382),
+        (-20.923211927856293, -8.782280691344269),
+        (-20.771325204062215, -9.258087073404687),
+        (-20.554404009259198, -9.72613360625344),
+        (-20.384050989017144, -9.985885743112847),
+        (-20.134404839253612, -10.263023004626703),
+        (-19.756998832033442, -10.613109670467736),
+        (-18.83161393127597, -15.68768837402245),
+        (-19.155593463785983, -17.65410871259763),
+        (-17.930304365744544, -19.005810988385562),
+        (-16.893408103100064, -19.50558228186199),
+        (-16.27514960757635, -19.8288501942628),
+        (-15.183033464853374, -20.47781203017123),
+        (-14.906850387751492, -20.693472553142833),
+        (-14.585198957236713, -21.015257964547136),
+        (-11.013839210807205, -34.70394287828328),
+        (-8.79778020674896, -36.17434400175442),
+        (-7.850491148257242, -36.48835987119041),
+        (-6.982497182376991, -36.74546968896842),
+        (-6.6361688522576, -36.81653354539242),
+        (-6.0701080598244035, -36.964332993204),
+        (-5.472439187922815, -37.08824838436714),
+        (-4.802871164820756, -37.20127157090685),
+        (-3.6605994233344745, -37.34427653957914),
+        (-1.7314396363710867, -37.46415201430501),
+        (-0.7021130485987349, -37.5),
+        (0.01918509410483974, -37.49359541901704),
+        (1.2107837650065625, -37.45093992812552),
+        (3.375529069920302, 32.21823383780513),
+        (1.9041980552754056, 32.89839543047101),
+        (1.4107184651094313, 33.16556804736585),
+        (1.1315552947605065, 33.34344755450097),
+        (0.8882931135353977, 33.52377699790175),
+        (0.6775397019893341, 33.708817857198056),
+        (0.49590284067753837, 33.900831612019715),
+        (0.2291596803839543, 34.27380625039597),
+        (0.03901816126171688, 34.66402375075138),
+        (-0.02952797094655369, 34.8933309389416),
+        (-0.0561772851849209, 35.044928843125824),
+        (-0.067490756643705, 35.27129875796868),
+        (-0.05587453990569748, 35.42204271802184),
+        (0.013497378362074697, 35.72471438137191),
+        (0.07132375113026912, 35.877348797053145),
+        (0.18708820875448923, 36.108917464873215),
+        (0.39580614140195136, 36.424415957998825),
+        (0.8433687814267005, 36.964365016108914),
+        (0.7078417131710703, 37.172455373435916),
+        (0.5992848016685662, 37.27482757003058),
+        (0.40594743344375905, 37.36664006036318),
+        (0.1397973410299913, 37.434752779117005),
+    ];
+    let path_points: Vec<Vec2> = path_points_raw.iter()
+        .map(|&(x, y)| Vec2::new(x, y) * 0.9)
+        .collect();
+
+    let n = path_points.len();
+    let mut primitives: Vec<Manifold> = Vec::new();
+    for i in 0..n {
+        let prims = cutter_primitives(
+            path_points[i],
+            path_points[(i + 1) % n],
+            path_points[(i + 2) % n],
+        );
+        primitives.extend(prims);
+    }
+
+    let shape = Manifold::batch_boolean(&primitives, crate::types::OpType::Add);
+    assert!((shape.volume() - 3757.0).abs() < 1.0,
+        "Sweep: vol={}, expected ~3757", shape.volume());
+}
