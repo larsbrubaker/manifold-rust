@@ -4,6 +4,8 @@
 
 Pure Rust port of [Manifold](https://github.com/elalish/manifold) — a geometry library for 3D boolean operations on triangle meshes.
 
+> Part of the [rust-apps](https://github.com/larsbrubaker/rust-apps) suite — a collection of Rust graphics and geometry libraries by Lars Brubaker.
+
 > **Status: Port in progress.** See [PORTING_PLAN.md](PORTING_PLAN.md) for current phase.
 
 ## What is Manifold?
