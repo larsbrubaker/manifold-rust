@@ -200,9 +200,10 @@ Fixed to use `old_num_prop` stride for source, `num_prop` stride for destination
 - MengerSponge ✅ — depth-2 version passes; depth-4 ignored (slow in debug)
 
 **Ignored (ported but not passing):**
-- hull_tictac — wrong vertex count
-- hull_degenerate_2d — wrong bounding box
+- hull_tictac — wrong vertex count (~66050 vs ~66038)
 - hull_sphere — slow (1500 segments)
+
+**Fixed 2026-04-17:** `hull_degenerate_2d` now passes — synthetic planar vertex reset applied to `self.verts`.
 
 ### sdf_test.cpp — 9 tests, 9 ported (100%) ✅
 
@@ -224,19 +225,17 @@ Fixed to use `old_num_prop` stride for source, `num_prop` stride for destination
 
 ---
 
-## Ignored Tests Summary (42)
+## Ignored Tests Summary (22 — actual on 2026-04-17)
 
-### Performance (slow in debug mode) — 8
+### Performance (slow in debug mode) — 6
 | Test | Reason |
 |------|--------|
-| min_gap_transformed | 512-seg sphere |
-| min_gap_transformed_oob | 512-seg sphere |
-| min_gap_after_transformations | 512-seg spheres |
-| create_properties_slow | sphere(10,1024) boolean |
 | sdf_blobs | Fine edge_length=0.05, 263s |
 | sdf_sphere_shell | Fine edge_length=0.01 for thin shell |
 | hull_sphere | 1500-segment sphere hull |
-| complex_close | 256-seg sphere ×10 boolean |
+| hull_menger_sponge | depth-4 CSG generates ~400k tris |
+| properties_mingap_stretchy_bracelet | heavy boolean composition |
+| properties_tolerance_sphere | n=1000 sphere; needs n-way subdivision for exact count |
 
 ### Minkowski (slow O(n²)) — 4
 | Test | Reason |
@@ -246,30 +245,27 @@ Fixed to use `old_num_prop` stride for source, `num_prop` stride for destination
 | nonconvex_nonconvex_minkowski_sum | O(n²) triangle count |
 | nonconvex_nonconvex_minkowski_difference | O(n²) triangle count |
 
-### Smooth topology mismatch — 2
+### Boolean topology / precision differences — 3
 | Test | Reason |
 |------|--------|
-| smooth_sine_surface | vol converges to 8.076 vs 8.09; C++ simplify collapses to different topology |
-| sdf_sine_surface | SDF → SmoothOut → RefineToLength (slow + same sine surface issue) |
-
-### Boolean topology differences — 5
-| Test | Reason |
-|------|--------|
-| mesh_determinism (×2) | 30 vs 24 tris — colinear edge collapse |
-| boolean_precision | Per-mesh epsilon not implemented |
 | perturb3 | BatchBoolean precision |
-| almost_coplanar | 21 vs 20 verts |
-| boolean_meshgl_round_trip | 20 vs 18 verts |
+| almost_coplanar | 21 vs 20 verts (minor coplanar perturbation) |
+| normals | Normal orientation mismatch after nested difference |
 
-### Import/topology bugs — 4
+### Edge-op bugs — 3
 | Test | Reason |
 |------|--------|
-| opposite_face | CleanupTopology vs is_manifold ordering |
-| craycloud (×2) | sort.rs assertion (odd halfedge count) |
-| openscad_crash | Panics in face_op |
-| complex_sweep | edge_op::update_vert chases unpaired halfedge (paired=-1) |
+| openscad_crash | update_vert chases unpaired halfedge (paired=-1) |
+| complex_sweep | same edge_op::update_vert bug |
+| complex_craycloud | sort.rs assertion (odd halfedge count) |
 
-### Missing features — 4
+### Hanging — 2
+| Test | Reason |
+|------|--------|
+| generic_twin_7081 | Loop termination bug in boolean |
+| complex_generic_twin_7081 | Same |
+
+### Missing features — 2
 | Test | Reason |
 |------|--------|
 | tolerance | Simplification behavior differs |
@@ -281,23 +277,25 @@ Fixed to use `old_num_prop` stride for source, `num_prop` stride for destination
 ### Hanging — 2
 | Test | Reason |
 |------|--------|
-| generic_twin_7081 (×2) | Loop termination bug in boolean |
-
 ---
 
 ## Key Remaining Work
 
 ### 1. N-way Subdivision (blocks sphere count matching)
-Current subdivision is binary (always doubles edge count). C++ supports arbitrary n-way splits via the `Partition` class. This affects sphere construction with non-power-of-2 segment counts (e.g., n=25 gives 5000 tris in C++ but 8192 in Rust).
+Current subdivision is binary (always doubles edge count). C++ supports arbitrary n-way
+splits via the `Partition` class. This affects sphere construction with non-power-of-2
+segment counts (e.g., n=25 gives 5000 tris in C++ but 8192 in Rust) and fails
+`sphere_tri_count_n25` and `properties_tolerance_sphere`.
 
-### 2. processOverlaps Support (blocks Close, OpenSCAD tests)
-The C++ `ManifoldParams().processOverlaps` flag enables handling of self-overlapping boolean results. Not yet implemented.
+### 2. edge_op::update_vert robustness (blocks Sweep, openscad_crash)
+`update_vert` walks `paired_halfedge` around a shared vertex; an unpaired halfedge
+(paired=-1) indexes with `usize::MAX` and panics. C++ assumes the mesh invariant holds
+at this point — our boolean output is producing a slightly non-manifold intermediate
+for certain inputs. Needs root-cause investigation in the boolean result assembly.
 
-### 3. Boolean Topology Refinement (blocks ~7 tests)
-Several tests show minor vertex/triangle count differences (20 vs 18, 21 vs 20, 30 vs 24). Root cause is likely differences in:
-- Colinear edge collapse after boolean operations
-- Epsilon-based simplification during `SimplifyTopology`
-- Per-mesh epsilon tracking (C++ `Impl::epsilon_` is per-mesh, Rust may not propagate correctly)
+### 3. Boolean Topology Refinement (minor vert/tri count drift)
+A few tests drift by 1–2 vertices (`almost_coplanar` 21 vs 20). Likely colinear edge
+collapse / epsilon-based simplification differences in `SimplifyTopology`.
 
 ### 4. Unported Tests (~2 remaining)
 | File | Test | Blocker |
