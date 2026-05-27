@@ -1,5 +1,7 @@
 # manifold-rust
 
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy_Me_A_Coffee-FFDD00?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/larsbrubaker)
+
 [![Demo](README_HERO.png)](https://larsbrubaker.github.io/manifold-rust/)
 
 Pure Rust port of [Manifold](https://github.com/elalish/manifold) — a geometry library for 3D boolean operations on triangle meshes.
