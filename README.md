@@ -2,6 +2,19 @@
 
 [![Demo](README_HERO.png)](https://larsbrubaker.github.io/manifold-rust/)
 
+## Support the Project
+
+<a href="https://buymeacoffee.com/larsbrubaker"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50" width="210"></a>
+
+manifold-rust is open-source and free to use, maintained in spare time as a labor of love. Friends James Smith and Dan Ruskin help out from time to time too.
+
+If you find it useful, here are a few ways to help keep development going:
+
+- **Donations:** [Buy Me a Coffee](https://buymeacoffee.com/larsbrubaker) — every coffee helps.
+- **Star the repo:** Costs nothing and helps others find the project.
+- **Report issues:** [Open an issue](https://github.com/larsbrubaker/manifold-rust/issues) for bugs or feature ideas.
+- **Contribute:** PRs welcome — open an issue first to discuss larger changes.
+
 Pure Rust port of [Manifold](https://github.com/elalish/manifold) — a geometry library for 3D boolean operations on triangle meshes.
 
 > Part of the [rust-apps](https://github.com/larsbrubaker/rust-apps) suite — a collection of Rust graphics and geometry libraries by Lars Brubaker.
@@ -93,19 +106,6 @@ The port follows the C++ module structure:
 | `quickhull` | `quickhull.cpp` | Convex hull |
 | `minkowski` | `minkowski.cpp` | Minkowski operations |
 | `cross_section` | `cross_section/` | 2D cross section |
-
-## Support the Project
-
-<a href="https://buymeacoffee.com/larsbrubaker"><img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me A Coffee" height="50" width="210"></a>
-
-manifold-rust is open-source and free to use, maintained in spare time as a labor of love. Friends James Smith and Dan Ruskin help out from time to time too.
-
-If you find it useful, here are a few ways to help keep development going:
-
-- **Donations:** [Buy Me a Coffee](https://buymeacoffee.com/larsbrubaker) — every coffee helps.
-- **Star the repo:** Costs nothing and helps others find the project.
-- **Report issues:** [Open an issue](https://github.com/larsbrubaker/manifold-rust/issues) for bugs or feature ideas.
-- **Contribute:** PRs welcome — open an issue first to discuss larger changes.
 
 ## License
 
