@@ -113,3 +113,32 @@ fn test_cpp_error_propagation_simplify() {
     let errored = errored_tet();
     assert_eq!(errored.simplify(0.0).status(), Error::NonFiniteVertex);
 }
+
+/// C++ TEST(Manifold, ErrorPropagationMinkowski) — added in v3.5.0 (#1659).
+#[test]
+fn test_cpp_error_propagation_minkowski() {
+    let errored = errored_tet();
+    let good = Manifold::cube(Vec3::splat(1.0), false);
+    assert_eq!(errored.minkowski_sum(&good).status(), Error::NonFiniteVertex);
+    assert_eq!(good.minkowski_sum(&errored).status(), Error::NonFiniteVertex);
+    assert_eq!(errored.minkowski_difference(&good).status(), Error::NonFiniteVertex);
+    assert_eq!(good.minkowski_difference(&errored).status(), Error::NonFiniteVertex);
+}
+
+/// C++ TEST(Manifold, ErrorPropagationSplitByPlane) — added in v3.5.0 (#1659).
+#[test]
+fn test_cpp_error_propagation_split_by_plane() {
+    let errored = errored_tet();
+    let (a, b) = errored.split_by_plane(Vec3::new(0.0, 0.0, 1.0), 0.0);
+    assert_eq!(a.status(), Error::NonFiniteVertex);
+    assert_eq!(b.status(), Error::NonFiniteVertex);
+}
+
+/// C++ TEST(Manifold, ErrorPropagationMirror) — added in v3.5.0 (#1659).
+#[test]
+fn test_cpp_error_propagation_mirror() {
+    let errored = errored_tet();
+    assert_eq!(errored.mirror(Vec3::new(1.0, 0.0, 0.0)).status(), Error::NonFiniteVertex);
+    // Degenerate (zero-length) normal on errored input must still propagate.
+    assert_eq!(errored.mirror(Vec3::new(0.0, 0.0, 0.0)).status(), Error::NonFiniteVertex);
+}

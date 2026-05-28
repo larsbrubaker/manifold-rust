@@ -268,6 +268,11 @@ impl Manifold {
     /// Mirror this manifold over the plane defined by the given normal vector.
     /// If the normal is zero-length, returns an empty manifold.
     pub fn mirror(&self, normal: Vec3) -> Self {
+        // Per C++ #1659: propagate an errored input even on the degenerate
+        // (zero-length normal) path, which otherwise returns an empty manifold.
+        if self.imp.status != Error::NoError {
+            return self.clone();
+        }
         let len = (normal.x * normal.x + normal.y * normal.y + normal.z * normal.z).sqrt();
         if len == 0.0 {
             return Self::empty();
@@ -319,6 +324,11 @@ impl Manifold {
     /// Split this manifold by a plane defined by a normal and offset from origin.
     /// Returns (in direction of normal, opposite direction).
     pub fn split_by_plane(&self, normal: Vec3, origin_offset: f64) -> (Self, Self) {
+        // Per C++ #1659: errored manifolds are empty, so the is_empty()
+        // early-return below would silently drop their status — guard first.
+        if self.imp.status != Error::NoError {
+            return (self.clone(), self.clone());
+        }
         if self.is_empty() {
             return (Self::empty(), Self::empty());
         }
@@ -799,10 +809,15 @@ impl Manifold {
     }
 
     pub fn minkowski_sum(&self, other: &Self) -> Self {
+        // Per C++ #1659: propagate errored input status before computing.
+        if self.imp.status != Error::NoError { return self.clone(); }
+        if other.imp.status != Error::NoError { return other.clone(); }
         Self::from_impl(minkowski::minkowski_sum(&self.imp, &other.imp))
     }
 
     pub fn minkowski_difference(&self, other: &Self) -> Self {
+        if self.imp.status != Error::NoError { return self.clone(); }
+        if other.imp.status != Error::NoError { return other.clone(); }
         Self::from_impl(minkowski::minkowski_difference(&self.imp, &other.imp))
     }
 
