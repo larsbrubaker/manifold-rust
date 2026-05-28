@@ -696,11 +696,26 @@ impl MeshGLP<f32, u32> {
         true
     }
 
+    /// True if triangle run `run` is on the backside (e.g. from a subtraction).
+    /// run_flags is a bitmask (#1718): bit 0 = backside. Informational only —
+    /// the framework already orients stored normals on the standard flow.
+    pub fn backside(&self, run: usize) -> bool {
+        run < self.run_flags.len() && (self.run_flags[run] & 1) != 0
+    }
+
+    /// True if the first three extra-property channels (slots 3, 4, 5) of run
+    /// `run` carry world-frame vertex normals (set by `CalculateNormals(0)`,
+    /// round-tripped via run_flags bit 1, #1718). Consumers should treat the
+    /// slot as normals and skip re-applying run_transform to it.
+    pub fn has_normals(&self, run: usize) -> bool {
+        run < self.run_flags.len() && (self.run_flags[run] & 2) != 0
+    }
+
     /// Applies run transforms to normals stored at `normal_idx` in each vertex's properties,
     /// then clears run_transform and run_flags. Matches C++ MeshGL::UpdateNormals(normalIdx).
     ///
     /// The normal transform is the inverse-transpose of the 3×3 rotation part of the run
-    /// transform. For backside runs (run_flags[run] == 1), normals are additionally negated.
+    /// transform. For backside runs (run_flags bit 0 set), normals are additionally negated.
     pub fn update_normals(&mut self, normal_idx: usize) {
         if normal_idx < 3 || normal_idx + 3 > self.num_prop as usize {
             return;
@@ -750,8 +765,7 @@ impl MeshGLP<f32, u32> {
                 (a00, a01, a02, a10, a11, a12, a20, a21, a22)
             };
 
-            let backside = run < self.run_flags.len() && self.run_flags[run] == 1;
-            let sign = if backside { -1.0f64 } else { 1.0 };
+            let sign = if self.backside(run) { -1.0f64 } else { 1.0 };
 
             // Determine run's vertex range
             let start = if run < self.run_index.len() { self.run_index[run] as usize } else { 0 };
@@ -955,6 +969,11 @@ pub struct Relation {
     pub original_id: i32,
     pub transform: Mat3x4,
     pub back_side: bool,
+    /// True when this meshID's contribution to `properties_` slots 0..2 holds
+    /// world-frame vertex normals (set by `CalculateNormals` at slot 0).
+    /// Carries through Transforms and Booleans; exported as run_flags bit 1.
+    /// Per C++ #1718.
+    pub has_normals: bool,
 }
 
 impl Default for Relation {
@@ -963,6 +982,7 @@ impl Default for Relation {
             original_id: -1,
             transform: Mat3x4::identity(),
             back_side: false,
+            has_normals: false,
         }
     }
 }

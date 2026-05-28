@@ -50,7 +50,7 @@ pub(super) fn update_reference(out_r: &mut ManifoldImpl, in_p: &ManifoldImpl, in
 // CreateProperties -- barycentric interpolation of properties
 // ---------------------------------------------------------------------------
 
-pub(super) fn create_properties(out_r: &mut ManifoldImpl, in_p: &ManifoldImpl, in_q: &ManifoldImpl) {
+pub(super) fn create_properties(out_r: &mut ManifoldImpl, in_p: &ManifoldImpl, in_q: &ManifoldImpl, invert_q: bool) {
     let num_prop_p = in_p.num_prop;
     let num_prop_q = in_q.num_prop;
     let num_prop = num_prop_p.max(num_prop_q);
@@ -122,6 +122,16 @@ pub(super) fn create_properties(out_r: &mut ManifoldImpl, in_p: &ManifoldImpl, i
         let old_num_prop = if pq { num_prop_p } else { num_prop_q };
         let properties = if pq { &in_p.properties } else { &in_q.properties };
         let halfedge = if pq { &in_p.halfedge } else { &in_q.halfedge };
+
+        // Per #1718: for Subtract, Q's triangles are flipped in the result, so
+        // Q's world-frame vertex normals (slot 0..2 when hasNormals) need a
+        // sign flip to point outward from the result's solid (into the cavity).
+        // Check is per-source-triangle — in_q may itself be a mixed Boolean
+        // result with only some meshIDs carrying normals.
+        let negate_normals = !pq
+            && invert_q
+            && old_num_prop >= 3
+            && in_q.tri_has_normals(ref_pq.face_id as usize);
 
         for i in 0..3 {
             let vert = out_r.halfedge[3 * tri + i].start_vert;
@@ -204,7 +214,10 @@ pub(super) fn create_properties(out_r: &mut ManifoldImpl, in_p: &ManifoldImpl, i
                             }
                         }
                     }
-                    let val = uvw.x * old_props[0] + uvw.y * old_props[1] + uvw.z * old_props[2];
+                    let mut val = uvw.x * old_props[0] + uvw.y * old_props[1] + uvw.z * old_props[2];
+                    if negate_normals && p < 3 {
+                        val = -val;
+                    }
                     out_r.properties.push(val);
                 } else {
                     out_r.properties.push(0.0);
@@ -458,7 +471,7 @@ pub fn boolean_result(
     reorder_halfedges(&mut out_r);
 
     // Create properties via barycentric interpolation
-    create_properties(&mut out_r, in_p, in_q);
+    create_properties(&mut out_r, in_p, in_q, invert_q);
 
     // Update references
     update_reference(&mut out_r, in_p, in_q, invert_q);

@@ -467,6 +467,14 @@ impl Manifold {
         if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         out.set_normals(normal_idx as i32, min_sharp_angle);
+        // Per #1718: record per-meshID hasNormals so get_mesh_gl(-1) can
+        // auto-substitute slot 0 on export. Restricted to the standard slot —
+        // a non-zero slot would be ambiguous when round-tripping through MeshGL.
+        if normal_idx == 0 {
+            for rel in out.mesh_relation.mesh_id_transform.values_mut() {
+                rel.has_normals = true;
+            }
+        }
         Self::from_impl(out)
     }
 

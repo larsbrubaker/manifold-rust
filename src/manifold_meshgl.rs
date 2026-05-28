@@ -147,11 +147,17 @@ impl Manifold {
         } else {
             Mat3x4::identity()
         };
-        let back_side = i < mesh.run_flags.len() && mesh.run_flags[i] == 1;
+        // run_flags is a bitmask (#1718): bit 0 = backside, bit 1 = hasNormals.
+        let flags = if i < mesh.run_flags.len() { mesh.run_flags[i] } else { 0 };
+        let back_side = (flags & 1) != 0;
+        // Defensively require >= 3 extra props so a caller setting the bit on a
+        // too-small MeshGL doesn't make us read past the slot 0..2 bounds.
+        let run_has_normals = (flags & 2) != 0 && imp.num_prop >= 3;
         imp.mesh_relation.mesh_id_transform.insert(mesh_id, crate::types::Relation {
             original_id: orig_id as i32,
             transform,
             back_side,
+            has_normals: run_has_normals,
         });
     }
 
@@ -230,10 +236,18 @@ impl Manifold {
 }
 
 pub fn get_mesh_gl(&self, normal_idx: i32) -> MeshGL {
-    let _ = normal_idx;
+    // Per #1718: GetMeshGL(-1) auto-substitutes slot 0 when CalculateNormals
+    // recorded world-frame normals on every meshID. A non-negative idx is the
+    // legacy interface; >= 0 means "interpret this extra-prop slot as normals
+    // and normalize it on export (transforming legacy per-mesh-frame runs)".
+    let mut normal_idx = normal_idx;
+    if normal_idx < 0 && self.imp.all_have_normals() {
+        normal_idx = 0;
+    }
+    let extra_prop = self.imp.num_prop;
+    let update_normals = normal_idx >= 0 && (normal_idx as usize) + 3 <= extra_prop;
     let mut out = MeshGL::default();
     let num_tri = self.imp.num_tri();
-    let extra_prop = self.imp.num_prop;
     out.num_prop = 3 + extra_prop as u32;
     // C++: for float output, floor tolerance at float_epsilon * bBox.Scale()
     // to avoid catastrophic cancellation in RelatedGL checks.
@@ -263,6 +277,17 @@ pub fn get_mesh_gl(&self, normal_idx: i32) -> MeshGL {
     out.face_id.resize(num_tri, 0);
     let mut mesh_id_transform = self.imp.mesh_relation.mesh_id_transform.clone();
     let mut last_mesh_id = -1i32;
+    // run index that each output triangle belongs to (for per-vertex normal
+    // export below). -1 until the first run is pushed.
+    let mut tri_run = vec![0usize; num_tri];
+    let mut current_run: i32 = -1;
+
+    // run_flags layout (#1718): bit 0 = backside, bit 1 = hasNormals (slot 0..2
+    // of the extra properties is world-frame normals; consumers skip
+    // re-applying run_transform to it).
+    let run_flags_for = |rel: &crate::types::Relation| -> u8 {
+        (if rel.back_side { 1u8 } else { 0 }) | (if rel.has_normals { 2u8 } else { 0 })
+    };
 
     for new_tri in 0..num_tri {
         let old_tri = tri_new2old[new_tri];
@@ -281,7 +306,7 @@ pub fn get_mesh_gl(&self, normal_idx: i32) -> MeshGL {
             let rel = mesh_id_transform.remove(&mesh_id).unwrap_or_default();
             out.run_index.push(3 * new_tri as u32);
             out.run_original_id.push(rel.original_id.max(0) as u32);
-            out.run_flags.push(if rel.back_side { 1 } else { 0 });
+            out.run_flags.push(run_flags_for(&rel));
             // C++: runTransform only emitted for non-original manifolds
             if !is_original {
                 for col in 0..4 {
@@ -291,13 +316,15 @@ pub fn get_mesh_gl(&self, normal_idx: i32) -> MeshGL {
                 }
             }
             last_mesh_id = mesh_id;
+            current_run += 1;
         }
+        tri_run[new_tri] = current_run.max(0) as usize;
     }
     // Add runs for originals that contributed no tris
     for (_id, rel) in &mesh_id_transform {
         out.run_index.push(3 * num_tri as u32);
         out.run_original_id.push(rel.original_id.max(0) as u32);
-        out.run_flags.push(if rel.back_side { 1 } else { 0 });
+        out.run_flags.push(run_flags_for(rel));
         if !is_original {
             for col in 0..4 {
                 for row in 0..3 {
@@ -368,6 +395,31 @@ pub fn get_mesh_gl(&self, normal_idx: i32) -> MeshGL {
                 } else {
                     for _ in 0..num_prop { out.vert_properties.push(0.0); }
                 }
+
+                // Per #1718: normalize the requested normal slot on export. Runs
+                // that already carry world-frame normals (hasNormals bit) just
+                // get normalized; legacy runs without the bit are interpreted as
+                // per-mesh-frame and rotated to world via the inverse-frame
+                // transform first.
+                if update_normals {
+                    let ni = normal_idx as usize;
+                    let off = out.vert_properties.len() - num_prop + ni;
+                    let mut n = Vec3::new(
+                        out.vert_properties[off] as f64,
+                        out.vert_properties[off + 1] as f64,
+                        out.vert_properties[off + 2] as f64,
+                    );
+                    let run = tri_run[new_tri];
+                    let run_has_n = !is_original && (out.run_flags[run] & 2) != 0;
+                    if !is_original && !run_has_n {
+                        n = normal_transform_for_run(&out.run_transform, run, out.run_flags[run]) * n;
+                    }
+                    n = crate::smoothing::safe_normalize(n);
+                    out.vert_properties[off] = n.x as f32;
+                    out.vert_properties[off + 1] = n.y as f32;
+                    out.vert_properties[off + 2] = n.z as f32;
+                }
+
                 vert_prop_pairs[vert].push((prop, idx));
 
                 // First slot for this geometric vertex is the canonical merge target.
@@ -519,3 +571,24 @@ fn apply_epsilon(&mut self, epsilon: f64) {
     self.imp.set_epsilon(epsilon, false);
 }
 } // impl Manifold
+
+/// Per-run normal transform for the legacy export path (slot interpreted as
+/// per-mesh-frame normals on a run without the hasNormals bit). Reconstructs
+/// `NormalTransform(runTransform) * (backside ? -1 : 1)` from the flat
+/// column-major run_transform buffer. Matches C++ GetMeshGLImpl. (#1718)
+fn normal_transform_for_run(run_transform: &[f32], run: usize, flags: u8) -> crate::linalg::Mat3 {
+    use crate::linalg::{Mat3, Vec3};
+    let b = 12 * run;
+    // run_transform[b + 3*col + row] = transform[col][row]; cols 0..2 = 3x3 part.
+    let col = |j: usize| {
+        Vec3::new(
+            run_transform[b + 3 * j] as f64,
+            run_transform[b + 3 * j + 1] as f64,
+            run_transform[b + 3 * j + 2] as f64,
+        )
+    };
+    let m3 = Mat3::from_cols(col(0), col(1), col(2));
+    let sign = if (flags & 1) != 0 { -1.0 } else { 1.0 };
+    // NormalTransform(M) = inverse(transpose(M)).
+    m3.transpose().inverse() * sign
+}

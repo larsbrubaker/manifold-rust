@@ -801,9 +801,6 @@ fn test_cpp_mesh_gl_round_trip() {
 
 /// C++ TEST(Boolean, Normals) — preserve per-vertex normals through booleans and MeshGL round-trip.
 #[test]
-#[ignore = "Blocked on #1718 normals-on-Manifold: backside runs (run_flags hasNormals bit) \
-            need their normals negated and auto-substituted on get_mesh_gl. Tracked in the \
-            v3.5.0 medium-priority feature task."]
 fn test_cpp_normals() {
     let mut cube_gl = super::cube_stl();
     cube_gl.merge();

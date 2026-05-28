@@ -408,6 +408,10 @@ impl ManifoldImpl {
 
     /// Set up the mesh relation for a newly created original mesh.
     pub fn initialize_original(&mut self) {
+        // Per C++ #1718: preserve the AND-across-old-Relations hasNormals state
+        // so AsOriginal keeps the recording when it builds a fresh Relation.
+        // Primitives start with an empty map → all_have_normals() is false.
+        let had_normals = self.all_have_normals();
         let mesh_id = reserve_ids(1) as i32;
         self.mesh_relation.original_id = mesh_id;
         let num_tri = self.num_tri();
@@ -423,7 +427,87 @@ impl ManifoldImpl {
             original_id: mesh_id,
             transform: Mat3x4::identity(),
             back_side: false,
+            has_normals: had_normals,
         });
+    }
+
+    /// True only when every meshID carries normals at slot 0..2 — the condition
+    /// under which `get_mesh_gl(-1)` can safely auto-substitute that slot. A
+    /// mixed Boolean output (some meshIDs with normals, some without) returns
+    /// false; the output MeshGL's per-run bit 1 still marks the with-normals
+    /// runs individually. AND semantics across meshIDs. Per C++ #1718.
+    pub fn all_have_normals(&self) -> bool {
+        let map = &self.mesh_relation.mesh_id_transform;
+        !map.is_empty() && map.values().all(|m| m.has_normals)
+    }
+
+    /// True iff the meshID owning `tri` has hasNormals set. False when the
+    /// meshID isn't in mesh_id_transform (treat as no-normals). Per C++ #1718.
+    pub fn tri_has_normals(&self, tri: usize) -> bool {
+        let mesh_id = self.mesh_relation.tri_ref[tri].mesh_id;
+        self.mesh_relation
+            .mesh_id_transform
+            .get(&mesh_id)
+            .map(|m| m.has_normals)
+            .unwrap_or(false)
+    }
+
+    /// Eager-transform slot 0..2 of `properties` for propVerts whose meshID
+    /// carries hasNormals. Used by both `transform` and `compose` so world-frame
+    /// normals stay in sync with vert_pos / face_normal across any sequence of
+    /// transforms (including mixed-input Boolean/Compose outputs where some
+    /// meshIDs carry normals and others don't). Per C++ #1718.
+    ///
+    /// `properties` is laid out as `properties[(offset + prop) * stride + i]`,
+    /// so callers can target an in-place properties_ vector (offset=0) or a
+    /// per-node slice of a combined array (offset=propVertIndices,
+    /// stride=numPropOut). Re-normalizes as it transforms so non-orthogonal
+    /// transforms (scale) and upstream barycentric interpolation don't leave
+    /// non-unit values that compound downstream.
+    pub fn eager_transform_prop_normals(
+        halfedge: &[crate::types::Halfedge],
+        mesh_relation: &crate::types::MeshRelationD,
+        normal_transform: crate::linalg::Mat3,
+        properties: &mut [f64],
+        num_prop_vert: usize,
+        stride: usize,
+        offset: usize,
+    ) {
+        // OR semantics (any meshID has normals), unlike all_have_normals():
+        // mixed inputs still need the per-meshID iteration below to rotate the
+        // with-normals subset.
+        if !mesh_relation.mesh_id_transform.values().any(|m| m.has_normals) {
+            return;
+        }
+        let tri_has_normals = |tri: usize| -> bool {
+            let mid = mesh_relation.tri_ref[tri].mesh_id;
+            mesh_relation
+                .mesh_id_transform
+                .get(&mid)
+                .map(|m| m.has_normals)
+                .unwrap_or(false)
+        };
+        let mut visited = vec![false; num_prop_vert];
+        for e in 0..halfedge.len() {
+            if !tri_has_normals(e / 3) {
+                continue;
+            }
+            let prop = halfedge[e].prop_vert;
+            if prop < 0 {
+                continue;
+            }
+            let prop = prop as usize;
+            if visited[prop] {
+                continue;
+            }
+            visited[prop] = true;
+            let base = (offset + prop) * stride;
+            let n = Vec3::new(properties[base], properties[base + 1], properties[base + 2]);
+            let nt = safe_normalize(normal_transform * n);
+            properties[base] = nt.x;
+            properties[base + 1] = nt.y;
+            properties[base + 2] = nt.z;
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -707,6 +791,23 @@ impl ManifoldImpl {
         result.vert_normal = self.vert_normal.iter().map(|&n| {
             safe_normalize(normal_t * n)
         }).collect();
+
+        // Per #1718: the properties clone above doesn't go through the vertPos /
+        // faceNormal transform, so eager-transform slot 0..2 per-meshID to keep
+        // recorded world-frame normals in sync. tri_ref / hasNormals flags are
+        // identical in self and result; iterate by prop vert (winding flip
+        // below only reorders halfedges, not prop assignments).
+        if self.num_prop >= 3 {
+            Self::eager_transform_prop_normals(
+                &self.halfedge,
+                &self.mesh_relation,
+                normal_t,
+                &mut result.properties,
+                self.num_prop_vert(),
+                self.num_prop,
+                0,
+            );
+        }
 
         let invert = m3.determinant() < 0.0;
 

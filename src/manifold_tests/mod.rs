@@ -69,7 +69,10 @@ fn related_gl_check_normals(out: &Manifold, originals: &[&MeshGL]) {
 
 fn related_gl_impl(out: &Manifold, originals: &[&MeshGL], check_normals: bool, update_normals: bool) {
     assert!(!out.is_empty(), "RelatedGL: output should not be empty");
-    let mut output = out.get_mesh_gl(0);
+    // Match C++ RelatedGL: GetMeshGL() (= -1) auto-substitutes slot 0 only when
+    // every meshID recorded normals; mixed outputs keep raw slots for the
+    // per-run normalization below.
+    let mut output = out.get_mesh_gl(-1);
     let num_run = output.run_original_id.len();
     // Base tolerance from the output manifold; per-run tolerance also includes in_mesh.tolerance
     let base_tolerance = 3.0 * out.get_tolerance().max(output.tolerance as f64);
@@ -87,7 +90,44 @@ fn related_gl_impl(out: &Manifold, originals: &[&MeshGL], check_normals: bool, u
     }).collect();
 
     if update_normals {
-        output.update_normals(3);
+        // Per C++ #1718 RelatedGL: bring slot 3..5 into world frame and
+        // normalize. hasNormals runs (run_flags bit 1) are already world-frame
+        // (identity); others need the inverse-transpose of the per-run linear
+        // transform (with a backside sign flip). Replaces the removed
+        // MeshGL::UpdateNormals.
+        use crate::linalg::{Mat3, Vec3};
+        let out_np = output.num_prop as usize;
+        let mut vert_updated = vec![false; output.num_vert()];
+        for run in 0..num_run {
+            let nt: Option<Mat3> = if output.has_normals(run) {
+                None
+            } else {
+                let sign = if output.backside(run) { -1.0 } else { 1.0 };
+                run_transforms[run].map(|t| {
+                    let col = |j: usize| Vec3::new(t[3 * j] as f64, t[3 * j + 1] as f64, t[3 * j + 2] as f64);
+                    Mat3::from_cols(col(0), col(1), col(2)).transpose().inverse() * sign
+                })
+            };
+            let start = output.run_index[run] as usize;
+            let end = output.run_index[run + 1] as usize;
+            for k in start..end {
+                let v = output.tri_verts[k] as usize;
+                if vert_updated[v] { continue; }
+                vert_updated[v] = true;
+                let base = v * out_np + 3;
+                let mut n = Vec3::new(
+                    output.vert_properties[base] as f64,
+                    output.vert_properties[base + 1] as f64,
+                    output.vert_properties[base + 2] as f64,
+                );
+                if let Some(m) = nt { n = m * n; }
+                let len = (n.x * n.x + n.y * n.y + n.z * n.z).sqrt();
+                if len > 0.0 { n = n / len; }
+                output.vert_properties[base] = n.x as f32;
+                output.vert_properties[base + 1] = n.y as f32;
+                output.vert_properties[base + 2] = n.z as f32;
+            }
+        }
     }
 
     for run in 0..num_run {

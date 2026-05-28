@@ -202,7 +202,10 @@ fn test_cpp_smooth_torus() {
         .refine_to_length(0.1)
         .calculate_curvature(-1, 0)
         .calculate_normals(1, 60.0);
-    let out = smooth.get_mesh_gl(0);
+    // C++ uses GetMeshGL() (= -1, no normal processing): slot 0 here is mean
+    // curvature, and CalculateNormals(1) at a non-standard slot is not recorded,
+    // so nothing is auto-substituted.
+    let out = smooth.get_mesh_gl(-1);
     let num_prop = out.num_prop as usize;
 
     // Each vertex has 7 properties: xyz (pos), mean-curvature, normal (3)

@@ -113,13 +113,15 @@ impl ManifoldImpl {
             self.properties[base + 1],
             self.properties[base + 2],
         );
-        // Apply the mesh transform to convert stored (original-space) normals to world space.
-        // Matches C++ GetNormal which multiplies by GetNormalTransform().
+        // Per #1718: hasNormals=true means CalculateNormals (or a flagged
+        // round-trip) wrote world-frame values, kept world-frame through
+        // Transform/Compose — return them directly. Without the flag, treat
+        // the slot as per-mesh frame and re-rotate to world (legacy contract
+        // for hand-built MeshGL inputs that don't set the bit).
         let mesh_id = self.mesh_relation.tri_ref[halfedge / 3].mesh_id;
-        if let Some(rel) = self.mesh_relation.mesh_id_transform.get(&mesh_id) {
-            rel.get_normal_transform() * normal
-        } else {
-            normal
+        match self.mesh_relation.mesh_id_transform.get(&mesh_id) {
+            Some(rel) if !rel.has_normals => rel.get_normal_transform() * normal,
+            _ => normal,
         }
     }
 
@@ -321,9 +323,15 @@ impl ManifoldImpl {
                 // Vertex has single normal. Per #1724 this is always the vertex
                 // pseudo-normal (no flat-face substitution).
                 let world_normal = self.vert_normal[vert];
-                // Store in original space so GetNormal can reconstruct world normal
-                // (inv_transform is identity in the common eager-transform case).
-                let normal = inv_transform * world_normal;
+                // Per #1718: slot 0 (standard) stores world-frame directly — the
+                // eager-transform contract keeps it in sync with vert_pos /
+                // face_normal. Legacy non-zero idx stores per-mesh frame, which
+                // get_mesh_gl's run transform recovers to world on export.
+                let normal = if normal_idx == 0 {
+                    world_normal
+                } else {
+                    inv_transform * world_normal
+                };
 
                 let mut last_prop: i32 = -1;
                 // ForVert traversal
@@ -435,10 +443,14 @@ impl ManifoldImpl {
                 }
 
                 // Per #1724: transform into the storage frame first, then
-                // normalize (the SafeNormalize moved to after the transform).
-                // inv_transform is identity in the common eager-transform case.
+                // normalize. Per #1718: only the legacy non-zero idx applies the
+                // inv_transform; slot 0 stores world-frame directly.
                 for n in normals.iter_mut() {
-                    *n = safe_normalize(inv_transform * *n);
+                    *n = if normal_idx == 0 {
+                        safe_normalize(*n)
+                    } else {
+                        safe_normalize(inv_transform * *n)
+                    };
                 }
 
                 // Assign property vertices.
