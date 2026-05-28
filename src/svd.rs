@@ -91,7 +91,11 @@ fn approximate_givens_quaternion(a: Symmetric3x3) -> Givens {
         sh: a.m_10,
     };
     let mut b = GAMMA * g.sh * g.sh < g.ch * g.ch;
-    let w = 1.0 / g.ch.hypot(g.sh);
+    // Per C++ #1681: use sqrt(a*a + b*b) instead of hypot. hypot is not
+    // required to be correctly-rounded (IEEE 754 §9.2), so libms may round
+    // it differently; *, +, and sqrt are correctly-rounded, giving bit-exact
+    // cross-platform results inside SVD's iterative reductions.
+    let w = 1.0 / (g.ch * g.ch + g.sh * g.sh).sqrt();
     if !w.is_finite() {
         b = false;
     }
@@ -183,14 +187,20 @@ fn sort_singular_values(b: &mut Mat3, v: &mut Mat3) {
 }
 
 fn qr_givens_quaternion(a1: f64, a2: f64) -> Givens {
-    let rho = a1.hypot(a2);
+    // Per C++ #1681: sqrt(a*a + b*b) instead of hypot for cross-platform
+    // bit-exactness (see approximate_givens_quaternion).
+    let rho = (a1 * a1 + a2 * a2).sqrt();
     let mut g = Givens {
         ch: a1.abs() + rho.max(SVD_EPSILON),
         sh: if rho > SVD_EPSILON { a2 } else { 0.0 },
     };
     let b = a1 < 0.0;
     cond_swap(b, &mut g.sh, &mut g.ch);
-    let w = 1.0 / g.ch.hypot(g.sh);
+    // Per C++ #1681: use sqrt(a*a + b*b) instead of hypot. hypot is not
+    // required to be correctly-rounded (IEEE 754 §9.2), so libms may round
+    // it differently; *, +, and sqrt are correctly-rounded, giving bit-exact
+    // cross-platform results inside SVD's iterative reductions.
+    let w = 1.0 / (g.ch * g.ch + g.sh * g.sh).sqrt();
     g.ch *= w;
     g.sh *= w;
     g

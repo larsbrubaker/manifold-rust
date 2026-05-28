@@ -322,9 +322,14 @@ impl ManifoldImpl {
             }
         }
 
-        // Sort halfedge indices by edge key
+        // Sort halfedge indices by edge key. C++ CreateHalfedges uses a
+        // STABLE sort here (impl.cpp), and the #1687 fix ensures its parallel
+        // stable_sort matches std::stable_sort. When two halfedges share an
+        // edge key (duplicate directed edges in degenerate/intermediate
+        // meshes) the tie must break on original halfedge-index order, so we
+        // use a stable sort to stay bit-identical to C++.
         let mut ids: Vec<usize> = (0..num_halfedge).collect();
-        ids.sort_unstable_by_key(|&i| edge_keys[i]);
+        ids.sort_by_key(|&i| edge_keys[i]);
 
         // ids[0..num_edge] = backward halfedges (startVert > endVert), sorted by (min,max)
         // ids[num_edge..] = forward halfedges (startVert < endVert), sorted by (min,max)
