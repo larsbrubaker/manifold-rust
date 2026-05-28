@@ -3,10 +3,18 @@
 This document tracks the incremental port of [Manifold](https://github.com/elalish/manifold) to Rust.
 Every phase must pass all tests with **exact numerical match** to the C++ before the next phase begins.
 
-## Current Status: 493 tests passing, 0 failing, 22 ignored
+## Current Status: 495 tests passing, 0 failing, 22 ignored
 
-**Date:** 2026-04-17
+**Date:** 2026-05-28
 **C++ reference target:** **v3.5.0** (submodule at tag `v3.5.0`, commit `541c33bd`)
+
+**v3.5.0 port progress (2026-05-28):** Completed the high-priority numeric ports —
+CalculateNormals rewrite (#1724), smoothing fixes (#1671 smoothing part), svd `sqrt`
+(#1681), stable halfedge sort (#1687 parity) — and error propagation (#1659). All smooth
+tests now match v3.5.0 exactly (TruncatedCone, ToLength, MissingNormalsCone, Csaszar,
+MeshRelationRefinePrecision, SDF.SineSurface). #1673 confirmed N/A. Remaining: #1718
+normals-on-Manifold (large; blocks Boolean.Normals), #1671 edge_op/simplify part (may
+unblock tolerance/coplanar tests).
 **Total Rust tests:** ~264 unique test functions
 **Total C++ tests:** 191+ (excluding manifoldc and samples; new RayCast and ErrorPropagation tests added in C++ v3.4.1)
 **Ported C++ tests:** ~262 (99%)
@@ -25,23 +33,36 @@ binding/README noise, the substantive deltas are:
 - ✅ RayCast promoted to public API (#1645) — `raycast.rs`, 12 tests.
 
 **🔴 High priority — changes numeric output (exact-match mandate):**
-- [ ] **CalculateNormals rewrite (#1724)** — C++ dropped the `FlatFaces`/`VertFlatFace`
-  special-casing; normals now use `vertNormal_` directly and the sharp-edge test is just
-  `dihedral > minSharpAngle`. Rust `smoothing.rs` still has the old flat-face logic.
-- [ ] **Default `minSharpAngle` 60° → 52.5°** (#1718) for `CalculateNormals`, `SmoothOut`,
-  `SmoothByNormals`. Rust takes explicit params — audit callers/tests for 60 vs 52.5.
-- [ ] **`minSharpAngle=0` ripples fix (#1634)** — depends on the rewrite above.
-- [ ] **More smoothing / missing-normals fixes** (#1671, #1651, #1716).
-- [ ] **mergeRec sort stability** when pivot comes from right half (#1687) — check `sort.rs`.
-- [ ] **`std::sqrt` in svd.h** for FP determinism (#1681) — trivial; verify svd usage.
+- [x] **CalculateNormals rewrite (#1724)** — dropped `FlatFaces`/`VertFlatFace` special-casing
+  in `set_normals`; sharp-edge test is now just `dihedral > minSharpAngle` (via `angle_between`),
+  single-vertex normal is always the pseudo-normal, pseudo-normal edge vector simplified, group
+  normal transformed before the final `safe_normalize`. `smooth_out` now always uses
+  `sharpen_edges` (self-consistent; dropped the min_smoothness==0 SetNormals path).
+- [x] **Default `minSharpAngle` 60° → 52.5°** (#1718) — applied in the ported tests
+  (TruncatedCone, Boolean.Normals) where C++ uses the default.
+- [x] **`minSharpAngle=0` ripples fix (#1634)** — `K_MIN_SHARP_ANGLE=1e-4` floor + `angle_between`
+  already present; preserved through the rewrite.
+- [x] **Smoothing / missing-normals fixes** (#1671 smoothing.cpp part: `tangent_from_normal`
+  bi-tangent, `equal_normals` >0.9999 tolerance, `distribute_tangents` fixes; #1651 missing-normal
+  machinery + InterpTri finite guard already present; #1716 SetNormals refactor superseded by #1724).
+  ⚠️ #1671 **edge_op.cpp** part (CollapseEdge tol/firstNewVert, tolerance stacking) NOT yet ported.
+- [x] **Stable halfedge sort (#1687 parity)** — `create_halfedges` now uses `sort_by_key`
+  (stable) to match C++ `stable_sort`; tied edge keys break on original index order.
+- [x] **`std::sqrt` in svd.rs** (#1681) — three `hypot(a,b)` → `sqrt(a*a+b*b)`.
 
 **🟡 Medium priority — new public features:**
-- [ ] **Normals recorded on Manifold** (#1718) — auto-substitute on `GetMeshGL`, round-trip
-  via `runFlags` bit, new `HasNormals(run)`. Rust has plumbing but not auto-substitution.
-- [ ] **Error propagation for Minkowski / SplitByPlane / Mirror** (#1659) — Rust only did #1637.
-- [ ] **CsgOpNode destructor corrupting shared subtrees fix** (#1673) — verify `csg_tree.rs`.
-- [ ] New `Error` variants: `InvalidTangents` (#1718), `Cancelled` (#1663).
+- [ ] **Normals recorded on Manifold** (#1718) — auto-substitute on `get_mesh_gl`, round-trip
+  via `run_flags` hasNormals bit, backside-run negation, #1602 consistent normal transforms.
+  Rust has `run_flags` plumbing but not auto-substitution. **Largest remaining item; blocks the
+  ignored Boolean.Normals test.**
+- [x] **Error propagation for Minkowski / SplitByPlane / Mirror** (#1659) — guards added,
+  3 new tests pass.
+- [x] **CsgOpNode destructor corrupting shared subtrees fix (#1673)** — N/A to Rust
+  (`Arc<ManifoldImpl>` + automatic `Drop`; no manual `UseCount`-based impl-emptying).
+- [ ] New `Error` variants: `InvalidTangents` (#1718), `Cancelled` (#1663) — pending with #1718.
 - [ ] Import/Export fixes + topological 3MF sort (#1705, #1685, #1692) — likely N/A (no 3MF).
+  Note: the ignored `craycloud` tests fail on non-manifold OBJ import (663 halfedges), which the
+  #1685 "improve import transformation" work may address.
 
 **🟢 Out of scope — infrastructure not central to a sequential numeric port:**
 - ExecutionContext (progress + mid-boolean cancellation, ~9 commits #1663/#1669/#1699/#1704)
