@@ -801,14 +801,17 @@ fn test_cpp_mesh_gl_round_trip() {
 
 /// C++ TEST(Boolean, Normals) — preserve per-vertex normals through booleans and MeshGL round-trip.
 #[test]
-#[ignore = "Normal orientation mismatch after nested difference: backside run normals dot opposite face"]
+#[ignore = "Blocked on #1718 normals-on-Manifold: backside runs (run_flags hasNormals bit) \
+            need their normals negated and auto-substituted on get_mesh_gl. Tracked in the \
+            v3.5.0 medium-priority feature task."]
 fn test_cpp_normals() {
     let mut cube_gl = super::cube_stl();
     cube_gl.merge();
     let cube = Manifold::from_mesh_gl(&cube_gl);
-    // C++ Sphere(60) with default segments resolves to Quality::GetCircularSegments(60)
+    // C++ Sphere(60) with default segments resolves to Quality::GetCircularSegments(60).
+    // CalculateNormals(0) uses the v3.5.0 default minSharpAngle of 52.5°.
     let segs = crate::types::Quality::get_circular_segments(60.0);
-    let sphere = Manifold::sphere(60.0, segs).calculate_normals(0, 60.0);
+    let sphere = Manifold::sphere(60.0, segs).calculate_normals(0, 52.5);
     let sphere_gl = sphere.get_mesh_gl(0);
 
     // cube.scale(100) - (sphere.rotate(180) - sphere.scale(0.5).rotate(90).translate(40,40,40))
