@@ -6,10 +6,49 @@ Every phase must pass all tests with **exact numerical match** to the C++ before
 ## Current Status: 493 tests passing, 0 failing, 22 ignored
 
 **Date:** 2026-04-17
+**C++ reference target:** **v3.5.0** (submodule at tag `v3.5.0`, commit `541c33bd`)
 **Total Rust tests:** ~264 unique test functions
 **Total C++ tests:** 191+ (excluding manifoldc and samples; new RayCast and ErrorPropagation tests added in C++ v3.4.1)
 **Ported C++ tests:** ~262 (99%)
 **Remaining C++ tests to port:** ~2 (InterpolatedNormals — huge inline mesh; Ring — needs mgl_0/mgl_1 mesh data)
+
+## v3.5.0 Upgrade — Gap Analysis (2026-05-28)
+
+The submodule was advanced from v3.4.1 → **v3.5.0** (73 commits). Two changes were
+already absorbed ahead of the bump; the rest are tracked below. Filtering out editor/CI/
+binding/README noise, the substantive deltas are:
+
+**Already ported (pre-bump):**
+- ✅ Deterministic trig (#1606) — `src/math.rs`, musl-derived `sin/cos/tan/acos/asin/atan/
+  atan2`, wired into `linalg.rs`, `cross_section.rs`, `face_op.rs`.
+- ✅ `run_flags` on MeshGL (#1718 plumbing) — `types.rs`, round-tripped in `manifold_meshgl.rs`.
+- ✅ RayCast promoted to public API (#1645) — `raycast.rs`, 12 tests.
+
+**🔴 High priority — changes numeric output (exact-match mandate):**
+- [ ] **CalculateNormals rewrite (#1724)** — C++ dropped the `FlatFaces`/`VertFlatFace`
+  special-casing; normals now use `vertNormal_` directly and the sharp-edge test is just
+  `dihedral > minSharpAngle`. Rust `smoothing.rs` still has the old flat-face logic.
+- [ ] **Default `minSharpAngle` 60° → 52.5°** (#1718) for `CalculateNormals`, `SmoothOut`,
+  `SmoothByNormals`. Rust takes explicit params — audit callers/tests for 60 vs 52.5.
+- [ ] **`minSharpAngle=0` ripples fix (#1634)** — depends on the rewrite above.
+- [ ] **More smoothing / missing-normals fixes** (#1671, #1651, #1716).
+- [ ] **mergeRec sort stability** when pivot comes from right half (#1687) — check `sort.rs`.
+- [ ] **`std::sqrt` in svd.h** for FP determinism (#1681) — trivial; verify svd usage.
+
+**🟡 Medium priority — new public features:**
+- [ ] **Normals recorded on Manifold** (#1718) — auto-substitute on `GetMeshGL`, round-trip
+  via `runFlags` bit, new `HasNormals(run)`. Rust has plumbing but not auto-substitution.
+- [ ] **Error propagation for Minkowski / SplitByPlane / Mirror** (#1659) — Rust only did #1637.
+- [ ] **CsgOpNode destructor corrupting shared subtrees fix** (#1673) — verify `csg_tree.rs`.
+- [ ] New `Error` variants: `InvalidTangents` (#1718), `Cancelled` (#1663).
+- [ ] Import/Export fixes + topological 3MF sort (#1705, #1685, #1692) — likely N/A (no 3MF).
+
+**🟢 Out of scope — infrastructure not central to a sequential numeric port:**
+- ExecutionContext (progress + mid-boolean cancellation, ~9 commits #1663/#1669/#1699/#1704)
+  — non-numerical; skip unless cancellation is wanted.
+- Halfedge Refactoring (#1709) — 1,189/808-line structural cleanup, no behavior change.
+- CrossSection backend selector (#1710), concurrent-const-access safety (#1636),
+  affinity_partitioner race (#1664) — threading concerns moot in the sequential port.
 
 ### Recent Additions (2026-04-17)
 
