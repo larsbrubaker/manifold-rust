@@ -5,7 +5,7 @@ This is a **roadmap of remaining work** to finish porting
 not what has already been done (use `git log` for history). Every change must reproduce the
 C++ reference with **exact numerical match** — identical results on identical inputs.
 
-**Status:** 495 passing, 0 failing, 22 ignored.
+**Status:** 504 passing, 0 failing, 21 ignored.
 **C++ reference target:** v3.5.0 (submodule at tag `v3.5.0`, commit `541c33bd`).
 **Core engine:** all 18 phases (linalg → boolean → CSG → cross-section → SDF → minkowski →
 WASM) are implemented. Remaining work is the v3.5.0 deltas below plus the ignored-test
@@ -14,15 +14,6 @@ backlog.
 ---
 
 ## Remaining v3.5.0 work
-
-### #1718 — Normals recorded on Manifold (largest remaining item)
-Record normals on the Manifold and auto-substitute them on `get_mesh_gl`; round-trip via the
-MeshGL `run_flags` hasNormals bit; negate normals for backside (subtractee) runs; apply the
-#1602 consistent normal transformations. The `run_flags` plumbing already exists in
-`types.rs` / `manifold_meshgl.rs`, but auto-substitution and backside negation do not.
-- Also add `Error::InvalidTangents` (#1718) and `Error::Cancelled` (#1663) variants.
-- **Unblocks** the ignored `boolean::test_cpp_normals` (its `RelatedGL` check runs with
-  `checkNormals=true`). C++ ref: bd56861d (#1718), 46135097 (#1602).
 
 ### #1671 — edge_op / simplify part
 The smoothing part of #1671 is done; the `edge_op.cpp` part is not: `CollapseEdge` gains
@@ -46,16 +37,13 @@ stacking" fix.
 
 ---
 
-## Ignored tests (22) — grouped by the work needed to clear them
+## Ignored tests (21) — grouped by the work needed to clear them
 
 ### Just slow in debug — pass in release; not bugs (9)
 `nonconvex_convex_minkowski_sum/difference`, `nonconvex_nonconvex_minkowski_sum/difference`
 (O(n²)), `sdf_blobs`, `sdf_sphere_shell`, `hull_sphere` (1500 seg), `hull_menger_sponge`
 (depth-4), `properties_mingap_stretchy_bracelet`. → Speed up or run in release; no correctness
 work.
-
-### Blocked on #1718 normals feature (1)
-`boolean::test_cpp_normals`.
 
 ### N-way subdivision (2)
 `sphere_tri_count_n25` (8192 vs 5000 tris), `properties_tolerance_sphere`. Current
