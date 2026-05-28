@@ -1,374 +1,122 @@
 # Manifold C++ → Rust Porting Plan
 
-This document tracks the incremental port of [Manifold](https://github.com/elalish/manifold) to Rust.
-Every phase must pass all tests with **exact numerical match** to the C++ before the next phase begins.
+This is a **roadmap of remaining work** to finish porting
+[Manifold](https://github.com/elalish/manifold) to Rust. It tracks what is left to do,
+not what has already been done (use `git log` for history). Every change must reproduce the
+C++ reference with **exact numerical match** — identical results on identical inputs.
 
-## Current Status: 495 tests passing, 0 failing, 22 ignored
+**Status:** 495 passing, 0 failing, 22 ignored.
+**C++ reference target:** v3.5.0 (submodule at tag `v3.5.0`, commit `541c33bd`).
+**Core engine:** all 18 phases (linalg → boolean → CSG → cross-section → SDF → minkowski →
+WASM) are implemented. Remaining work is the v3.5.0 deltas below plus the ignored-test
+backlog.
 
-**Date:** 2026-05-28
-**C++ reference target:** **v3.5.0** (submodule at tag `v3.5.0`, commit `541c33bd`)
+---
 
-**v3.5.0 port progress (2026-05-28):** Completed the high-priority numeric ports —
-CalculateNormals rewrite (#1724), smoothing fixes (#1671 smoothing part), svd `sqrt`
-(#1681), stable halfedge sort (#1687 parity) — and error propagation (#1659). All smooth
-tests now match v3.5.0 exactly (TruncatedCone, ToLength, MissingNormalsCone, Csaszar,
-MeshRelationRefinePrecision, SDF.SineSurface). #1673 confirmed N/A. Remaining: #1718
-normals-on-Manifold (large; blocks Boolean.Normals), #1671 edge_op/simplify part (may
-unblock tolerance/coplanar tests).
-**Total Rust tests:** ~264 unique test functions
-**Total C++ tests:** 191+ (excluding manifoldc and samples; new RayCast and ErrorPropagation tests added in C++ v3.4.1)
-**Ported C++ tests:** ~262 (99%)
-**Remaining C++ tests to port:** ~2 (InterpolatedNormals — huge inline mesh; Ring — needs mgl_0/mgl_1 mesh data)
+## Remaining v3.5.0 work
 
-## v3.5.0 Upgrade — Gap Analysis (2026-05-28)
+### #1718 — Normals recorded on Manifold (largest remaining item)
+Record normals on the Manifold and auto-substitute them on `get_mesh_gl`; round-trip via the
+MeshGL `run_flags` hasNormals bit; negate normals for backside (subtractee) runs; apply the
+#1602 consistent normal transformations. The `run_flags` plumbing already exists in
+`types.rs` / `manifold_meshgl.rs`, but auto-substitution and backside negation do not.
+- Also add `Error::InvalidTangents` (#1718) and `Error::Cancelled` (#1663) variants.
+- **Unblocks** the ignored `boolean::test_cpp_normals` (its `RelatedGL` check runs with
+  `checkNormals=true`). C++ ref: bd56861d (#1718), 46135097 (#1602).
 
-The submodule was advanced from v3.4.1 → **v3.5.0** (73 commits). Two changes were
-already absorbed ahead of the bump; the rest are tracked below. Filtering out editor/CI/
-binding/README noise, the substantive deltas are:
+### #1671 — edge_op / simplify part
+The smoothing part of #1671 is done; the `edge_op.cpp` part is not: `CollapseEdge` gains
+`tol`/`firstNewVert` params, reworked `CollapseShortEdges`/`CollapseColinearEdges`
+("improved boolean edge collapse"), plus the properties.cpp simplify cleanup and "tolerance
+stacking" fix.
+- **May unblock** the tolerance/coplanar ignored tests (`almost_coplanar`,
+  `properties_tolerance_sphere`). C++ ref: 58b328a9 (#1671).
 
-**Already ported (pre-bump):**
-- ✅ Deterministic trig (#1606) — `src/math.rs`, musl-derived `sin/cos/tan/acos/asin/atan/
-  atan2`, wired into `linalg.rs`, `cross_section.rs`, `face_op.rs`.
-- ✅ `run_flags` on MeshGL (#1718 plumbing) — `types.rs`, round-tripped in `manifold_meshgl.rs`.
-- ✅ RayCast promoted to public API (#1645) — `raycast.rs`, 12 tests.
+### Likely N/A — confirm before skipping
+- Import/Export fixes + topological 3MF sort (#1705, #1685, #1692) — no 3MF in Rust. But
+  #1685 "improve import transformation" may fix the non-manifold OBJ load behind the
+  `craycloud` tests; worth checking when tackling import.
 
-**🔴 High priority — changes numeric output (exact-match mandate):**
-- [x] **CalculateNormals rewrite (#1724)** — dropped `FlatFaces`/`VertFlatFace` special-casing
-  in `set_normals`; sharp-edge test is now just `dihedral > minSharpAngle` (via `angle_between`),
-  single-vertex normal is always the pseudo-normal, pseudo-normal edge vector simplified, group
-  normal transformed before the final `safe_normalize`. `smooth_out` now always uses
-  `sharpen_edges` (self-consistent; dropped the min_smoothness==0 SetNormals path).
-- [x] **Default `minSharpAngle` 60° → 52.5°** (#1718) — applied in the ported tests
-  (TruncatedCone, Boolean.Normals) where C++ uses the default.
-- [x] **`minSharpAngle=0` ripples fix (#1634)** — `K_MIN_SHARP_ANGLE=1e-4` floor + `angle_between`
-  already present; preserved through the rewrite.
-- [x] **Smoothing / missing-normals fixes** (#1671 smoothing.cpp part: `tangent_from_normal`
-  bi-tangent, `equal_normals` >0.9999 tolerance, `distribute_tangents` fixes; #1651 missing-normal
-  machinery + InterpTri finite guard already present; #1716 SetNormals refactor superseded by #1724).
-  ⚠️ #1671 **edge_op.cpp** part (CollapseEdge tol/firstNewVert, tolerance stacking) NOT yet ported.
-- [x] **Stable halfedge sort (#1687 parity)** — `create_halfedges` now uses `sort_by_key`
-  (stable) to match C++ `stable_sort`; tied edge keys break on original index order.
-- [x] **`std::sqrt` in svd.rs** (#1681) — three `hypot(a,b)` → `sqrt(a*a+b*b)`.
-
-**🟡 Medium priority — new public features:**
-- [ ] **Normals recorded on Manifold** (#1718) — auto-substitute on `get_mesh_gl`, round-trip
-  via `run_flags` hasNormals bit, backside-run negation, #1602 consistent normal transforms.
-  Rust has `run_flags` plumbing but not auto-substitution. **Largest remaining item; blocks the
-  ignored Boolean.Normals test.**
-- [x] **Error propagation for Minkowski / SplitByPlane / Mirror** (#1659) — guards added,
-  3 new tests pass.
-- [x] **CsgOpNode destructor corrupting shared subtrees fix (#1673)** — N/A to Rust
-  (`Arc<ManifoldImpl>` + automatic `Drop`; no manual `UseCount`-based impl-emptying).
-- [ ] New `Error` variants: `InvalidTangents` (#1718), `Cancelled` (#1663) — pending with #1718.
-- [ ] Import/Export fixes + topological 3MF sort (#1705, #1685, #1692) — likely N/A (no 3MF).
-  Note: the ignored `craycloud` tests fail on non-manifold OBJ import (663 halfedges), which the
-  #1685 "improve import transformation" work may address.
-
-**🟢 Out of scope — infrastructure not central to a sequential numeric port:**
-- ExecutionContext (progress + mid-boolean cancellation, ~9 commits #1663/#1669/#1699/#1704)
-  — non-numerical; skip unless cancellation is wanted.
-- Halfedge Refactoring (#1709) — 1,189/808-line structural cleanup, no behavior change.
+### Out of scope (do not re-litigate)
+- ExecutionContext (progress + mid-boolean cancellation, #1663/#1669/#1699/#1704) —
+  non-numerical; only needed if cancellation is wanted.
+- Halfedge Refactoring (#1709) — structural cleanup, no behavior change.
 - CrossSection backend selector (#1710), concurrent-const-access safety (#1636),
   affinity_partitioner race (#1664) — threading concerns moot in the sequential port.
 
-### Recent Additions (2026-04-17)
+---
 
-**Sweep test** (2026-04-17): Ported `BooleanComplex.Sweep` — profile + partial-revolve
-+ extrusion sweep + BatchBoolean with ~90 path points. Marked `#[ignore]` — exposes a
-real bug in `edge_op::update_vert` (follows an unpaired halfedge with pairedHalfedge=-1,
-triggering an out-of-bounds index). C++ masks this behind `processOverlaps=true`.
+## Ignored tests (22) — grouped by the work needed to clear them
 
-**Degenerate 2D hull fix** (2026-04-17): `quickhull_algo::build_mesh` now resets the
-synthetic extra point in `self.verts` (not just the secondary `planar_point_cloud_temp`
-buffer) after a planar hull, so final vertex positions stay on the input plane. C++ gets
-this for free via a shared `VecView`; Rust's `verts` is an independent `Vec`. Un-ignores
-`test_cpp_hull_degenerate_2d`.
+### Just slow in debug — pass in release; not bugs (9)
+`nonconvex_convex_minkowski_sum/difference`, `nonconvex_nonconvex_minkowski_sum/difference`
+(O(n²)), `sdf_blobs`, `sdf_sphere_shell`, `hull_sphere` (1500 seg), `hull_menger_sponge`
+(depth-4), `properties_mingap_stretchy_bracelet`. → Speed up or run in release; no correctness
+work.
 
-### Earlier additions (2026-04-16)
+### Blocked on #1718 normals feature (1)
+`boolean::test_cpp_normals`.
 
-**ObjRoundTrip** (2026-04-16): Added `Manifold::write_obj()` and `Manifold::read_obj()`
-matching C++ `WriteOBJ`/`ReadOBJ` — 19-digit fixed-precision vertex output, sorted face
-order, `# tolerance`/`# epsilon` comment metadata round-tripped. Ports the cube
-round-trip test in `manifold_tests/mesh_ops.rs`.
+### N-way subdivision (2)
+`sphere_tri_count_n25` (8192 vs 5000 tris), `properties_tolerance_sphere`. Current
+subdivision is binary (always doubles edge count); C++ supports arbitrary n-way splits via
+the `Partition` class. Non-power-of-2 segment counts need this.
 
-**StretchyBracelet + MingapStretchyBracelet** (2026-04-16): Ported the bracelet sample
-(`bracelet_base`, `stretchy_bracelet`) into a new `manifold_tests/properties.rs` module,
-together with the min-gap test. Marked `#[ignore]` — slow boolean composition in debug,
-passes in release (~8 s).
+### edge_op / simplify & tolerance (3) — overlaps with #1671 edge_op work
+`almost_coplanar` (21 vs 20 verts — colinear-edge-collapse / epsilon difference in
+`SimplifyTopology`), `properties_tolerance_sphere` (set_tolerance), `convex_convex_minkowski_difference`
+(collapse_edge exposes a boolean-pipeline geometry difference).
 
-### Recent Additions (2026-04-15)
+### `edge_op::update_vert` robustness — needs processOverlaps (2)
+`openscad_crash`, `complex_sweep`. `update_vert` walks `paired_halfedge` around a shared
+vertex; an unpaired halfedge (paired = -1) indexes with `usize::MAX` and panics. C++ masks
+this via `processOverlaps=true`; our boolean output produces a slightly non-manifold
+intermediate for these inputs. Root-cause in boolean result assembly.
 
-**RayCast API** (2026-04-15): Implemented `Manifold::ray_cast(origin, endpoint) → Vec<RayHit>`
-using the existing Kernel12 boolean intersection machinery. Ports 12 C++ RayCast tests.
-Added `RayHit` struct to types.rs. `ray_cast` in boolean3.rs builds a degenerate single-edge
-Impl for the ray and uses the face BVH to find candidates.
+### Boolean hangs (2)
+`complex_generic_twin_7081`, `generic_twin_7081`. Loop-termination/convergence bug in boolean.
 
-**Error propagation** (2026-04-15): Added `is_empty()` guard to ~10 methods (simplify,
-as_original, set_tolerance, calculate_curvature, calculate_normals, smooth_by_normals,
-smooth_out, set_properties, convex_hull) to propagate error status on errored manifolds.
-Fixed `decompose` to return `[self.clone()]` for errored input (not empty vec). Fixed
-`hull_manifolds` to propagate the first errored input's status. Ports 13 ErrorPropagation tests.
+### Non-manifold OBJ import (2)
+`complex_craycloud`, `craycloud_bool` — OBJ loads as 663 halfedges (not a multiple of 6),
+trips the sort.rs even-count assertion. See #1685 import work above.
 
-**CrossSection::simplify** (2026-04-15): Added `CrossSection::simplify(epsilon=1e-6)` method
-mirroring C++ behavior: union normalization, tiny polygon filtering, then `simplify_paths`.
-Enables porting the Fillet smooth test.
+### Hull vertex count (1)
+`hull_tictac` (~66050 vs ~66038 verts).
 
-**Smooth tests** (2026-04-15): Ported `Sphere` (vertex precision on smoothed sphere) and
-`Fillet` (smoke test for CrossSection simplify + SmoothByNormals) smooth tests.
+---
 
-### Recent Bug Fixes
+## Unported C++ tests (2)
+| File | Test | Blocker |
+|------|------|---------|
+| boolean_complex_test.cpp | InterpolatedNormals | Large inline mesh property data |
+| boolean_complex_test.cpp | Ring | Huge inline `mgl_0`/`mgl_1` mesh data (~600 lines) |
 
-**`compose_meshes` losing mesh transforms** (2026-04-15): Fast-path boolean union was
-calling `initialize_original()` which discards triRef/meshIDtransform from inputs.
-Fixed to concatenate tri_refs (adjusting coplanar_id by triangle offset) and merge
-mesh_id_transform maps from all input meshes. Fixed `test_cpp_smooth_normal_transform`.
+---
 
-**`create_halfedges` reordering bug** (2026-04-15): When detecting opposed triangle pairs
-(two halfedges with same undirected edge and same third vertex), the reordering step
-only set `ids[i+numEdge] = pair1` but missed the preceding `ids[k] = ids[i+numEdge]`
-step. This caused the valid unpaired forward halfedge to be orphaned (never processed
-in the final pairing pass) while the opposed halfedge was referenced twice. Fixed by
-replacing with `ids.swap(k, i+num_edge)` matching C++ behavior. Fixed `test_cpp_merge_refine`.
+## After all tests pass: performance parity
+- Benchmark identical operations (sphere booleans, complex OBJ booleans).
+- Profile hotspots (collider queries, boolean result assembly).
+- Add `rayon` parallelism behind the `parallel` feature.
+- Target: within 2× of C++ for all operations.
 
-**`MeshGL::merge()` open_verts collection** (2026-04-15): Was collecting both endpoints
-of each open boundary halfedge, but C++ only collects the start vertex (edge.first after
-swap). Collecting the end vertex too caused incorrect merges (e.g., end vertex at same
-position as some interior vertex). Fixed to collect only edge.1 (= start vertex) matching
-C++ `MergeMeshGLP`. Also part of fixing `test_cpp_merge_refine`.
+---
 
-## Guiding Principles
+## Guiding principles
+1. **Exact match** — same floating-point results as C++; instrument both to compare.
+2. **No stubs** — every function implemented; no `todo!()` / `unimplemented!()`.
+3. **Tests first** — port the relevant C++ test before/with the implementation; when C++
+   changes an expected value, update the Rust test to the new C++ value (it's not a
+   regression).
+4. **Dependency ordered** — never implement a function before its dependencies exist.
 
-1. **Exact match** — Same floating-point results as C++. Instrument both implementations to compare.
-2. **Phase by phase** — Complete each phase fully before starting the next.
-3. **No stubs** — Every function implemented, no `todo!()`, no `unimplemented!()`.
-4. **Tests first** — Port the relevant C++ tests to Rust before or alongside implementation.
-5. **Dependency ordered** — Never implement a function before its dependencies exist.
-
-## Key Architectural Decisions
-
+## Key architectural decisions
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| Linear algebra | Roll our own `linalg.rs` | Must control exact f64 semantics; no `glam` |
+| Linear algebra | Roll our own `linalg.rs` | Control exact f64 semantics; no `glam` |
+| Trig | Own musl-derived `math.rs` | C++ uses deterministic trig (#1606); platform libm diverges |
 | Float precision | f64 throughout; f32 only at MeshGL boundary | Matches C++ double/float usage |
 | Parallelism | Sequential first; `rayon` behind `parallel` feature | Verify correctness before parallelizing |
 | Cross-section | `clipper2-rust` crate | Our own Rust port; same API surface |
-| BVH/Collider | Radix tree + Morton codes (sorted internally) | Matches C++ algorithm exactly |
-
----
-
-## Completed Phases
-
-| Phase | Module(s) | Status |
-|-------|-----------|--------|
-| 0 | Project setup | ✅ |
-| 1 | linalg, vec | ✅ |
-| 2 | types, common | ✅ |
-| 3 | polygon | ✅ |
-| 4 | impl_mesh | ✅ |
-| 5 | sort, parallel | ✅ |
-| 6 | constructors | ✅ |
-| 7 | face_op, edge_op | ✅ |
-| 8 | properties | ✅ |
-| 9 | svd, smoothing | ✅ |
-| 10 | collider (BVH) | ✅ |
-| 11 | boolean3, boolean_result | ✅ |
-| 12 | csg_tree | ✅ Full rewrite (~350 lines) |
-| 13 | Public Manifold API | ✅ All core methods |
-| 14 | cross_section | ✅ |
-| 15 | subdivision | ✅ Full rewrite (~700 lines) |
-| 16 | sdf (level_set) | ✅ Full rewrite (~600 lines) |
-| 17 | minkowski | ✅ Full rewrite (~230 lines) |
-| — | quickhull | ✅ |
-| — | disjoint_sets | ✅ |
-| 18 | WASM demo | ✅ |
-
----
-
-## C++ Test Porting Status by File
-
-### boolean_test.cpp — 47 tests, ~42 ported (89%)
-
-**Ignored (ported but not passing):**
-- normals — normal orientation mismatch after nested difference (backside run normals dot opposite face)
-- boolean_precision — per-mesh epsilon not implemented
-- create_properties_slow — slow sphere(10,1024) boolean in debug
-
-### boolean_complex_test.cpp — 19 tests, ~18 ported (95%)
-
-**Unported:**
-- [ ] InterpolatedNormals — large inline mesh property data
-- [ ] Ring — needs mgl_0()/mgl_1() mesh data (~600 lines of inline vertex data)
-
-**Ignored (ported but fails):**
-- complex_sweep — exposes bug in `edge_op::update_vert` (unpaired halfedge chase)
-
-**Ignored (ported but not passing):**
-- generic_twin_7081 — hangs (loop termination bug in boolean)
-- complex_close — slow 256-seg sphere ×10 boolean
-- craycloud — sort.rs assertion (not even halfedge count)
-- perturb3 — BatchBoolean precision
-- openscad_crash — panics in face_op (needs processOverlaps)
-
-### manifold_test.cpp — 51 tests, ~51 ported (100%) ✅
-
-**Passing (newly ported):**
-- MeshRelationRefine ✅ — csaszar with position colors, RefineToLength(1) → 9019 verts/18038 tris
-- MeshRelationRefinePrecision ✅ — smooth csaszar, RefineToTolerance(0.05) → 2684 verts/5368 tris
-- MergeRefine ✅ — merge with 1e-5 tolerance, RefineToLength(1) → volume≈31.21
-- SmoothNormalTransform ✅ — compose_meshes preserves mesh transforms
-
-**Ignored (ported but not passing):**
-- opposite_face — MeshGL import rejects mesh with duplicate face pairs
-- mesh_determinism (×2) — boolean produces 30 vs 24 tris
-- merge_empty — flat degenerate mesh handling differs
-- sphere_tri_count_n25 — binary subdivision (8192 vs 5000)
-
-### properties_test.cpp — 22 tests, ~22 ported (100%) ✅
-
-**Ignored (ported but passing only in release):**
-- mingap_stretchy_bracelet — slow debug; ~8 s in release
-
-**Ignored (ported but not passing):**
-- tolerance — simplification not matching C++
-- tolerance_sphere — set_tolerance not matching C++
-
-### smooth_test.cpp — 15 tests, 15 ported (100%) ✅
-
-**Passing:**
-- FacetedNormals ✅
-- Normals ✅ — SmoothOut and SmoothByNormals equivalence
-- TruncatedCone ✅ — smooth cylinder with different radii
-- Mirrored ✅ — mirrored smooth tetrahedron
-- Tetrahedron ✅ — smooth tet with curvature
-- Csaszar ✅ — smooth Csaszar polyhedron
-- Manual ✅ — manual tangent weight adjustment
-- RefineQuads ✅ — cylinder with position colors
-- Precision ✅ — tolerance-based refinement
-- SDF ✅ — gyroid SDF
-- ToLength ✅ — CrossSection extrude + smooth + curvature check
-- Torus ✅ — manual CircularTangent toroidal smoothing
-
-**Ignored:**
-- SineSurface — vol converges to 8.076 vs 8.09 expected; C++ simplify collapses to different topology
-
-**Bug fixed:** `set_normals` used wrong stride (new `num_prop`) to index old compact properties.
-Fixed to use `old_num_prop` stride for source, `num_prop` stride for destination.
-
-### hull_test.cpp — 13 tests, ~13 ported (100%) ✅
-
-**Ported:**
-- MengerSponge ✅ — depth-2 version passes; depth-4 ignored (slow in debug)
-
-**Ignored (ported but not passing):**
-- hull_tictac — wrong vertex count (~66050 vs ~66038)
-- hull_sphere — slow (1500 segments)
-
-**Fixed 2026-04-17:** `hull_degenerate_2d` now passes — synthetic planar vertex reset applied to `self.verts`.
-
-### sdf_test.cpp — 9 tests, 9 ported (100%) ✅
-
-**All ported.** Passing: Resize, Bounds(sphere_bounds), Bounds3, CubeVoid, Void(subtract), Bounds(cubevoid).
-
-**Ignored:**
-- sdf_sine_surface — needs SmoothOut for final smoothing step
-- sdf_blobs — slow (263s in debug, fine edge_length=0.05)
-- sdf_sphere_shell — slow (fine edge_length=0.01 for thin shell)
-
-### cross_section_test.cpp — 15 tests, ~15 ported (100%) ✅
-
-**Newly ported:**
-- BevelOffset ✅ — Clipper2 JoinType::Bevel offset
-- FillRule ✅ — fill rule (Positive/Negative/EvenOdd/NonZero) area differences
-- HullError ✅ — rounded rectangle via 2D convex hull of circles
-- BatchBoolean ✅ — CrossSection batch union/subtract/intersect
-- Warp ✅ — vertex warp function on cross sections
-
----
-
-## Ignored Tests Summary (22 — actual on 2026-04-17)
-
-### Performance (slow in debug mode) — 6
-| Test | Reason |
-|------|--------|
-| sdf_blobs | Fine edge_length=0.05, 263s |
-| sdf_sphere_shell | Fine edge_length=0.01 for thin shell |
-| hull_sphere | 1500-segment sphere hull |
-| hull_menger_sponge | depth-4 CSG generates ~400k tris |
-| properties_mingap_stretchy_bracelet | heavy boolean composition |
-| properties_tolerance_sphere | n=1000 sphere; needs n-way subdivision for exact count |
-
-### Minkowski (slow O(n²)) — 4
-| Test | Reason |
-|------|--------|
-| nonconvex_convex_minkowski_sum | O(n²) triangle count |
-| nonconvex_convex_minkowski_difference | O(n²) triangle count |
-| nonconvex_nonconvex_minkowski_sum | O(n²) triangle count |
-| nonconvex_nonconvex_minkowski_difference | O(n²) triangle count |
-
-### Boolean topology / precision differences — 3
-| Test | Reason |
-|------|--------|
-| perturb3 | BatchBoolean precision |
-| almost_coplanar | 21 vs 20 verts (minor coplanar perturbation) |
-| normals | Normal orientation mismatch after nested difference |
-
-### Edge-op bugs — 3
-| Test | Reason |
-|------|--------|
-| openscad_crash | update_vert chases unpaired halfedge (paired=-1) |
-| complex_sweep | same edge_op::update_vert bug |
-| complex_craycloud | sort.rs assertion (odd halfedge count) |
-
-### Hanging — 2
-| Test | Reason |
-|------|--------|
-| generic_twin_7081 | Loop termination bug in boolean |
-| complex_generic_twin_7081 | Same |
-
-### Missing features — 2
-| Test | Reason |
-|------|--------|
-| tolerance | Simplification behavior differs |
-| tolerance_sphere | set_tolerance behavior differs |
-| merge_empty | Flat degenerate handling differs |
-| smooth_normal_transform | MeshGL round-trip loses normal properties |
-| sphere_tri_count_n25 | Needs n-way subdivision (not binary) |
-
-### Hanging — 2
-| Test | Reason |
-|------|--------|
----
-
-## Key Remaining Work
-
-### 1. N-way Subdivision (blocks sphere count matching)
-Current subdivision is binary (always doubles edge count). C++ supports arbitrary n-way
-splits via the `Partition` class. This affects sphere construction with non-power-of-2
-segment counts (e.g., n=25 gives 5000 tris in C++ but 8192 in Rust) and fails
-`sphere_tri_count_n25` and `properties_tolerance_sphere`.
-
-### 2. edge_op::update_vert robustness (blocks Sweep, openscad_crash)
-`update_vert` walks `paired_halfedge` around a shared vertex; an unpaired halfedge
-(paired=-1) indexes with `usize::MAX` and panics. C++ assumes the mesh invariant holds
-at this point — our boolean output is producing a slightly non-manifold intermediate
-for certain inputs. Needs root-cause investigation in the boolean result assembly.
-
-### 3. Boolean Topology Refinement (minor vert/tri count drift)
-A few tests drift by 1–2 vertices (`almost_coplanar` 21 vs 20). Likely colinear edge
-collapse / epsilon-based simplification differences in `SimplifyTopology`.
-
-### 4. Unported Tests (~2 remaining)
-| File | Test | Blocker |
-|------|------|---------|
-| boolean_complex_test.cpp | InterpolatedNormals | Large inline mesh data |
-| boolean_complex_test.cpp | Ring | Huge inline mgl_0/mgl_1 mesh data |
-
----
-
-## Future: Performance Parity
-
-After all tests pass, validate Rust performance matches C++:
-- Benchmark identical operations (sphere booleans, complex OBJ booleans)
-- Profile hotspots (collider queries, boolean result assembly)
-- Add rayon parallelism behind feature flag
-- Target: within 2× of C++ for all operations
+| BVH/Collider | Radix tree + Morton codes | Matches C++ algorithm exactly |
+| CSG tree | `Arc<ManifoldImpl>` + automatic `Drop` | No manual refcount teardown (so #1673 is N/A) |
+| Sorting | `sort_by_key` (stable) where C++ uses `stable_sort` | Tied keys must break on original index order |
