@@ -332,3 +332,4 @@ mod mesh_ops;
 mod raycast;
 mod error_propagation;
 mod properties;
+mod normals;
