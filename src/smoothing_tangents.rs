@@ -7,10 +7,9 @@ use std::collections::BTreeMap;
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{cross, dot, normalize, Vec3, Vec4};
 use crate::math;
-use crate::linalg::length2;
-use crate::types::{next_halfedge, prev_halfedge, radians, Error, K_PI, K_PRECISION, K_TWO_PI, Smoothness};
+use crate::types::{next_halfedge, prev_halfedge, radians, K_PI, K_TWO_PI, Smoothness};
 
-use super::{vec3_from_vec4, safe_normalize, angle_between, circular_tangent, wrap, collect_vertex_cycle};
+use super::{vec3_from_vec4, safe_normalize, angle_between, circular_tangent, equal_normals, wrap, collect_vertex_cycle};
 
 impl ManifoldImpl {
     pub fn vert_halfedge(&self) -> Vec<i32> {
@@ -84,14 +83,13 @@ impl ManifoldImpl {
 
     pub fn distribute_tangents(&mut self, fixed_halfedges: &[bool]) {
         for halfedge in 0..fixed_halfedges.len() {
-            if !fixed_halfedges[halfedge] {
+            // Per #1671: skip non-fixed and inside-quad seeds outright (the old
+            // code re-seeded inside-quad halfedges to their neighbor).
+            if !fixed_halfedges[halfedge] || self.is_marked_inside_quad(halfedge) {
                 continue;
             }
 
-            let mut start = halfedge;
-            if self.is_marked_inside_quad(start) {
-                start = crate::impl_mesh::next_halfedge(self.halfedge[start].paired_halfedge) as usize;
-            }
+            let start = halfedge;
 
             let mut normal = Vec3::new(0.0, 0.0, 0.0);
             let mut current_angle = Vec::new();
@@ -168,6 +166,11 @@ impl ManifoldImpl {
                     break;
                 }
                 current = crate::impl_mesh::next_halfedge(self.halfedge[current].paired_halfedge) as usize;
+                // Per #1671: stop before processing a *different* fixed halfedge
+                // (the terminating fixed edge is no longer rotated here).
+                if current != start && fixed_halfedges[current] {
+                    break;
+                }
                 if self.is_marked_inside_quad(current) {
                     if current == start {
                         break;
@@ -229,10 +232,10 @@ impl ManifoldImpl {
                 let next_he = cycle[(idx + 1) % cycle.len()];
                 let here_normal = self.get_normal(halfedge, normal_idx);
                 let next_normal = self.get_normal(next_he, normal_idx);
-                let here_diff = self.face_normal[halfedge / 3] - here_normal;
-                let next_diff = self.face_normal[next_he / 3] - next_normal;
-                let here_is_flat = dot(here_diff, here_diff) < K_PRECISION * K_PRECISION;
-                let next_is_flat = dot(next_diff, next_diff) < K_PRECISION * K_PRECISION;
+                // Per #1671: a halfedge is flat when its normal matches the face
+                // normal within the EqualNormals tolerance (was kPrecision-squared).
+                let here_is_flat = equal_normals(here_normal, self.face_normal[halfedge / 3]);
+                let next_is_flat = equal_normals(next_normal, self.face_normal[next_he / 3]);
 
                 // Start with flag clear
                 tangent[halfedge].w = 1.0;
@@ -277,8 +280,7 @@ impl ManifoldImpl {
                     continue;
                 }
 
-                let diff = next_normal - here_normal;
-                let different_normals = dot(diff, diff) > K_PRECISION * K_PRECISION;
+                let different_normals = !equal_normals(next_normal, here_normal);
                 if different_normals {
                     fixed_halfedge[halfedge] = true;
                     face_edges[0] = -2; // override flat face logic when multiple normals present
@@ -326,7 +328,7 @@ impl ManifoldImpl {
                             stored
                         };
 
-                        tangent[current] = if length2(prev_norm - next_norm) < K_PRECISION * K_PRECISION {
+                        tangent[current] = if equal_normals(prev_norm, next_norm) {
                             self.tangent_from_normal(prev_norm, current)
                         } else {
                             let dir = cross(prev_norm, next_norm);

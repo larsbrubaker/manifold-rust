@@ -28,7 +28,9 @@ fn test_cpp_sdf_resize() {
     assert!((bounds.max.z - (size - 1.5)).abs() < epsilon, "max.z={}", bounds.max.z);
 }
 
-/// C++ TEST(SDF, SineSurface) — SDF sine surface with smooth + refine
+/// C++ TEST(SDF, SineSurface) — raw LevelSet of a sine surface.
+/// v3.5.0 (#1724) dropped the trailing `.Simplify()` and `SmoothOut(180)`
+/// smoothing, so this now checks the unsmoothed surface directly.
 #[test]
 fn test_cpp_sdf_sine_surface() {
     let pi = std::f64::consts::PI;
@@ -42,11 +44,13 @@ fn test_cpp_sdf_sine_surface() {
             max: Vec3::new(1.75 * pi, 1.75 * pi, 1.75 * pi),
         },
         1.0,
-    ).simplify(0.0);
-    // smoothed = surface.SmoothOut(180).RefineToLength(0.05)
-    // EXPECT_EQ(smoothed.Genus(), 38);
-    // EXPECT_NEAR(smoothed.Volume(), 107.4, 0.1);
+    );
     assert_eq!(surface.status(), crate::types::Error::NoError);
+    assert_eq!(surface.genus(), 38, "SineSurface genus={}", surface.genus());
+    assert!((surface.volume() - 102.4).abs() < 0.1,
+        "SineSurface vol={}", surface.volume());
+    assert!((surface.surface_area() - 392.4).abs() < 0.1,
+        "SineSurface sa={}", surface.surface_area());
 }
 
 /// C++ TEST(SDF, Blobs) — metaball SDF using smoothstep

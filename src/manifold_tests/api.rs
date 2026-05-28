@@ -798,8 +798,9 @@ fn test_cpp_mesh_relation_refine_precision() {
     assert!(!refined.is_empty(), "MeshRelationRefinePrecision: not empty");
     let parts = refined.decompose();
     assert_eq!(parts.len(), 1, "MeshRelationRefinePrecision: 1 component");
-    assert_eq!(parts[0].num_vert(), 2684, "MeshRelationRefinePrecision: num_vert");
-    assert_eq!(parts[0].num_tri(), 5368, "MeshRelationRefinePrecision: num_tri");
+    // C++ v3.5.0 expects {{2343, 4686, 3}} after the #1724/#1671 smoothing fixes.
+    assert_eq!(parts[0].num_vert(), 2343, "MeshRelationRefinePrecision: num_vert");
+    assert_eq!(parts[0].num_tri(), 4686, "MeshRelationRefinePrecision: num_tri");
     assert_eq!(parts[0].num_prop(), 3, "MeshRelationRefinePrecision: num_prop");
 
     let run_ids = refined.get_mesh_gl(0).run_original_id;

@@ -23,12 +23,13 @@ fn test_cpp_smooth_normals() {
 #[test]
 fn test_cpp_smooth_truncated_cone() {
     let cone = Manifold::cylinder(5.0, 10.0, 5.0, 12);
-    // C++ uses SmoothOut() which defaults to (60, 0)
-    let smooth = cone.clone().smooth_out(60.0, 0.0).refine_to_length(0.5)
-        .calculate_normals(0, 0.0);
-    assert!((smooth.volume() - 1158.61).abs() < 0.01,
+    // C++ v3.5.0: SmoothOut() defaults to (52.5, 0); CalculateNormals(0)
+    // defaults to (0, 52.5). Values updated for the #1724/#1671 smoothing fixes.
+    let smooth = cone.clone().smooth_out(52.5, 0.0).refine_to_length(0.5)
+        .calculate_normals(0, 52.5);
+    assert!((smooth.volume() - 1163.53).abs() < 0.01,
         "TruncatedCone vol={}", smooth.volume());
-    assert!((smooth.surface_area() - 768.12).abs() < 0.01,
+    assert!((smooth.surface_area() - 769.33).abs() < 0.01,
         "TruncatedCone sa={}", smooth.surface_area());
 
     let smooth1 = cone.clone().smooth_out(180.0, 1.0).refine_to_length(0.5);
@@ -71,8 +72,8 @@ fn test_cpp_smooth_csaszar() {
     let refined = smooth.refine(100);
     assert_eq!(refined.num_vert(), 70000);
     assert_eq!(refined.num_tri(), 140000);
-    assert!((refined.volume() - 79890.0).abs() < 10.0, "vol={}", refined.volume());
-    assert!((refined.surface_area() - 11950.0).abs() < 10.0, "sa={}", refined.surface_area());
+    assert!((refined.volume() - 78760.0).abs() < 10.0, "vol={}", refined.volume());
+    assert!((refined.surface_area() - 11935.0).abs() < 10.0, "sa={}", refined.surface_area());
 }
 
 /// C++ TEST(Smooth, Manual) — manually adjusted tangent weights
@@ -133,8 +134,8 @@ fn test_cpp_smooth_to_length() {
     let (num_tri, num_vert) = (smooth.num_tri(), smooth.num_vert());
     assert_eq!(num_tri, 170496, "ToLength tris={}", num_tri);
     assert_eq!(num_vert, 85250, "ToLength verts={}", num_vert);
-    assert!((smooth.volume() - 4577.0).abs() < 1.0, "ToLength vol={}", smooth.volume());
-    assert!((smooth.surface_area() - 1349.0).abs() < 1.0, "ToLength sa={}", smooth.surface_area());
+    assert!((smooth.volume() - 4570.0).abs() < 1.0, "ToLength vol={}", smooth.volume());
+    assert!((smooth.surface_area() - 1348.0).abs() < 1.0, "ToLength sa={}", smooth.surface_area());
 
     let out = smooth.calculate_curvature(-1, 0).get_mesh_gl(0);
     let num_prop = out.num_prop as usize;
@@ -144,7 +145,7 @@ fn test_cpp_smooth_to_length() {
         max_mean_curvature = max_mean_curvature.max(out.vert_properties[i].abs());
         i += num_prop;
     }
-    assert!((max_mean_curvature - 0.71).abs() < 0.01,
+    assert!((max_mean_curvature - 1.63).abs() < 0.01,
         "ToLength maxMeanCurvature={}", max_mean_curvature);
 }
 
@@ -227,31 +228,10 @@ fn test_cpp_smooth_torus() {
         "Torus maxMeanCurvature={}", max_mean_curvature);
 }
 
-/// C++ TEST(Smooth, SineSurface) — sine surface with smooth normals
-#[test]
-fn test_cpp_smooth_sine_surface() {
-    let pi = std::f64::consts::PI;
-    let surface = Manifold::level_set(
-        move |p: Vec3| {
-            let mid = p.x.sin() + p.y.sin();
-            if p.z > mid - 0.5 && p.z < mid + 0.5 { 1.0 } else { -1.0 }
-        },
-        crate::types::Box {
-            min: Vec3::new(-2.0 * pi + 0.2, -2.0 * pi + 0.2, -2.0 * pi + 0.2),
-            max: Vec3::new(0.0 * pi - 0.2, 0.0 * pi - 0.2, 0.0 * pi - 0.2),
-        },
-        1.0,
-    ).simplify(0.0);
-    let smoothed = surface.clone()
-        .calculate_normals(0, 50.0)
-        .smooth_by_normals(0)
-        .refine(8);
-    assert!((smoothed.volume() - 8.09).abs() < 0.01,
-        "SineSurface vol={}", smoothed.volume());
-    assert!((smoothed.surface_area() - 30.93).abs() < 0.01,
-        "SineSurface sa={}", smoothed.surface_area());
-    assert_eq!(smoothed.genus(), 0);
-}
+// C++ TEST(Smooth, SineSurface) was removed in v3.5.0 (#1724, "Fix
+// CalculateNormals"): SmoothOut became self-consistent and the test's
+// SmoothByNormals/SmoothOut equivalence assertions no longer applied, so
+// upstream deleted it. Removed here to match.
 
 /// C++ TEST(Smooth, SDF) — gyroid SDF with smooth normals
 #[test]
@@ -346,9 +326,9 @@ fn test_cpp_smooth_missing_normals_cone() {
     let cube = Manifold::cube(Vec3::splat(10.0), true).translate(Vec3::new(0.0, 0.0, 10.0));
     let diff = cone.difference(&cube);
     let out = diff.smooth_by_normals(0).refine(20);
-    assert!((out.volume() - 1092.0).abs() < 1.0,
+    assert!((out.volume() - 1009.0).abs() < 1.0,
         "MissingNormalsCone vol={}", out.volume());
-    assert!((out.surface_area() - 748.0).abs() < 1.0,
+    assert!((out.surface_area() - 736.0).abs() < 1.0,
         "MissingNormalsCone sa={}", out.surface_area());
 }
 
@@ -405,10 +385,11 @@ fn test_cpp_mesh_relation_refine_precision() {
     let refined = csaszar.refine_to_tolerance(0.05);
     assert!(!refined.is_empty(), "MeshRelationRefinePrecision: result is empty");
     assert!(refined.matches_tri_normals(), "MeshRelationRefinePrecision: normals don't match tris");
-    assert_eq!(refined.num_vert(), 2684,
-        "MeshRelationRefinePrecision: expected 2684 verts, got {}", refined.num_vert());
-    assert_eq!(refined.num_tri(), 5368,
-        "MeshRelationRefinePrecision: expected 5368 tris, got {}", refined.num_tri());
+    // C++ v3.5.0 expects {{2343, 4686, 3}} after the #1724/#1671 smoothing fixes.
+    assert_eq!(refined.num_vert(), 2343,
+        "MeshRelationRefinePrecision: expected 2343 verts, got {}", refined.num_vert());
+    assert_eq!(refined.num_tri(), 4686,
+        "MeshRelationRefinePrecision: expected 4686 tris, got {}", refined.num_tri());
     assert_eq!(refined.num_prop(), 3,
         "MeshRelationRefinePrecision: expected num_prop=3, got {}", refined.num_prop());
     // Verify the run original ID is preserved

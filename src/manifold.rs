@@ -504,21 +504,12 @@ impl Manifold {
     pub fn smooth_out(&self, min_sharp_angle: f64, min_smoothness: f64) -> Self {
         if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
-        if min_smoothness == 0.0 {
-            // C++ path: use normals-based tangents, then restore original properties
-            let saved_num_prop = out.num_prop;
-            let saved_properties = out.properties.clone();
-            let saved_halfedge = out.halfedge.clone();
-            out.set_normals(0, min_sharp_angle);
-            out.create_tangents_from_normals(0);
-            // Restore original properties (removing temporary normals)
-            out.num_prop = saved_num_prop;
-            out.properties = saved_properties;
-            out.halfedge = saved_halfedge;
-        } else {
-            let sharpened = out.sharpen_edges(min_sharp_angle, min_smoothness);
-            out.create_tangents(sharpened);
-        }
+        // Per C++ #1724 (Fix CalculateNormals): SmoothOut is now self-consistent —
+        // it always derives tangents from SharpenEdges, regardless of
+        // min_smoothness. The old min_smoothness==0 path (SetNormals +
+        // CreateTangentsFromNormals + property restore) was removed.
+        let sharpened = out.sharpen_edges(min_sharp_angle, min_smoothness);
+        out.create_tangents(sharpened);
         Self::from_impl(out)
     }
 

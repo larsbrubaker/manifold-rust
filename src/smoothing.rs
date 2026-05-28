@@ -62,6 +62,13 @@ pub(super) fn angle_between(a: Vec3, b: Vec3) -> f64 {
     }
 }
 
+/// Two normals are considered equal when their normalized dot product exceeds
+/// 0.9999 (~0.81°). Per C++ #1671 this tolerance replaces the old exact /
+/// `kPrecision`-squared comparisons in the tangent-generation code.
+pub(super) fn equal_normals(a: Vec3, b: Vec3) -> bool {
+    dot(safe_normalize(a), safe_normalize(b)) > 0.9999
+}
+
 pub fn circular_tangent(tangent: Vec3, edge_vec: Vec3) -> Vec4 {
     let dir = safe_normalize(tangent);
     let weight = 0.5f64.max(dot(dir, safe_normalize(edge_vec)));
@@ -121,8 +128,16 @@ impl ManifoldImpl {
         let edge_vec = self.vert_pos[edge.end_vert as usize] - self.vert_pos[edge.start_vert as usize];
         let edge_normal =
             self.face_normal[halfedge / 3] + self.face_normal[edge.paired_halfedge as usize / 3];
-        let dir = cross(cross(edge_normal, edge_vec), normal);
-        circular_tangent(dir, edge_vec)
+        // Per C++ #1671 (More smoothing fixes): pick the bi-tangent from the
+        // edge pseudo-normal or the supplied normal depending on their
+        // relative orientation, then cross with the normal. This is more
+        // numerically robust than the old single cross-of-cross form.
+        let bi_tangent = if dot(normal, edge_normal) < 0.0 {
+            cross(edge_normal, edge_vec)
+        } else {
+            cross(normal, edge_vec)
+        };
+        circular_tangent(cross(bi_tangent, normal), edge_vec)
     }
 
     pub fn is_inside_quad(&self, halfedge: usize) -> bool {
@@ -242,10 +257,11 @@ impl ManifoldImpl {
         let normal_idx = normal_idx as usize;
 
         let old_num_prop = self.num_prop;
-        let tri_is_flat_face = self.flat_faces();
-        let vert_flat_face = self.vert_flat_face(&tri_is_flat_face);
 
-        // Count sharp edges per vertex
+        // Count sharp edges per vertex. Per C++ #1724 (Fix CalculateNormals),
+        // SetNormals no longer special-cases flat faces — an edge is sharp iff
+        // its dihedral exceeds min_sharp_angle. `angle_between` matches C++'s
+        // AngleBetween helper (acos with ±1 clamping), the #1634 form.
         let mut vert_num_sharp = vec![0i32; self.num_vert()];
         for e in 0..self.halfedge.len() {
             if !self.halfedge[e].is_forward() {
@@ -254,23 +270,11 @@ impl ManifoldImpl {
             let pair = self.halfedge[e].paired_halfedge as usize;
             let tri1 = e / 3;
             let tri2 = pair / 3;
-            let d = dot(self.face_normal[tri1], self.face_normal[tri2]).clamp(-1.0, 1.0);
-            let dihedral = math::acos(d).to_degrees();
+            let dihedral =
+                angle_between(self.face_normal[tri1], self.face_normal[tri2]).to_degrees();
             if dihedral > min_sharp_angle {
                 vert_num_sharp[self.halfedge[e].start_vert as usize] += 1;
                 vert_num_sharp[self.halfedge[e].end_vert as usize] += 1;
-            } else {
-                let face_split = tri_is_flat_face[tri1] != tri_is_flat_face[tri2]
-                    || (tri_is_flat_face[tri1]
-                        && tri_is_flat_face[tri2]
-                        && !self.mesh_relation.tri_ref[tri1]
-                            .same_face(&self.mesh_relation.tri_ref[tri2]));
-                if vert_flat_face[self.halfedge[e].start_vert as usize] == -2 && face_split {
-                    vert_num_sharp[self.halfedge[e].start_vert as usize] += 1;
-                }
-                if vert_flat_face[self.halfedge[e].end_vert as usize] == -2 && face_split {
-                    vert_num_sharp[self.halfedge[e].end_vert as usize] += 1;
-                }
             }
         }
 
@@ -314,13 +318,11 @@ impl ManifoldImpl {
             });
 
             if vert_num_sharp[vert] < 2 {
-                // Vertex has single normal (in world space from face_normal/vert_normal)
-                let world_normal = if vert_flat_face[vert] >= 0 {
-                    self.face_normal[vert_flat_face[vert] as usize]
-                } else {
-                    self.vert_normal[vert]
-                };
+                // Vertex has single normal. Per #1724 this is always the vertex
+                // pseudo-normal (no flat-face substitution).
+                let world_normal = self.vert_normal[vert];
                 // Store in original space so GetNormal can reconstruct world normal
+                // (inv_transform is identity in the common eager-transform case).
                 let normal = inv_transform * world_normal;
 
                 let mut last_prop: i32 = -1;
@@ -365,15 +367,10 @@ impl ManifoldImpl {
                         self.halfedge[current].paired_halfedge,
                     ) as usize;
                     let face = next / 3;
-                    let d = dot(self.face_normal[face], self.face_normal[prev_face]).clamp(-1.0, 1.0);
-                    let dihedral = math::acos(d).to_degrees();
-                    if dihedral > min_sharp_angle
-                        || tri_is_flat_face[face] != tri_is_flat_face[prev_face]
-                        || (tri_is_flat_face[face]
-                            && tri_is_flat_face[prev_face]
-                            && !self.mesh_relation.tri_ref[face]
-                                .same_face(&self.mesh_relation.tri_ref[prev_face]))
-                    {
+                    let dihedral =
+                        angle_between(self.face_normal[face], self.face_normal[prev_face])
+                            .to_degrees();
+                    if dihedral > min_sharp_angle {
                         break;
                     }
                     current = next;
@@ -392,25 +389,12 @@ impl ManifoldImpl {
                 //        binaryOp(current, here, next); here = next; current = next_halfedge;
                 //   } while (current != endEdge);
                 // normals starts EMPTY — first sharp edge creates group 0.
+                // Per #1724 the edge vector is simply the normalized direction
+                // from the center vertex to the far end of the halfedge; the
+                // old quad/flair-out tangent logic was removed.
                 let get_edge_vec = |he: usize| -> Vec3 {
-                    if self.is_inside_quad(he) {
-                        return Vec3::new(f64::NAN, f64::NAN, f64::NAN);
-                    }
                     let end_v = self.halfedge[he].end_vert as usize;
-                    let mut pos = self.vert_pos[end_v];
-                    if vert_num_sharp[end_v] < 2 {
-                        let n = if vert_flat_face[end_v] >= 0 {
-                            self.face_normal[vert_flat_face[end_v] as usize]
-                        } else {
-                            self.vert_normal[end_v]
-                        };
-                        let tan = self.tangent_from_normal(
-                            n,
-                            self.halfedge[he].paired_halfedge as usize,
-                        );
-                        pos = pos + Vec3::new(tan.x, tan.y, tan.z);
-                    }
-                    safe_normalize(pos - center_pos)
+                    safe_normalize(self.vert_pos[end_v] - center_pos)
                 };
 
                 let mut here_face = end_edge / 3;
@@ -423,30 +407,22 @@ impl ManifoldImpl {
                     let next_face = next_he / 3;
                     let mut next_ev = get_edge_vec(next_he);
 
-                    // Check for sharp edge between here and next
-                    let d = dot(self.face_normal[here_face], self.face_normal[next_face]).clamp(-1.0, 1.0);
-                    let dihedral = math::acos(d).to_degrees();
-                    if dihedral > min_sharp_angle
-                        || tri_is_flat_face[here_face] != tri_is_flat_face[next_face]
-                        || (tri_is_flat_face[here_face]
-                            && tri_is_flat_face[next_face]
-                            && !self.mesh_relation.tri_ref[here_face]
-                                .same_face(&self.mesh_relation.tri_ref[next_face]))
-                    {
+                    // Check for sharp edge between here and next.
+                    let dihedral =
+                        angle_between(self.face_normal[here_face], self.face_normal[next_face])
+                            .to_degrees();
+                    if dihedral > min_sharp_angle {
                         normals.push(Vec3::splat(0.0));
                     }
                     group.push(normals.len() - 1);
 
-                    // Accumulate angle-weighted normal (C++: cross(next.edgeVec, here.edgeVec))
+                    // Accumulate angle-weighted normal (C++: cross(next.edgeVec, here.edgeVec)).
                     if next_ev.x.is_finite() {
-                        if here_ev.x.is_finite() {
-                            let c = cross(next_ev, here_ev);
-                            let angle = angle_between(here_ev, next_ev);
-                            *normals.last_mut().unwrap() = *normals.last().unwrap()
-                                + safe_normalize(c) * angle;
-                        }
+                        let c = cross(next_ev, here_ev);
+                        let angle = angle_between(here_ev, next_ev);
+                        *normals.last_mut().unwrap() =
+                            *normals.last().unwrap() + safe_normalize(c) * angle;
                     } else {
-                        // Carry forward here_ev when next_ev is NaN (quad interior)
                         next_ev = here_ev;
                     }
 
@@ -458,10 +434,11 @@ impl ManifoldImpl {
                     }
                 }
 
-                // Normalize and transform to original space
-                // Matches C++: normal = transform * SafeNormalize(normal)
+                // Per #1724: transform into the storage frame first, then
+                // normalize (the SafeNormalize moved to after the transform).
+                // inv_transform is identity in the common eager-transform case.
                 for n in normals.iter_mut() {
-                    *n = inv_transform * safe_normalize(*n);
+                    *n = safe_normalize(inv_transform * *n);
                 }
 
                 // Assign property vertices.
