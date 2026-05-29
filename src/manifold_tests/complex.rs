@@ -337,7 +337,9 @@ fn test_cpp_meshgl_round_trip() {
 
 /// C++ TEST(BooleanComplex, CraycloudBool) — subtract complements, simplify to empty
 #[test]
-#[ignore = "OBJ mesh not loading as manifold (663 halfedges, not multiple of 6)"]
+#[ignore = "Boolean produces a non-manifold intermediate (sort.rs:298 odd-halfedge \
+            assertion); FP-borderline (debug vs release differ), same deep boolean-robustness \
+            class as complex_sweep. Not an OBJ import issue — the meshes are cleanly indexed."]
 fn test_cpp_complex_craycloud() {
     let m1 = read_test_obj("Cray_left.obj");
     let m2 = read_test_obj("Cray_right.obj");

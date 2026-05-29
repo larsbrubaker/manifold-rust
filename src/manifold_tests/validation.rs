@@ -339,7 +339,12 @@ fn test_cpp_project() {
 
 /// C++ TEST(BooleanComplex, CraycloudBool)
 #[test]
-#[ignore = "sort.rs assertion: not even number of halfedges"]
+#[ignore = "Boolean (Cray_left - Cray_right) produces a non-manifold intermediate \
+            (sort.rs:298 odd-halfedge assertion) in DEBUG, but PASSES in release — a \
+            borderline FP-sensitive geometric predicate, same deep boolean-robustness class \
+            as complex_sweep (collapse/boolean leaves an unpaired halfedge). The OBJs \
+            themselves are clean (Cray_left 292 v / 576 tri, Cray_right a cube; no duplicate \
+            verts), so it's not an import/welding issue."]
 fn test_cpp_craycloud_bool() {
     let m1 = super::read_test_obj("Cray_left.obj");
     let m2 = super::read_test_obj("Cray_right.obj");

@@ -46,24 +46,23 @@ coplanar-merge difference in `SimplifyTopology`, *not* tolerance stacking — #1
 already ported and doesn't change it), `convex_convex_minkowski_difference` (collapse_edge
 exposes a boolean-pipeline geometry difference).
 
-### Collapse-sequence creates an unpaired halfedge (2)
-`complex_sweep`, `openscad_crash`. `update_vert` walks `paired_halfedge` around a vertex; an
-unpaired halfedge (paired = -1) indexes with `usize::MAX` and panics.
-**Diagnosed (not processOverlaps — that's only a polygon-triangulation flag):** a probe at
-`simplify_topology` entry shows the boolean output is fully manifold (zero unpaired
-halfedges), so the `-1` is created *mid-simplify* during the collapse sequence.
-`collapse_tri` / `form_loop` structurally match C++ (`PairUp`, same orbits), so the bug is a
-subtle index/ordering divergence in the multi-collapse interaction that only this
-pathological input triggers. Next step: instrument both Rust and the C++ reference to log
-each collapsed edge + resulting pairing on this input and find the first divergence. (Avoid a
-`-1` guard band-aid — it would mask the bug and risk incorrect geometry.)
+### Boolean produces a non-manifold intermediate — deep robustness (4)
+`complex_sweep`, `openscad_crash`, `complex_craycloud`, `craycloud_bool`. All four end in a
+non-manifold intermediate during/after a boolean: either `update_vert` walks an unpaired
+halfedge (`paired = -1` → `usize::MAX` OOB) or the sort.rs:298 odd-halfedge assertion fires.
+**Diagnosed:** for complex_sweep, a probe at `simplify_topology` entry shows the boolean
+output is fully manifold, so the `-1` is created *mid-simplify* during the collapse sequence;
+`collapse_tri` / `form_loop` structurally match C++ (`PairUp`, same orbits), so it's a subtle
+index/ordering divergence in the multi-collapse interaction. The craycloud pair is
+FP-borderline (passes in release, fails in debug) — the OBJs are cleanly indexed (no
+welding/import issue) and `processOverlaps` is unrelated (only a polygon-triangulation flag).
+Next step: instrument Rust + the C++ reference to log each collapsed edge + resulting pairing
+on these inputs and find the first divergence. (Avoid a `-1` guard band-aid — masks the bug,
+risks incorrect geometry.)
 
 ### Boolean hangs (2)
-`complex_generic_twin_7081`, `generic_twin_7081`. Loop-termination/convergence bug in boolean.
-
-### Non-manifold OBJ import (2)
-`complex_craycloud`, `craycloud_bool` — OBJ loads as 663 halfedges (not a multiple of 6),
-trips the sort.rs even-count assertion. See #1685 import work above.
+`complex_generic_twin_7081`, `generic_twin_7081`. Loop-termination/convergence bug in boolean
+(likely the same robustness area as above).
 
 ---
 
