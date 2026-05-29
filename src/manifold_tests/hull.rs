@@ -2,7 +2,6 @@ use super::*;
 
 /// C++ TEST(Hull, Tictac) — hull of 2 spheres translated apart
 #[test]
-#[ignore = "Hull of manifolds not yet producing correct vertex count"]
 fn test_cpp_hull_tictac() {
     let tictac_rad = 100.0;
     let tictac_height = 500.0;

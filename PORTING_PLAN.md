@@ -5,7 +5,7 @@ This is a **roadmap of remaining work** to finish porting
 not what has already been done (use `git log` for history). Every change must reproduce the
 C++ reference with **exact numerical match** — identical results on identical inputs.
 
-**Status:** 506 passing, 0 failing, 19 ignored.
+**Status:** 507 passing, 0 failing, 18 ignored.
 **C++ reference target:** v3.5.0 (submodule at tag `v3.5.0`, commit `541c33bd`).
 **Core engine:** all 18 phases (linalg → boolean → CSG → cross-section → SDF → minkowski →
 WASM) are implemented. Remaining work is the v3.5.0 deltas below plus the ignored-test
@@ -32,7 +32,7 @@ optional/peripheral:
 
 ---
 
-## Ignored tests (19) — grouped by the work needed to clear them
+## Ignored tests (18) — grouped by the work needed to clear them
 
 ### Just slow in debug — pass in release; not bugs (9)
 `nonconvex_convex_minkowski_sum/difference`, `nonconvex_nonconvex_minkowski_sum/difference`
@@ -64,9 +64,6 @@ each collapsed edge + resulting pairing on this input and find the first diverge
 ### Non-manifold OBJ import (2)
 `complex_craycloud`, `craycloud_bool` — OBJ loads as 663 halfedges (not a multiple of 6),
 trips the sort.rs even-count assertion. See #1685 import work above.
-
-### Hull vertex count (1)
-`hull_tictac` (~66050 vs ~66038 verts).
 
 ---
 
