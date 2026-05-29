@@ -67,7 +67,11 @@ fn test_cpp_convex_convex_minkowski_difference() {
 
 /// C++ TEST(Boolean, NonConvexConvexMinkowskiSum)
 #[test]
-#[ignore = "Non-convex Minkowski is O(n^2) on triangle count; too slow for routine testing"]
+#[ignore = "Fast in release (0.2-2.9s) — NOT slow. Fails on genus only: volume + area now \
+            match C++ exactly (after the n-way sphere fix), but the topology (genus) differs. \
+            C++ runs these with ManifoldParams().processOverlaps=true, which Rust lacks — \
+            same processOverlaps/overlapping-polygon-triangulation gap as the boolean \
+            non-manifold cluster. Correctness gap, not perf."]
 fn test_cpp_nonconvex_convex_minkowski_sum() {
     let sphere = Manifold::sphere(1.2, 20);
     let cube = Manifold::cube(Vec3::splat(2.0), true);
@@ -88,7 +92,11 @@ fn test_cpp_nonconvex_convex_minkowski_sum() {
 
 /// C++ TEST(Boolean, NonConvexConvexMinkowskiDifference)
 #[test]
-#[ignore = "Non-convex Minkowski is O(n^2) on triangle count; too slow for routine testing"]
+#[ignore = "Fast in release (0.2-2.9s) — NOT slow. Fails on genus only: volume + area now \
+            match C++ exactly (after the n-way sphere fix), but the topology (genus) differs. \
+            C++ runs these with ManifoldParams().processOverlaps=true, which Rust lacks — \
+            same processOverlaps/overlapping-polygon-triangulation gap as the boolean \
+            non-manifold cluster. Correctness gap, not perf."]
 fn test_cpp_nonconvex_convex_minkowski_difference() {
     let sphere = Manifold::sphere(1.2, 20);
     let cube = Manifold::cube(Vec3::splat(2.0), true);
@@ -109,7 +117,11 @@ fn test_cpp_nonconvex_convex_minkowski_difference() {
 
 /// C++ TEST(Boolean, NonConvexNonConvexMinkowskiSum)
 #[test]
-#[ignore = "Non-convex Minkowski is O(n^2) on triangle count; too slow for routine testing"]
+#[ignore = "Fast in release (0.2-2.9s) — NOT slow. Fails on genus only: volume + area now \
+            match C++ exactly (after the n-way sphere fix), but the topology (genus) differs. \
+            C++ runs these with ManifoldParams().processOverlaps=true, which Rust lacks — \
+            same processOverlaps/overlapping-polygon-triangulation gap as the boolean \
+            non-manifold cluster. Correctness gap, not perf."]
 fn test_cpp_nonconvex_nonconvex_minkowski_sum() {
     let tet = Manifold::tetrahedron();
     let non_convex = tet.difference(
@@ -133,7 +145,11 @@ fn test_cpp_nonconvex_nonconvex_minkowski_sum() {
 
 /// C++ TEST(Boolean, NonConvexNonConvexMinkowskiDifference)
 #[test]
-#[ignore = "Non-convex Minkowski is O(n^2) on triangle count; too slow for routine testing"]
+#[ignore = "Fast in release (0.2-2.9s) — NOT slow. Fails on genus only: volume + area now \
+            match C++ exactly (after the n-way sphere fix), but the topology (genus) differs. \
+            C++ runs these with ManifoldParams().processOverlaps=true, which Rust lacks — \
+            same processOverlaps/overlapping-polygon-triangulation gap as the boolean \
+            non-manifold cluster. Correctness gap, not perf."]
 fn test_cpp_nonconvex_nonconvex_minkowski_difference() {
     let tet = Manifold::tetrahedron();
     let non_convex = tet.difference(

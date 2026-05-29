@@ -55,7 +55,9 @@ fn test_cpp_sdf_sine_surface() {
 
 /// C++ TEST(SDF, Blobs) — metaball SDF using smoothstep
 #[test]
-#[ignore = "Slow: 263s in debug mode due to fine edge_length=0.05"]
+#[ignore = "Slow in DEBUG only (fine edge_length=0.05). Release is 5.6s after the \
+            HashMap->Vec voxel-grid perf fix (was 62.6s). Passes. Remaining release gap vs \
+            C++ is the deferred voxel-fill parallelism (rayon feature), not an algorithmic bug."]
 fn test_cpp_sdf_blobs() {
     let blend = 1.0f64;
     let balls: Vec<[f64; 4]> = vec![
@@ -215,7 +217,11 @@ fn test_cpp_sdf_void_subtract() {
 
 /// C++ TEST(SDF, SphereShell) — thin sphere shell via level set
 #[test]
-#[ignore = "Slow: very fine edge_length=0.01 for thin shell"]
+#[ignore = "Two issues: (1) perf — now 12s release after the voxel-grid Vec fix (was 80s); \
+            (2) CORRECTNESS — fails on genus: 9560 vs expected ~14235. The thin shell \
+            (r in [0.995, 1.0] at edge_length=0.01 ≈ half a voxel thick) exposes an \
+            SDF-marching topology difference vs C++ (fewer holes detected). Needs root-cause \
+            in the marching-tetrahedra crossing/snap logic; not a perf issue."]
 fn test_cpp_sdf_sphere_shell() {
     let sphere = Manifold::level_set(
         |p: Vec3| {
