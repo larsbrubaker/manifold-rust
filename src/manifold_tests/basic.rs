@@ -354,11 +354,15 @@ fn test_cpp_opposite_face() {
 #[test]
 fn test_sphere_is_round() {
     let m = Manifold::sphere(1.0, 24);
-    // Unit sphere: volume should be ~4π/3 ≈ 4.189
+    // Unit sphere: volume approaches 4π/3 ≈ 4.189 as resolution increases.
+    // With exact n-way subdivision, Sphere(1, 24) uses n = (24+3)/4 = 6
+    // divisions per octahedron edge — a genuinely coarse sphere (vol ≈ 4.02),
+    // so this roundness check uses a 0.2 tolerance rather than assuming the
+    // old over-refined (power-of-2) tessellation.
     let vol = m.volume();
     let expected = 4.0 * std::f64::consts::PI / 3.0;
     assert!(
-        (vol - expected).abs() < 0.15,
+        (vol - expected).abs() < 0.2,
         "Sphere volume should be ~{:.3}, got {:.3}",
         expected,
         vol

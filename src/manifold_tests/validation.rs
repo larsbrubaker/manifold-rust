@@ -249,7 +249,6 @@ fn test_cpp_boolean_meshgl_round_trip() {
 
 /// C++ TEST(Manifold, Sphere) — sphere triangle count with n=25
 #[test]
-#[ignore = "Binary subdivision gives 8192 instead of 5000 — needs n-way splits"]
 fn test_cpp_sphere_tri_count_n25() {
     let n = 25;
     let sphere = Manifold::sphere(1.0, 4 * n);

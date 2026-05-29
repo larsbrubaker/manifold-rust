@@ -104,16 +104,23 @@ impl Manifold {
         }
         const K_HALF_PI: f64 = std::f64::consts::FRAC_PI_2;
 
-        // Build unit octahedron and subdivide
-        // C++: n = (circularSegments + 3) / 4, then Subdivide with n-1 edge cuts.
-        // C++ Subdivide splits each edge into n parts in one pass (n^2 tris per original).
-        // Our subdivide_impl does recursive midpoint splits (2^levels parts per edge).
-        // So we need levels = ceil(log2(n)) to approximate the C++ behavior.
+        // Build unit octahedron and subdivide each edge into exactly n parts in
+        // one pass (n^2 tris per original face), matching C++:
+        //   n = (circularSegments + 3) / 4   (or Quality-based when unspecified)
+        //   Subdivide([n](...) { return n - 1; })
+        // n-1 is the number of *added* verts per edge. Using the n-way Subdivide
+        // (not binary midpoint splits) gives exact non-power-of-2 counts, e.g.
+        // Sphere(_, 25) -> 8 * 25^2 = 5000 tris rather than 8 * 32^2 = 8192.
         let identity = mat4_to_mat3x4(scaling_matrix(Vec3::splat(1.0)));
-        let base = ManifoldImpl::octahedron(&identity);
-        let n = if circular_segments > 0 { (circular_segments + 3) / 4 } else { 1 };
-        let levels = if n <= 1 { 0 } else { (n as f64).log2().ceil() as usize };
-        let mut mesh = subdivision::subdivide_impl(&base, levels);
+        let mut mesh = ManifoldImpl::octahedron(&identity);
+        let n = if circular_segments > 0 {
+            (circular_segments + 3) / 4
+        } else {
+            crate::types::Quality::get_circular_segments(radius) / 4
+        };
+        if n > 1 {
+            mesh.subdivide(&|_, _, _| n - 1, false);
+        }
 
         // Map subdivided octahedron vertices onto the sphere surface
         // (matches C++: v = cos(π/2 * (1 - v)); v = radius * normalize(v))
