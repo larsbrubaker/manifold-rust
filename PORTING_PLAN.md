@@ -5,7 +5,7 @@ This is a **roadmap of remaining work** to finish porting
 not what has already been done (use `git log` for history). Every change must reproduce the
 C++ reference with **exact numerical match** — identical results on identical inputs.
 
-**Status:** 504 passing, 0 failing, 21 ignored.
+**Status:** 506 passing, 0 failing, 19 ignored.
 **C++ reference target:** v3.5.0 (submodule at tag `v3.5.0`, commit `541c33bd`).
 **Core engine:** all 18 phases (linalg → boolean → CSG → cross-section → SDF → minkowski →
 WASM) are implemented. Remaining work is the v3.5.0 deltas below plus the ignored-test
@@ -32,7 +32,7 @@ optional/peripheral:
 
 ---
 
-## Ignored tests (21) — grouped by the work needed to clear them
+## Ignored tests (19) — grouped by the work needed to clear them
 
 ### Just slow in debug — pass in release; not bugs (9)
 `nonconvex_convex_minkowski_sum/difference`, `nonconvex_nonconvex_minkowski_sum/difference`
@@ -40,17 +40,11 @@ optional/peripheral:
 (depth-4), `properties_mingap_stretchy_bracelet`. → Speed up or run in release; no correctness
 work.
 
-### N-way subdivision (2)
-`sphere_tri_count_n25` (8192 vs 5000 tris), `properties_tolerance_sphere`. Current
-subdivision is binary (always doubles edge count); C++ supports arbitrary n-way splits via
-the `Partition` class. Non-power-of-2 segment counts need this.
-
 ### Coplanar merge / boolean-pipeline geometry (2)
 `almost_coplanar` (21 vs 20 verts; C++ v3.5.0 still expects {20,36}, so this is a real
 coplanar-merge difference in `SimplifyTopology`, *not* tolerance stacking — #1671 edge_op is
 already ported and doesn't change it), `convex_convex_minkowski_difference` (collapse_edge
-exposes a boolean-pipeline geometry difference). `properties_tolerance_sphere` also fails
-here but is grouped under N-way subdivision above (its real blocker).
+exposes a boolean-pipeline geometry difference).
 
 ### `edge_op::update_vert` robustness — needs processOverlaps (2)
 `openscad_crash`, `complex_sweep`. `update_vert` walks `paired_halfedge` around a shared
