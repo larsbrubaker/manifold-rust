@@ -15,13 +15,8 @@ backlog.
 
 ## Remaining v3.5.0 work
 
-### #1671 — edge_op / simplify part
-The smoothing part of #1671 is done; the `edge_op.cpp` part is not: `CollapseEdge` gains
-`tol`/`firstNewVert` params, reworked `CollapseShortEdges`/`CollapseColinearEdges`
-("improved boolean edge collapse"), plus the properties.cpp simplify cleanup and "tolerance
-stacking" fix.
-- **May unblock** the tolerance/coplanar ignored tests (`almost_coplanar`,
-  `properties_tolerance_sphere`). C++ ref: 58b328a9 (#1671).
+All substantive v3.5.0 deltas are now ported or confirmed N/A. What's left is
+optional/peripheral:
 
 ### Likely N/A — confirm before skipping
 - Import/Export fixes + topological 3MF sort (#1705, #1685, #1692) — no 3MF in Rust. But
@@ -50,10 +45,12 @@ work.
 subdivision is binary (always doubles edge count); C++ supports arbitrary n-way splits via
 the `Partition` class. Non-power-of-2 segment counts need this.
 
-### edge_op / simplify & tolerance (3) — overlaps with #1671 edge_op work
-`almost_coplanar` (21 vs 20 verts — colinear-edge-collapse / epsilon difference in
-`SimplifyTopology`), `properties_tolerance_sphere` (set_tolerance), `convex_convex_minkowski_difference`
-(collapse_edge exposes a boolean-pipeline geometry difference).
+### Coplanar merge / boolean-pipeline geometry (2)
+`almost_coplanar` (21 vs 20 verts; C++ v3.5.0 still expects {20,36}, so this is a real
+coplanar-merge difference in `SimplifyTopology`, *not* tolerance stacking — #1671 edge_op is
+already ported and doesn't change it), `convex_convex_minkowski_difference` (collapse_edge
+exposes a boolean-pipeline geometry difference). `properties_tolerance_sphere` also fails
+here but is grouped under N-way subdivision above (its real blocker).
 
 ### `edge_op::update_vert` robustness — needs processOverlaps (2)
 `openscad_crash`, `complex_sweep`. `update_vert` walks `paired_halfedge` around a shared
