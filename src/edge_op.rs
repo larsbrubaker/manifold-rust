@@ -151,7 +151,13 @@ pub fn remove_if_folded(mesh: &mut ManifoldImpl, edge: usize) {
 /// Collapses the given edge by merging `startVert` into `endVert`.
 /// Returns false if the collapse cannot be done safely.
 /// May form loops (topological splits) to avoid non-manifold configurations.
-pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usize>) -> bool {
+pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usize>, tol: f64, first_new_vert: i32) -> bool {
+    // Per #1671: `tol` defaults to epsilon when negative. In a Boolean
+    // (first_new_vert != 0) callers pass tolerance_ so newly-created verts may
+    // move up to tolerance, but an edge whose far end is an *old* vert is still
+    // limited to epsilon (old verts may only move by epsilon — avoids error
+    // stacking).
+    let tol = if tol < 0.0 { mesh.epsilon } else { tol };
     let to_remove = mesh.halfedge[edge];
     if to_remove.paired_halfedge < 0 {
         return false;
@@ -165,7 +171,12 @@ pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usi
     let p_new = mesh.vert_pos[end_vert];
     let p_old = mesh.vert_pos[to_remove.start_vert as usize];
     let delta = p_new - p_old;
-    let short_edge = dot(delta, delta) < mesh.epsilon * mesh.epsilon;
+    let max_len = if (end_vert as i32) < first_new_vert {
+        tol * tol
+    } else {
+        mesh.epsilon * mesh.epsilon
+    };
+    let short_edge = dot(delta, delta) < max_len;
 
     // Orbit startVert: check that collapse does not invert any triangle
     let start_orb = mesh.halfedge[tri1edge[1]].paired_halfedge;
@@ -204,7 +215,9 @@ pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usi
                     let p_p_last = projection.apply(p_last);
                     let p_p_old = projection.apply(p_old);
                     let p_p_new = projection.apply(p_new);
-                    if ccw(p_p_last, p_p_old, p_p_new, mesh.epsilon) != 0 {
+                    // Per #1671: this colinear-restrict check uses `tol` (the
+                    // triangle-inversion CCW below stays at epsilon).
+                    if ccw(p_p_last, p_p_old, p_p_new, tol) != 0 {
                         return false;
                     }
                 }
@@ -410,7 +423,7 @@ pub fn recursive_edge_swap(
         let e23 = v[3] - v[2];
         if dot2(e23, e23) < mesh.tolerance * mesh.tolerance {
             // Also collapse the resulting short edge
-            let _ = collapse_edge(mesh, tri0edge[2], scratch);
+            let _ = collapse_edge(mesh, tri0edge[2], scratch, -1.0, 0);
             scratch.clear();
         } else {
             if edge < visited.len() { visited[edge] = tag; }
@@ -748,20 +761,32 @@ pub fn collapse_short_edges(mesh: &mut ManifoldImpl, first_new_vert: i32) {
     let n = mesh.halfedge.len();
     let mut flagged: Vec<usize> = Vec::new();
 
+    // Per #1671: outside a Boolean (first_new_vert == 0) collapse only up to
+    // epsilon to avoid error stacking; in a Boolean we only touch new verts, so
+    // we may collapse up to tolerance. The per-edge max length below still
+    // restricts new->old edges (old verts only move by epsilon).
+    let tol = if first_new_vert == 0 { mesh.epsilon } else { mesh.tolerance };
+
     for i in 0..n {
         let h = &mesh.halfedge[i];
         if h.paired_halfedge < 0 { continue; }
         if h.start_vert < first_new_vert && h.end_vert < first_new_vert { continue; }
         if h.start_vert < 0 || h.end_vert < 0 { continue; }
         let delta = mesh.vert_pos[h.end_vert as usize] - mesh.vert_pos[h.start_vert as usize];
-        if dot(delta, delta) < mesh.epsilon * mesh.epsilon {
+        let len_sq = dot(delta, delta);
+        let max_len = if h.end_vert < first_new_vert {
+            tol * tol
+        } else {
+            mesh.epsilon * mesh.epsilon
+        };
+        if len_sq < max_len {
             flagged.push(i);
         }
     }
 
     for &i in &flagged {
         scratch.clear();
-        collapse_edge(mesh, i, &mut scratch);
+        collapse_edge(mesh, i, &mut scratch, tol, first_new_vert);
     }
 }
 
@@ -826,7 +851,7 @@ pub fn collapse_colinear_edges(mesh: &mut ManifoldImpl, first_new_vert: i32) {
         let mut num_collapsed = 0;
         for &i in &flagged {
             scratch.clear();
-            if collapse_edge(mesh, i, &mut scratch) {
+            if collapse_edge(mesh, i, &mut scratch, -1.0, 0) {
                 num_collapsed += 1;
             }
         }

@@ -131,7 +131,8 @@ impl ManifoldImpl {
                 );
             }
 
-            let winding = ccw(v[0], v[1], v[2], self.epsilon / 2.0);
+            // Per #1671: degeneracy is judged within tolerance_, not epsilon_.
+            let winding = ccw(v[0], v[1], v[2], self.tolerance / 2.0);
             if winding == 0 {
                 count += 1;
             }
