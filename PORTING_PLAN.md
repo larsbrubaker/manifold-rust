@@ -46,11 +46,17 @@ coplanar-merge difference in `SimplifyTopology`, *not* tolerance stacking — #1
 already ported and doesn't change it), `convex_convex_minkowski_difference` (collapse_edge
 exposes a boolean-pipeline geometry difference).
 
-### `edge_op::update_vert` robustness — needs processOverlaps (2)
-`openscad_crash`, `complex_sweep`. `update_vert` walks `paired_halfedge` around a shared
-vertex; an unpaired halfedge (paired = -1) indexes with `usize::MAX` and panics. C++ masks
-this via `processOverlaps=true`; our boolean output produces a slightly non-manifold
-intermediate for these inputs. Root-cause in boolean result assembly.
+### Collapse-sequence creates an unpaired halfedge (2)
+`complex_sweep`, `openscad_crash`. `update_vert` walks `paired_halfedge` around a vertex; an
+unpaired halfedge (paired = -1) indexes with `usize::MAX` and panics.
+**Diagnosed (not processOverlaps — that's only a polygon-triangulation flag):** a probe at
+`simplify_topology` entry shows the boolean output is fully manifold (zero unpaired
+halfedges), so the `-1` is created *mid-simplify* during the collapse sequence.
+`collapse_tri` / `form_loop` structurally match C++ (`PairUp`, same orbits), so the bug is a
+subtle index/ordering divergence in the multi-collapse interaction that only this
+pathological input triggers. Next step: instrument both Rust and the C++ reference to log
+each collapsed edge + resulting pairing on this input and find the first divergence. (Avoid a
+`-1` guard band-aid — it would mask the bug and risk incorrect geometry.)
 
 ### Boolean hangs (2)
 `complex_generic_twin_7081`, `generic_twin_7081`. Loop-termination/convergence bug in boolean.

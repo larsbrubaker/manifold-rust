@@ -468,7 +468,13 @@ fn test_cpp_complex_mesh_relation() {
 /// path, building an `Extrude`+`Warp` primitive per segment and batch-unioning.
 /// Expects final volume ≈ 3757.
 #[test]
-#[ignore = "panics in edge_op update_vert (paired_halfedge=-1). C++ uses processOverlaps=true which suppresses a geometry check; Rust hits a different code path during edge collapse"]
+#[ignore = "panics in edge_op::update_vert (paired_halfedge=-1 → OOB). Diagnosed: \
+            the boolean output is fully manifold (probe confirmed no unpaired halfedges at \
+            simplify_topology entry); the unpaired halfedge is created mid-simplify during \
+            the collapse sequence. collapse_tri/form_loop structurally match C++, so this is \
+            a subtle index/ordering divergence in the multi-collapse interaction on this \
+            pathological sweep input. Needs step-by-step instrumented Rust-vs-C++ comparison \
+            of each collapse; NOT processOverlaps (that's only a polygon-triangulation flag)."]
 fn test_cpp_complex_sweep() {
     use std::f64::consts::PI;
     let k_two_pi = 2.0 * PI;
