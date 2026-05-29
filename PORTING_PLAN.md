@@ -34,11 +34,29 @@ optional/peripheral:
 
 ## Ignored tests (18) — grouped by the work needed to clear them
 
-### Just slow in debug — pass in release; not bugs (9)
-`nonconvex_convex_minkowski_sum/difference`, `nonconvex_nonconvex_minkowski_sum/difference`
-(O(n²)), `sdf_blobs`, `sdf_sphere_shell`, `hull_sphere` (1500 seg), `hull_menger_sponge`
-(depth-4), `properties_mingap_stretchy_bracelet`. → Speed up or run in release; no correctness
-work.
+> **Audit note:** C++ has zero `DISABLED_` tests, so the fair bar is Rust-release ≈
+> C++-release. The old "9 slow in debug" bucket was a mislabeled mix; broken out below.
+
+### Slow in debug only — fast & passing in release (2)
+`sdf_blobs` (release 5.6s after the HashMap→Vec voxel-grid fix, was 62.6s), `hull_sphere`
+(~7s). Legitimately debug-slow; no further work unless we run a release test lane.
+
+### Heavy CSG/boolean — gap is deferred parallelism (2)
+`hull_menger_sponge` (depth-4 CSG, >60s in release), `properties_mingap_stretchy_bracelet`.
+C++ runs Boolean/CSG via TBB; Rust is sequential-first (rayon behind the `parallel` feature).
+Closing the gap = enabling/validating rayon, not an identified algorithmic bug.
+
+### processOverlaps / overlapping-polygon triangulation (4)
+`nonconvex_convex_minkowski_sum/difference`, `nonconvex_nonconvex_minkowski_sum/difference`.
+**Fast in release (0.2–2.9s) — not slow.** Volume + area now match C++ exactly; only **genus**
+differs. C++ runs these with `ManifoldParams().processOverlaps = true` (handles overlapping/
+degenerate polygons in triangulation). Implementing processOverlaps is the shared blocker
+(also relevant to `convex_convex_minkowski_difference`).
+
+### SDF thin-shell marching topology (1)
+`sdf_sphere_shell` — genus 9560 vs expected ~14235 (perf now fine, 12s in release after the
+Vec fix). The half-voxel-thick shell exposes a marching-tetrahedra crossing/snap topology
+difference vs C++. Real correctness bug; needs root-cause in the SDF crossing logic.
 
 ### Coplanar merge / boolean-pipeline geometry (2)
 `almost_coplanar` (21 vs 20 verts; C++ v3.5.0 still expects {20,36}, so this is a real
