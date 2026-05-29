@@ -314,7 +314,6 @@ fn test_cpp_properties_tolerance() {
 
 /// C++ TEST(Properties, ToleranceSphere) — sphere set_tolerance
 #[test]
-#[ignore = "set_tolerance simplification not yet matching C++ behavior"]
 fn test_cpp_properties_tolerance_sphere() {
     let n = 1000;
     let sphere = Manifold::sphere(1.0, 4 * n);

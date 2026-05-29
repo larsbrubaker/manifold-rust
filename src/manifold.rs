@@ -202,12 +202,19 @@ impl Manifold {
     pub fn set_tolerance(&self, tolerance: f64) -> Self {
         if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
-        if tolerance >= out.epsilon {
-            out.epsilon = tolerance;
-            // When tolerance increases, simplify the mesh
+        // Matches C++ SetTolerance: operate on the `tolerance` field (which
+        // drives coplanar grouping in mark_coplanar), not `epsilon`. When
+        // raising tolerance, recompute coplanar groups *first* so the
+        // colinear-edge collapse in simplify_topology can see the newly
+        // co-planar regions, then simplify, then re-sort.
+        if tolerance > out.tolerance {
+            out.tolerance = tolerance;
+            out.set_normals_and_coplanar();
             crate::edge_op::simplify_topology(&mut out, 0);
             out.sort_geometry();
-            out.set_normals_and_coplanar();
+        } else {
+            // Reducing tolerance: keep it at least epsilon.
+            out.tolerance = out.epsilon.max(tolerance);
         }
         Self::from_impl(out)
     }
