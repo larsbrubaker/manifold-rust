@@ -361,18 +361,22 @@ pub fn level_set<F: Fn(Vec3) -> f64>(
 
     let origin = bounds.min;
 
-    // Evaluate SDF at all grid points
-    let mut voxels: HashMap<u64, f64> = HashMap::new();
+    // Evaluate SDF at all grid points into a flat dense array indexed directly
+    // by the encoded index, matching C++ `Vec<double> voxels(maxIndex)`. The
+    // encoded indices are contiguous in [0, max_index), so a Vec gives O(1)
+    // direct access; the previous HashMap<u64,f64> paid SipHash on millions of
+    // keys (both inserts and the 14-neighbor lookups per grid vert), which
+    // dominated runtime on fine grids (sdf_blobs/sdf_sphere_shell).
+    let mut voxels = vec![0.0f64; max_index as usize];
     for idx in 0..max_index {
         let gi = decode_index(idx, grid_pow);
         let gi_shifted = ivec4_add(gi, IVec4::new(-K_VOXEL_OFFSET.x, -K_VOXEL_OFFSET.y, -K_VOXEL_OFFSET.z, -K_VOXEL_OFFSET.w));
-        let val = bounded_sdf(gi_shifted, origin, spacing, grid_size, level, &sdf);
-        voxels.insert(idx, val);
+        voxels[idx as usize] = bounded_sdf(gi_shifted, origin, spacing, grid_size, level, &sdf);
     }
 
     let get_voxel = |gi: IVec4| -> f64 {
         let key = encode_index(ivec4_add(gi, K_VOXEL_OFFSET), grid_pow);
-        *voxels.get(&key).unwrap_or(&0.0)
+        voxels.get(key as usize).copied().unwrap_or(0.0)
     };
 
     // Phase 1: NearSurface — identify grid verts near the surface
