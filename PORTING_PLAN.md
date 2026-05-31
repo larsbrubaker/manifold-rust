@@ -5,7 +5,7 @@ This is a **roadmap of remaining work** to finish porting
 not what has already been done (use `git log` for history). Every change must reproduce the
 C++ reference with **exact numerical match** — identical results on identical inputs.
 
-**Status:** 507 passing, 0 failing, 18 ignored.
+**Status:** 510 passing, 0 failing, 15 ignored.
 **C++ reference target:** v3.5.0 (submodule at tag `v3.5.0`, commit `541c33bd`).
 **Core engine:** all 18 phases (linalg → boolean → CSG → cross-section → SDF → minkowski →
 WASM) are implemented. Remaining work is the v3.5.0 deltas below plus the ignored-test
@@ -32,26 +32,37 @@ optional/peripheral:
 
 ---
 
-## Ignored tests (18) — grouped by the work needed to clear them
+## Ignored tests (15) — grouped by the work needed to clear them
 
 > **Audit note:** C++ has zero `DISABLED_` tests, so the fair bar is Rust-release ≈
 > C++-release. The old "9 slow in debug" bucket was a mislabeled mix; broken out below.
 
-### Slow in debug only — fast & passing in release (2)
+### Slow in debug only — fast & passing in release (4)
 `sdf_blobs` (release 5.6s after the HashMap→Vec voxel-grid fix, was 62.6s), `hull_sphere`
-(~7s). Legitimately debug-slow; no further work unless we run a release test lane.
+(~7s), `generic_twin_7081` + `complex_generic_twin_7081` (~18s each in release; pass after
+the RecursiveEdgeSwap fix). Legitimately debug-slow; no further work unless we run a release
+test lane.
 
 ### Heavy CSG/boolean — gap is deferred parallelism (2)
 `hull_menger_sponge` (depth-4 CSG, >60s in release), `properties_mingap_stretchy_bracelet`.
 C++ runs Boolean/CSG via TBB; Rust is sequential-first (rayon behind the `parallel` feature).
 Closing the gap = enabling/validating rayon, not an identified algorithmic bug.
 
-### processOverlaps / overlapping-polygon triangulation (4)
+### Overlapping-polygon triangulation match (4)
 `nonconvex_convex_minkowski_sum/difference`, `nonconvex_nonconvex_minkowski_sum/difference`.
 **Fast in release (0.2–2.9s) — not slow.** Volume + area now match C++ exactly; only **genus**
-differs. C++ runs these with `ManifoldParams().processOverlaps = true` (handles overlapping/
-degenerate polygons in triangulation). Implementing processOverlaps is the shared blocker
-(also relevant to `convex_convex_minkowski_difference`).
+differs.
+> **Correction (2026-05):** this is *not* a missing "processOverlaps feature."
+> `processOverlaps` (default **true** in C++ `common.h`) only gates a **debug-only assertion**
+> — `polygon.cpp:950` runs `CheckGeometry` (which throws `geometryErr` on an overlapping
+> triangulation) *only* when `processOverlaps == false` AND `MANIFOLD_DEBUG` AND
+> `intermediateChecks`. It changes **no** triangulation output. The real gap: Rust's `EarClip`
+> triangulator must, for non-ε-valid (self-overlapping) polygons, "always return a manifold
+> result that matches the input edge directions" (per `TriangulateIdxHalfedges` docs) with the
+> **same topology** as C++. The genus delta = a degenerate-input triangulation divergence in
+> `polygon_earclip.rs`. Same blocker for `convex_convex_minkowski_difference` and
+> `openscad_crash` (the latter's C++ test sets `processOverlaps=true` only to silence that
+> debug assert on its known-overlapping input).
 
 ### SDF thin-shell marching topology (1)
 `sdf_sphere_shell` — genus 9560 vs expected ~14235 (perf now fine, 12s in release after the
@@ -63,24 +74,37 @@ difference vs C++. Real correctness bug; needs root-cause in the SDF crossing lo
 coplanar-merge difference in `SimplifyTopology`, *not* tolerance stacking — #1671 edge_op is
 already ported and doesn't change it), `convex_convex_minkowski_difference` (collapse_edge
 exposes a boolean-pipeline geometry difference).
+> **Ruled out (2026-05):** batch-vs-pairwise union ordering. `tet + rotated + tet` in C++
+> evaluates through `BatchUnion`→`BatchBoolean`, but for three equal-vertex tetrahedra the
+> size-heap (`MeshCompare`, tie-break by insertion serial) reduces to exactly
+> `(tet ∪ rotated) ∪ tet` — the same two ops, same order, as Rust's eager `+`. So the extra
+> vert is genuinely produced inside one boolean+simplify, not by CSG structure. Next step:
+> dump both result meshes (C++ has `WriteTestOBJ` behind `options.exportModels`) and diff
+> which vert/edge fails to merge.
 
-### Boolean produces a non-manifold intermediate — deep robustness (4)
-`complex_sweep`, `openscad_crash`, `complex_craycloud`, `craycloud_bool`. All four end in a
-non-manifold intermediate during/after a boolean: either `update_vert` walks an unpaired
-halfedge (`paired = -1` → `usize::MAX` OOB) or the sort.rs:298 odd-halfedge assertion fires.
-**Diagnosed:** for complex_sweep, a probe at `simplify_topology` entry shows the boolean
-output is fully manifold, so the `-1` is created *mid-simplify* during the collapse sequence;
-`collapse_tri` / `form_loop` structurally match C++ (`PairUp`, same orbits), so it's a subtle
-index/ordering divergence in the multi-collapse interaction. The craycloud pair is
-FP-borderline (passes in release, fails in debug) — the OBJs are cleanly indexed (no
-welding/import issue) and `processOverlaps` is unrelated (only a polygon-triangulation flag).
-Next step: instrument Rust + the C++ reference to log each collapsed edge + resulting pairing
-on these inputs and find the first divergence. (Avoid a `-1` guard band-aid — masks the bug,
-risks incorrect geometry.)
+### Boolean produces a non-manifold intermediate — deep robustness — FIXED (3 of 4)
+**Root cause (found):** `RecursiveEdgeSwap` in `edge_op.rs` was missing two pieces of the
+C++ `edge_op.cpp`:
+1. The `SwapEdge` lambda's tail block that, when a swap creates a *duplicate* edge, calls
+   `FormLoop`/`RemoveIfFolded` to split the mesh and keep it manifold. Omitting it left a
+   non-manifold edge that later sent `collapse_edge`/`update_vert` walking an unpaired
+   (`-1`) halfedge → `usize::MAX` OOB (or the sort.rs:298 odd-halfedge assertion).
+2. The C++ `if (edge < 0) return;` guard. C++'s `edgeSwapStack` holds `int` and the
+   normal-swap path legitimately pushes pair values that can be `-1`; the Rust stack used
+   `usize`, wrapping `-1` to `usize::MAX`. Stack + param are now `i32` with the guard.
 
-### Boolean hangs (2)
-`complex_generic_twin_7081`, `generic_twin_7081`. Loop-termination/convergence bug in boolean
-(likely the same robustness area as above).
+This cleared `complex_sweep` (vol≈3757, exact C++ match), `complex_craycloud`,
+`craycloud_bool` — all now un-ignored and passing in debug + release.
+
+Still ignored: `openscad_crash` — genuinely needs **processOverlaps** (the C++
+`TEST(Manifold, OpenscadCrash)` is itself gated behind `MANIFOLD_DEBUG` and sets
+`ManifoldParams().processOverlaps = true`). Same blocker as the minkowski/genus group.
+
+### Boolean hangs — FIXED (kept ignored for debug speed)
+`complex_generic_twin_7081`, `generic_twin_7081`. These were the same non-manifold
+infinite loop, fixed by the `RecursiveEdgeSwap` change above. They now pass in release
+(~18s each; C++ ≈50s) and are kept `#[ignore]`d only for debug-suite speed, like
+`sdf_blobs`/`hull_sphere`.
 
 ---
 

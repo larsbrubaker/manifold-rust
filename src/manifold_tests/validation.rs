@@ -339,12 +339,6 @@ fn test_cpp_project() {
 
 /// C++ TEST(BooleanComplex, CraycloudBool)
 #[test]
-#[ignore = "Boolean (Cray_left - Cray_right) produces a non-manifold intermediate \
-            (sort.rs:298 odd-halfedge assertion) in DEBUG, but PASSES in release — a \
-            borderline FP-sensitive geometric predicate, same deep boolean-robustness class \
-            as complex_sweep (collapse/boolean leaves an unpaired halfedge). The OBJs \
-            themselves are clean (Cray_left 292 v / 576 tri, Cray_right a cube; no duplicate \
-            verts), so it's not an import/welding issue."]
 fn test_cpp_craycloud_bool() {
     let m1 = super::read_test_obj("Cray_left.obj");
     let m2 = super::read_test_obj("Cray_right.obj");
@@ -357,7 +351,9 @@ fn test_cpp_craycloud_bool() {
 
 /// C++ TEST(BooleanComplex, GenericTwinBooleanTest7081)
 #[test]
-#[ignore = "Hangs — likely loop termination bug in boolean"]
+#[ignore = "Slow in debug only — passes in release (~18s; C++ takes ~50s). No longer hangs \
+            after the RecursiveEdgeSwap FormLoop / edge<0 fix in edge_op.rs. Kept ignored \
+            for debug-suite speed, like sdf_blobs/hull_sphere."]
 fn test_cpp_generic_twin_7081() {
     let m1 = super::read_test_obj("Generic_Twin_7081.1.t0_left.obj");
     let m2 = super::read_test_obj("Generic_Twin_7081.1.t0_right.obj");

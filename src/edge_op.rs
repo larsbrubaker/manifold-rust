@@ -320,12 +320,20 @@ pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usi
 /// the swap recursively as needed.
 pub fn recursive_edge_swap(
     mesh: &mut ManifoldImpl,
-    edge: usize,
+    edge: i32,
     tag: i32,
     visited: &mut Vec<i32>,
-    edge_swap_stack: &mut Vec<usize>,
+    edge_swap_stack: &mut Vec<i32>,
     scratch: &mut Vec<usize>,
 ) {
+    // C++ guards `if (edge < 0) return;` first — the normal-swap path pushes
+    // paired-halfedge values that can legitimately be -1, and the stack stores
+    // them as-is (int). Keeping the stack/param as i32 preserves that sentinel
+    // instead of wrapping -1 to usize::MAX and indexing out of bounds.
+    if edge < 0 {
+        return;
+    }
+    let edge = edge as usize;
     if mesh.halfedge[edge].paired_halfedge < 0 {
         return;
     }
@@ -412,6 +420,24 @@ pub fn recursive_edge_swap(
             mesh.halfedge[tri0edge[0]].prop_vert = mesh.halfedge[tri1edge[2]].prop_vert;
             mesh.halfedge[tri0edge[1]].prop_vert = mesh.halfedge[tri1edge[0]].prop_vert;
         }
+
+        // If the new (swapped) edge already exists elsewhere, the swap has
+        // created a duplicate edge. Duplicate the verts and split the mesh the
+        // other way so the result stays manifold. Omitting this (as the Rust
+        // port previously did) leaves a non-manifold edge that later trips
+        // collapse_edge/update_vert into walking an unpaired (-1) halfedge.
+        // `current` is kept as i32 to mirror the C++ `int` orbit exactly.
+        let end_vert = mesh.halfedge[tri1edge[1]].end_vert;
+        let mut current = mesh.halfedge[tri1edge[0]].paired_halfedge;
+        while current != tri0edge[1] as i32 {
+            current = next_halfedge(current);
+            if mesh.halfedge[current as usize].end_vert == end_vert {
+                form_loop(mesh, tri0edge[2], current as usize);
+                remove_if_folded(mesh, tri0edge[2]);
+                return;
+            }
+            current = mesh.halfedge[current as usize].paired_halfedge;
+        }
     };
 
     if ccw(v[1], v[0], v[3], mesh.tolerance) <= 0 {
@@ -429,7 +455,7 @@ pub fn recursive_edge_swap(
             if edge < visited.len() { visited[edge] = tag; }
             if pair < visited.len() { visited[pair] = tag; }
             for &e in &[tri1edge[1], tri1edge[0], tri0edge[1], tri0edge[0]] {
-                edge_swap_stack.push(e);
+                edge_swap_stack.push(e as i32);
             }
         }
     } else if ccw(v[0], v[3], v[2], mesh.tolerance) <= 0
@@ -441,8 +467,10 @@ pub fn recursive_edge_swap(
         do_swap(mesh);
         if edge < visited.len() { visited[edge] = tag; }
         if pair < visited.len() { visited[pair] = tag; }
-        let p1 = mesh.halfedge[tri1edge[0]].paired_halfedge as usize;
-        let p2 = mesh.halfedge[tri0edge[1]].paired_halfedge as usize;
+        // These pair lookups can be -1; C++ pushes them as-is and relies on the
+        // `edge < 0` guard at the top of the next call to skip them.
+        let p1 = mesh.halfedge[tri1edge[0]].paired_halfedge;
+        let p2 = mesh.halfedge[tri0edge[1]].paired_halfedge;
         edge_swap_stack.push(p1);
         edge_swap_stack.push(p2);
     }
@@ -909,13 +937,13 @@ pub fn swap_degenerates(mesh: &mut ManifoldImpl, first_new_vert: i32) {
     }
 
     let mut visited = vec![-1i32; n];
-    let mut edge_swap_stack: Vec<usize> = Vec::new();
+    let mut edge_swap_stack: Vec<i32> = Vec::new();
     let mut scratch: Vec<usize> = Vec::new();
     let mut tag = 0i32;
 
     for &i in &flagged {
         tag += 1;
-        recursive_edge_swap(mesh, i, tag, &mut visited, &mut edge_swap_stack, &mut scratch);
+        recursive_edge_swap(mesh, i as i32, tag, &mut visited, &mut edge_swap_stack, &mut scratch);
         while let Some(e) = edge_swap_stack.pop() {
             recursive_edge_swap(mesh, e, tag, &mut visited, &mut edge_swap_stack, &mut scratch);
         }

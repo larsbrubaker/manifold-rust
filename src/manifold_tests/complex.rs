@@ -11,7 +11,9 @@ fn test_cpp_complex_self_intersect() {
 
 /// C++ TEST(BooleanComplex, GenericTwinBooleanTest7081)
 #[test]
-#[ignore = "Hangs in boolean — likely convergence bug in edge_op"]
+#[ignore = "Slow in debug only — passes in release (~18s; C++ takes ~50s). No longer hangs \
+            after the RecursiveEdgeSwap FormLoop / edge<0 fix in edge_op.rs. Kept ignored \
+            for debug-suite speed, like sdf_blobs/hull_sphere."]
 fn test_cpp_complex_generic_twin_7081() {
     let m1 = read_test_obj("Generic_Twin_7081.1.t0_left.obj");
     let m2 = read_test_obj("Generic_Twin_7081.1.t0_right.obj");
@@ -337,9 +339,6 @@ fn test_cpp_meshgl_round_trip() {
 
 /// C++ TEST(BooleanComplex, CraycloudBool) — subtract complements, simplify to empty
 #[test]
-#[ignore = "Boolean produces a non-manifold intermediate (sort.rs:298 odd-halfedge \
-            assertion); FP-borderline (debug vs release differ), same deep boolean-robustness \
-            class as complex_sweep. Not an OBJ import issue — the meshes are cleanly indexed."]
 fn test_cpp_complex_craycloud() {
     let m1 = read_test_obj("Cray_left.obj");
     let m2 = read_test_obj("Cray_right.obj");
@@ -395,7 +394,10 @@ fn test_cpp_complex_spiral() {
 
 /// C++ TEST(Manifold, OpenscadCrash) — OBJ that previously crashed openscad
 #[test]
-#[ignore = "Panics in face_op during boolean — needs processOverlaps support"]
+#[ignore = "Needs processOverlaps. The C++ TEST(Manifold, OpenscadCrash) is itself gated \
+            behind MANIFOLD_DEBUG and sets ManifoldParams().processOverlaps = true; Rust \
+            lacks processOverlaps, so the non-manifold-input boolean still leaves an unpaired \
+            halfedge (update_vert OOB). Distinct from the RecursiveEdgeSwap robustness fix."]
 fn test_cpp_openscad_crash() {
     let m = read_test_obj("openscad-nonmanifold-crash.obj");
     assert!(!m.is_empty(), "OBJ should load as non-empty manifold, status={:?}", m.status());
@@ -470,13 +472,6 @@ fn test_cpp_complex_mesh_relation() {
 /// path, building an `Extrude`+`Warp` primitive per segment and batch-unioning.
 /// Expects final volume ≈ 3757.
 #[test]
-#[ignore = "panics in edge_op::update_vert (paired_halfedge=-1 → OOB). Diagnosed: \
-            the boolean output is fully manifold (probe confirmed no unpaired halfedges at \
-            simplify_topology entry); the unpaired halfedge is created mid-simplify during \
-            the collapse sequence. collapse_tri/form_loop structurally match C++, so this is \
-            a subtle index/ordering divergence in the multi-collapse interaction on this \
-            pathological sweep input. Needs step-by-step instrumented Rust-vs-C++ comparison \
-            of each collapse; NOT processOverlaps (that's only a polygon-triangulation flag)."]
 fn test_cpp_complex_sweep() {
     use std::f64::consts::PI;
     let k_two_pi = 2.0 * PI;
