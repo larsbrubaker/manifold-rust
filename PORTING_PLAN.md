@@ -69,24 +69,44 @@ differs.
 Vec fix). The half-voxel-thick shell exposes a marching-tetrahedra crossing/snap topology
 difference vs C++. Real correctness bug; needs root-cause in the SDF crossing logic.
 
-### Coplanar/coincident-face boolean3 geometry (2)
+### Coplanar/coincident-face geometry (2)
 `almost_coplanar`, `convex_convex_minkowski_difference` (collapse_edge exposes a
 boolean-pipeline geometry difference).
-> **Root-caused (2026-05) — `almost_coplanar` is a boolean3 bug, NOT SimplifyTopology.**
-> Instrumented Rust vs the C++ reference (per-phase referenced-vert counts + dumped meshes):
-> - Batch-vs-pairwise ordering ruled out: for three equal-vertex tets the C++
->   `BatchUnion`→`BatchBoolean` size-heap (`MeshCompare`, tie-break by serial) reduces to
->   exactly `(tet ∪ rotated) ∪ tet` — same ops/order as Rust's eager `+`.
-> - Rust's `tet ∪ rotatedTet` (M1) already gives the correct **20-vert** mesh, byte-for-byte
->   equal (modulo f32 + a 7/8 vert-order swap) to C++'s *final* 3-way answer.
-> - The third `∪ tet` unions the **original** tet, which is already contained in M1, so its
->   faces are **coplanar/coincident** with M1's. C++ emits this no-op union as 59 pre-simplify
->   verts → 20. Rust's boolean3 emits **65** → collapses to **21**: it spuriously creates one
->   *interior* intersection vertex (≈ (0.107, −0.517, 0.376), a valence-5 junction of 3
->   distinct mesh_ids, all edges ≫ epsilon → correctly un-collapsible). So simplify is fine;
->   the divergence is boolean3's handling of coincident/coplanar input faces. Same class as
->   the overlapping-triangulation bucket above. Next step: instrument `Boolean3` intersection
->   (edge–face / coplanar-retain) on M1 ∪ tet to find the spurious crossing vs C++.
+> **Fully root-caused (2026-05) — `almost_coplanar` is a `rotate` (trig) bug. The Boolean3
+> SOS kernel is CORRECT.** Traced sign-by-sign against the C++ reference (built locally):
+> - The spurious 21st vert is `xv12[10]` in the 2nd union (M1 edge 25 × tet face 2). It comes
+>   from `kernel02(vertA=16, face2)`: C++ returns `s=1` (so the two edge endpoints net
+>   `x12=0`, no crossing) but Rust returns `s=0` (net `x12=1`, spurious crossing). vertA=16
+>   lies *exactly on* the face plane (x−y+z=1), so the final `Shadows(vertA.z, z02, …)` is an
+>   **exact tie** in C++ (`z02 == vertA.z`) but in Rust `vertA.z − z02 = 8.3e-17`, flipping the
+>   sign. Inputs to that kernel call (positions, normals, face) were **bit-identical** to C++ —
+>   interpolate/shadow01 are bit-exact.
+> - The 8.3e-17 traces back to **M1's intersection verts differing from C++ by ~2e-14**, which
+>   traces back to **`rotatedTet` differing from C++ by 1–2 ULP**. Root: Rust `Manifold::rotate`
+>   uses **quaternions** (sin/cos of half-angles in radians); C++ `CsgNode::Rotate` builds
+>   degree-based `sind`/`cosd` axis matrices composed `rZ*rY*rX` (`csg_tree.cpp`).
+> - **Verified fix:** porting `rotate` to the C++ construction makes `rotatedTet` bit-exact and
+>   `almost_coplanar` pass (20/36). Batch-vs-pairwise ordering was ruled out (the C++
+>   `BatchBoolean` size-heap reduces to the same `(tet∪rotated)∪tet` as Rust's eager `+`).
+>
+> **Why it's not landed yet — one separate blocker (needs a dedicated session):**
+> - The matrix `rotate` needs `sind` to use **remquo (round-to-nearest)** reduction, not
+>   `floor` (so `cosd(small)=sind(90+small)` matches C++). The *global* `sind` change regresses
+>   `RefineQuads` (cylinder count 17044→16892: floor-`sind` happens to refine to C++'s count,
+>   global remquo-`sind` doesn't). **Solution found: a *local* remquo-`sind` inside `rotate`
+>   only — VERIFIED to fix `almost_coplanar` with no cylinder regression.**
+> - The real remaining blocker: `menger_sponge` uses **exact 90° rotations**
+>   (`hole.rotate(90,0,0)`). With the bit-exact matrix `rotate`, `rotate(90)` yields exact
+>   0/1/−1 entries (vs the quaternion's ~2e-16 error), so the hole becomes **exactly coplanar**
+>   with the grid. The difference-boolean's **`face2tri`** (boolean-result face triangulation,
+>   `face_op.rs`) then emits an **unpaired halfedge** on that degenerate input — so the boolean
+>   output is **non-manifold at simplify entry** (instrumented: a dangling halfedge exists
+>   *before any collapse*; `cleanup_topology` doesn't fix it; C++'s `CleanupTopology` asserts
+>   `IsManifold()` at entry, i.e. C++'s output IS manifold). It is **NOT** `collapse_edge` —
+>   the `-1` OOB at `edge_op.rs:247` is just where the pre-existing dangling is first walked.
+>   The fix is in the boolean-result triangulation/pairing for degenerate-coplanar faces — the
+>   **same root area as the overlapping-triangulation bucket above** (minkowski genus). Fixing
+>   that likely clears `almost_coplanar` + the 4 minkowski + `convex_convex` together.
 
 ### Boolean produces a non-manifold intermediate — deep robustness — FIXED (3 of 4)
 **Root cause (found):** `RecursiveEdgeSwap` in `edge_op.rs` was missing two pieces of the

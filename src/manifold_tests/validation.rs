@@ -198,13 +198,23 @@ fn test_cpp_edge_union() {
 
 /// C++ TEST(Boolean, AlmostCoplanar) — union of nearly-coplanar tetrahedra
 #[test]
-#[ignore = "21 verts/38 tris vs C++ 20/36. Root-caused (2026-05): NOT a SimplifyTopology \
-            bug. Rust's `tet ∪ rotatedTet` already yields the correct 20-vert mesh (matches \
-            C++'s final answer); the third `∪ tet` (original tet, already contained in M1, so \
-            its faces are coplanar/coincident with M1) spuriously creates one interior \
-            intersection vertex — boolean3 emits 65 pre-simplify verts vs C++'s 59. It's a \
-            boolean3 coplanar/coincident-face intersection difference (same class as the \
-            minkowski overlapping-triangulation bucket), not a collapse/merge gap."]
+#[ignore = "21 verts/38 tris vs C++ 20/36. Root-caused (2026-05) to `rotate`, NOT Boolean3 \
+            or SimplifyTopology. Rust `rotate` uses quaternions (sin/cos of half-angles in \
+            radians); C++ `CsgNode::Rotate` builds degree-based sind/cosd axis matrices \
+            composed rZ*rY*rX. The two differ by ~1 ULP, and that 1-ULP shift in rotatedTet \
+            flips an exact-coplanar symbolic-perturbation tie in Boolean3's kernel02 \
+            (vertA.z vs interpolated z02), creating one spurious interior intersection vertex. \
+            Porting `rotate` to the C++ construction (with a LOCAL remquo-sind so the global \
+            floor-sind stays — global remquo-sind regresses RefineQuads's cylinder count) \
+            makes rotatedTet bit-exact and this test pass — VERIFIED. Blocked, though, on a \
+            SEPARATE bug the corrected rotation exposes: menger_sponge uses exact 90deg \
+            rotations, and with the bit-exact rotate the difference-boolean's `face2tri` \
+            (boolean-result face triangulation) emits an UNPAIRED halfedge on the now \
+            exactly-coplanar input -> the boolean output is non-manifold at simplify entry \
+            (confirmed: dangling halfedge present before any collapse) -> update_vert -1 OOB. \
+            That's a boolean-result triangulation robustness bug, same class as the minkowski \
+            overlapping-triangulation bucket, NOT collapse_edge. Needs a dedicated session. \
+            See PORTING_PLAN.md."]
 fn test_cpp_almost_coplanar() {
     let tet = Manifold::tetrahedron();
     let result = tet.clone()

@@ -280,8 +280,6 @@ fn kernel02(
     let mut yzz_rl = [Vec3::splat(0.0); 2];
     let mut shadow_state = false;
 
-    let dbg02 = forward && std::env::var("K02").is_ok() && in_a.vert_pos.len() < 30 && a0 == 16 && b2 == 2;
-
     for i in 0..3 {
         let b1 = 3 * b2 + i;
         let edge_b = in_b.halfedge[b1];
@@ -292,7 +290,6 @@ fn kernel02(
         };
 
         let (s01, yz01) = shadow01(a0, b1f, in_a, in_b, expand_p, forward);
-        if dbg02 { eprintln!("  s01 i={} b1f={} fwdB={} -> s01={} yz=({:.5},{:.5})", i, b1f, edge_b.is_forward(), s01, yz01.x, yz01.y); }
         if yz01.x.is_finite() {
             s02 += s01 * if forward == edge_b.is_forward() { -1 } else { 1 };
             if k < 2 && (k == 0 || (s01 != 0) != shadow_state) {
@@ -309,7 +306,6 @@ fn kernel02(
         debug_assert_eq!(k, 2, "Boolean manifold error: s02");
         let vert_pos_a = in_a.vert_pos[a0];
         z02 = interpolate(yzz_rl[0], yzz_rl[1], vert_pos_a.y).y;
-        if dbg02 { eprintln!("  s02_pre={} z02={:.6} vertA.z={:.6} fn.z={:.6}", s02, z02, vert_pos_a.z, in_b.face_normal[b2].z); }
         if forward {
             if !shadows(vert_pos_a.z, z02, -in_b.face_normal[b2].z) {
                 s02 = 0;
@@ -318,7 +314,6 @@ fn kernel02(
             s02 = 0;
         }
     }
-    if dbg02 { eprintln!("  => s02={} z02={:.6}", s02, z02); }
     (s02, z02)
 }
 
@@ -346,11 +341,8 @@ fn kernel12(
 
     let edge_a = in_a.halfedge[a1];
 
-    let dbg = forward && std::env::var("K12").is_ok() && in_a.vert_pos.len() < 30 && a1 == 25 && b2 == 2;
-
     for vert_a in [edge_a.start_vert as usize, edge_a.end_vert as usize] {
         let (s, z) = kernel02(vert_a, b2, in_a, in_b, expand_p, forward);
-        if dbg { eprintln!("  k02 vertA={} -> s={} z={:.5} (finite={})", vert_a, s, z, z.is_finite()); }
         if z.is_finite() {
             x12 += s * if (vert_a == edge_a.start_vert as usize) == forward { 1 } else { -1 };
             if k < 2 && (k == 0 || (s != 0) != shadow_state) {
@@ -377,7 +369,6 @@ fn kernel12(
         } else {
             kernel11(b1f, a1, in_p, in_q, expand_p)
         };
-        if dbg { eprintln!("  k11 i={} b1f={} fwd_edgeB={} -> s={} xyzz=({:.5},{:.5},{:.5},{:.5})", i, b1f, edge_b.is_forward(), s, xyzz.x, xyzz.y, xyzz.z, xyzz.w); }
         if xyzz.x.is_finite() {
             x12 -= s * if edge_b.is_forward() { 1 } else { -1 };
             if k < 2 && (k == 0 || (s != 0) != shadow_state) {
@@ -403,22 +394,6 @@ fn kernel12(
         v12.x = xzyy.x;
         v12.y = xzyy.z;
         v12.z = xzyy.y;
-    }
-    if forward && std::env::var("K12").is_ok() && in_a.vert_pos.len() < 30 {
-        let sv = edge_a.start_vert as usize;
-        let ev = edge_a.end_vert as usize;
-        let ps = in_a.vert_pos[sv]; let pe = in_a.vert_pos[ev];
-        // only print pairs whose edge midpoint is in the lower-front region of the spurious vert
-        if (ps.x+pe.x)/2.0 < 0.6 && (ps.y+pe.y)/2.0 < 0.0 {
-            eprintln!("K12 a1={} b2={} x12={} v=({:.4},{:.4},{:.4})", a1, b2, x12, v12.x, v12.y, v12.z);
-            eprintln!("   edgeA sv={} p=({:.5},{:.5},{:.5}) n=({:.4},{:.4},{:.4})", sv, ps.x,ps.y,ps.z, in_a.vert_normal[sv].x,in_a.vert_normal[sv].y,in_a.vert_normal[sv].z);
-            eprintln!("   edgeA ev={} p=({:.5},{:.5},{:.5}) n=({:.4},{:.4},{:.4})", ev, pe.x,pe.y,pe.z, in_a.vert_normal[ev].x,in_a.vert_normal[ev].y,in_a.vert_normal[ev].z);
-            for i in 0..3 {
-                let bv = in_b.halfedge[3*b2+i].start_vert as usize;
-                let bp = in_b.vert_pos[bv];
-                eprintln!("   faceB v{}={} p=({:.5},{:.5},{:.5}) n=({:.4},{:.4},{:.4})", i, bv, bp.x,bp.y,bp.z, in_b.vert_normal[bv].x,in_b.vert_normal[bv].y,in_b.vert_normal[bv].z);
-            }
-        }
     }
     (x12, v12)
 }
@@ -597,18 +572,6 @@ impl Boolean3 {
         // Level 3: find all edge-face intersections in both directions
         let xv12 = intersect12(in_p, in_q, expand_p, true);
         let xv21 = intersect12(in_p, in_q, expand_p, false);
-
-        if std::env::var("ACPROBE").is_ok() {
-            let tgt = Vec3::new(0.1074222400784492493, -0.5166965126991271973, 0.3758812844753265381);
-            let near = |v: &Vec3| (v.x - tgt.x).abs() < 1e-2 && (v.y - tgt.y).abs() < 1e-2 && (v.z - tgt.z).abs() < 1e-2;
-            eprintln!("[bool3] op_add={} pV={} qV={} xv12={} xv21={}", expand_p, in_p.num_vert(), in_q.num_vert(), xv12.v12.len(), xv21.v12.len());
-            for (i, v) in xv12.v12.iter().enumerate() {
-                if near(v) { eprintln!("   xv12[{}] p1q2={:?} x12={} v=({:.4},{:.4},{:.4}) <== TARGET", i, xv12.p1q2[i], xv12.x12[i], v.x, v.y, v.z); }
-            }
-            for (i, v) in xv21.v12.iter().enumerate() {
-                if near(v) { eprintln!("   xv21[{}] p1q2={:?} x12={} v=({:.4},{:.4},{:.4}) <== TARGET", i, xv21.p1q2[i], xv21.x12[i], v.x, v.y, v.z); }
-            }
-        }
 
         if xv12.x12.len() > i32::MAX as usize || xv21.x12.len() > i32::MAX as usize {
             return Boolean3 {
