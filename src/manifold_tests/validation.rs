@@ -198,7 +198,13 @@ fn test_cpp_edge_union() {
 
 /// C++ TEST(Boolean, AlmostCoplanar) — union of nearly-coplanar tetrahedra
 #[test]
-#[ignore = "21 verts/38 tris instead of 20/36 — minor coplanar perturbation difference"]
+#[ignore = "21 verts/38 tris vs C++ 20/36. Root-caused (2026-05): NOT a SimplifyTopology \
+            bug. Rust's `tet ∪ rotatedTet` already yields the correct 20-vert mesh (matches \
+            C++'s final answer); the third `∪ tet` (original tet, already contained in M1, so \
+            its faces are coplanar/coincident with M1) spuriously creates one interior \
+            intersection vertex — boolean3 emits 65 pre-simplify verts vs C++'s 59. It's a \
+            boolean3 coplanar/coincident-face intersection difference (same class as the \
+            minkowski overlapping-triangulation bucket), not a collapse/merge gap."]
 fn test_cpp_almost_coplanar() {
     let tet = Manifold::tetrahedron();
     let result = tet.clone()

@@ -69,18 +69,24 @@ differs.
 Vec fix). The half-voxel-thick shell exposes a marching-tetrahedra crossing/snap topology
 difference vs C++. Real correctness bug; needs root-cause in the SDF crossing logic.
 
-### Coplanar merge / boolean-pipeline geometry (2)
-`almost_coplanar` (21 vs 20 verts; C++ v3.5.0 still expects {20,36}, so this is a real
-coplanar-merge difference in `SimplifyTopology`, *not* tolerance stacking — #1671 edge_op is
-already ported and doesn't change it), `convex_convex_minkowski_difference` (collapse_edge
-exposes a boolean-pipeline geometry difference).
-> **Ruled out (2026-05):** batch-vs-pairwise union ordering. `tet + rotated + tet` in C++
-> evaluates through `BatchUnion`→`BatchBoolean`, but for three equal-vertex tetrahedra the
-> size-heap (`MeshCompare`, tie-break by insertion serial) reduces to exactly
-> `(tet ∪ rotated) ∪ tet` — the same two ops, same order, as Rust's eager `+`. So the extra
-> vert is genuinely produced inside one boolean+simplify, not by CSG structure. Next step:
-> dump both result meshes (C++ has `WriteTestOBJ` behind `options.exportModels`) and diff
-> which vert/edge fails to merge.
+### Coplanar/coincident-face boolean3 geometry (2)
+`almost_coplanar`, `convex_convex_minkowski_difference` (collapse_edge exposes a
+boolean-pipeline geometry difference).
+> **Root-caused (2026-05) — `almost_coplanar` is a boolean3 bug, NOT SimplifyTopology.**
+> Instrumented Rust vs the C++ reference (per-phase referenced-vert counts + dumped meshes):
+> - Batch-vs-pairwise ordering ruled out: for three equal-vertex tets the C++
+>   `BatchUnion`→`BatchBoolean` size-heap (`MeshCompare`, tie-break by serial) reduces to
+>   exactly `(tet ∪ rotated) ∪ tet` — same ops/order as Rust's eager `+`.
+> - Rust's `tet ∪ rotatedTet` (M1) already gives the correct **20-vert** mesh, byte-for-byte
+>   equal (modulo f32 + a 7/8 vert-order swap) to C++'s *final* 3-way answer.
+> - The third `∪ tet` unions the **original** tet, which is already contained in M1, so its
+>   faces are **coplanar/coincident** with M1's. C++ emits this no-op union as 59 pre-simplify
+>   verts → 20. Rust's boolean3 emits **65** → collapses to **21**: it spuriously creates one
+>   *interior* intersection vertex (≈ (0.107, −0.517, 0.376), a valence-5 junction of 3
+>   distinct mesh_ids, all edges ≫ epsilon → correctly un-collapsible). So simplify is fine;
+>   the divergence is boolean3's handling of coincident/coplanar input faces. Same class as
+>   the overlapping-triangulation bucket above. Next step: instrument `Boolean3` intersection
+>   (edge–face / coplanar-retain) on M1 ∪ tet to find the spurious crossing vs C++.
 
 ### Boolean produces a non-manifold intermediate — deep robustness — FIXED (3 of 4)
 **Root cause (found):** `RecursiveEdgeSwap` in `edge_op.rs` was missing two pieces of the
