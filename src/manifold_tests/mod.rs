@@ -276,6 +276,61 @@ fn cube_stl() -> MeshGL {
     cube
 }
 
+/// Read a C++ test source file from the pinned submodule. Used to
+/// single-source large inline mesh literals (InterpolatedNormals, Ring)
+/// instead of transcribing hundreds of lines of numbers into Rust.
+fn read_cpp_test_source(filename: &str) -> String {
+    let path = format!(
+        "{}/cpp-reference/manifold/test/{}",
+        env!("CARGO_MANIFEST_DIR"),
+        filename
+    );
+    std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("Failed to read C++ test source {}: {}", path, e))
+}
+
+/// Extract the `occurrence`-th (0-based) initializer list assigned as
+/// `<assign> = { ... };` in C++ source, parsed as numbers. The arrays this is
+/// used on are flat brace lists of plain decimal literals with optional `//`
+/// line comments — no nested braces or expressions.
+fn cpp_inline_array(source: &str, assign: &str, occurrence: usize) -> Vec<f64> {
+    let mut search_from = 0usize;
+    let mut at = None;
+    for _ in 0..=occurrence {
+        let idx = source[search_from..]
+            .find(assign)
+            .unwrap_or_else(|| panic!("C++ assignment `{}` not found", assign))
+            + search_from;
+        at = Some(idx);
+        search_from = idx + assign.len();
+    }
+    let idx = at.unwrap();
+    let open = source[idx..].find('{').expect("no opening brace") + idx;
+    let close = source[open..].find('}').expect("no closing brace") + open;
+    source[open + 1..close]
+        .lines()
+        .map(|line| line.split("//").next().unwrap())
+        .flat_map(|line| {
+            line.split(',')
+                .map(str::trim)
+                .filter(|tok| !tok.is_empty())
+                .map(|tok| {
+                    tok.parse::<f64>()
+                        .unwrap_or_else(|e| panic!("bad number `{}` in `{}`: {}", tok, assign, e))
+                })
+                .collect::<Vec<f64>>()
+        })
+        .collect()
+}
+
+/// `cpp_inline_array` narrowed to unsigned indices.
+fn cpp_inline_array_u32(source: &str, assign: &str, occurrence: usize) -> Vec<u32> {
+    cpp_inline_array(source, assign, occurrence)
+        .into_iter()
+        .map(|v| v as u32)
+        .collect()
+}
+
 /// Load an OBJ file from the C++ test models directory.
 fn read_test_obj(filename: &str) -> Manifold {
     let path = format!(

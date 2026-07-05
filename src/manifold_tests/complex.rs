@@ -657,3 +657,66 @@ fn test_cpp_complex_sweep() {
     assert!((shape.volume() - 3757.0).abs() < 1.0,
         "Sweep: vol={}, expected ~3757", shape.volume());
 }
+
+/// C++ TEST(BooleanComplex, InterpolatedNormals) — subtract two textured,
+/// normal-carrying meshes and verify the output maps back to the originals
+/// (RelatedGL with checkNormals + updateNormals). The large inline mesh
+/// literals are read from the pinned C++ test source rather than transcribed.
+#[test]
+fn test_cpp_interpolated_normals() {
+    let src = read_cpp_test_source("boolean_complex_test.cpp");
+
+    let mut a = MeshGL::default();
+    a.num_prop = 8;
+    a.vert_properties = cpp_inline_array(&src, "a.vertProperties = ", 0)
+        .into_iter().map(|v| v as f32).collect();
+    a.tri_verts = cpp_inline_array_u32(&src, "a.triVerts = ", 0);
+    a.merge_from_vert = cpp_inline_array_u32(&src, "a.mergeFromVert = ", 0);
+    a.merge_to_vert = cpp_inline_array_u32(&src, "a.mergeToVert = ", 0);
+
+    let mut b = MeshGL::default();
+    b.num_prop = 8;
+    b.vert_properties = cpp_inline_array(&src, "b.vertProperties = ", 0)
+        .into_iter().map(|v| v as f32).collect();
+    b.tri_verts = cpp_inline_array_u32(&src, "b.triVerts = ", 0);
+    b.merge_from_vert = cpp_inline_array_u32(&src, "b.mergeFromVert = ", 0);
+    b.merge_to_vert = cpp_inline_array_u32(&src, "b.mergeToVert = ", 0);
+
+    a.run_original_id = vec![Manifold::reserve_ids(1)];
+    b.run_original_id = vec![Manifold::reserve_ids(1)];
+
+    let a_manifold = Manifold::from_mesh_gl(&a);
+    let b_manifold = Manifold::from_mesh_gl(&b);
+
+    let a_minus_b = a_manifold - b_manifold;
+
+    super::related_gl_check_normals(&a_minus_b, &[&a, &b]);
+}
+
+/// Build mgl_0 / mgl_1 for the Ring test from the pinned C++ source
+/// (`occurrence` 0 = mgl_0, 1 = mgl_1).
+fn ring_mesh(src: &str, occurrence: usize) -> MeshGL {
+    let mut m = MeshGL::default();
+    m.num_prop = 3;
+    m.vert_properties = cpp_inline_array(src, "m.vertProperties = ", occurrence)
+        .into_iter().map(|v| v as f32).collect();
+    m.tri_verts = cpp_inline_array_u32(src, "m.triVerts = ", occurrence);
+    m.run_index = cpp_inline_array_u32(src, "m.runIndex = ", occurrence);
+    m.run_original_id = cpp_inline_array_u32(src, "m.runOriginalID = ", occurrence);
+    m.face_id = cpp_inline_array_u32(src, "m.faceID = ", occurrence);
+    m
+}
+
+/// C++ TEST(BooleanComplex, Ring) — subtraction of two near-coincident ring
+/// segments must succeed. (The C++ test sets processOverlaps=true, which only
+/// silences a MANIFOLD_DEBUG-only assertion — no behavioral analog in Rust.)
+#[test]
+fn test_cpp_ring() {
+    let src = read_cpp_test_source("boolean_complex_test.cpp");
+    let arg0 = Manifold::from_mesh_gl(&ring_mesh(&src, 0));
+    let arg1 = Manifold::from_mesh_gl(&ring_mesh(&src, 1));
+    let result = arg0.clone() - arg1.clone();
+    assert_eq!(arg0.status(), crate::types::Error::NoError, "arg0 status");
+    assert_eq!(arg1.status(), crate::types::Error::NoError, "arg1 status");
+    assert_eq!(result.status(), crate::types::Error::NoError, "result status");
+}

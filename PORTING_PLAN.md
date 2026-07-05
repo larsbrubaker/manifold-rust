@@ -5,7 +5,7 @@ This is a **roadmap of remaining work** to finish porting
 not what has already been done (use `git log` for history). Every change must reproduce the
 C++ reference with **exact numerical match** — identical results on identical inputs.
 
-**Status:** 518 passing, 0 failing, 7 ignored.
+**Status:** 520 passing, 0 failing, 7 ignored. Every C++ test ported or covered.
 **C++ reference target:** v3.5.0 (submodule at tag `v3.5.0`, commit `541c33bd`).
 **Core engine:** all 18 phases (linalg → boolean → CSG → cross-section → SDF → minkowski →
 WASM) are implemented. Remaining work is the v3.5.0 deltas below plus the ignored-test
@@ -192,11 +192,12 @@ infinite loop, fixed by the `RecursiveEdgeSwap` change above. They now pass in r
 
 ---
 
-## Unported C++ tests (2)
-| File | Test | Blocker |
-|------|------|---------|
-| boolean_complex_test.cpp | InterpolatedNormals | Large inline mesh property data |
-| boolean_complex_test.cpp | Ring | Huge inline `mgl_0`/`mgl_1` mesh data (~600 lines) |
+## Unported C++ tests — NONE (2026-07)
+`InterpolatedNormals` and `Ring` (boolean_complex_test.cpp) are ported and passing. Their
+large inline mesh literals are not transcribed: `read_cpp_test_source` +
+`cpp_inline_array` (manifold_tests/mod.rs) parse the initializer lists straight out of the
+pinned C++ test source at test time (same pattern as `read_test_obj`), so the data is
+single-sourced with the reference. Every C++ test is now either ported or covered.
 
 ---
 
