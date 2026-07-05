@@ -3,9 +3,10 @@ members = [".", "demo/wasm"]
 
 [package]
 name = "manifold-rust"
-version = "0.1.0"
+version = "0.9.0"
 edition = "2021"
-rust-version = "1.70"
+# f64::round_ties_even (used in the C++-exact sind) stabilized in 1.77.
+rust-version = "1.77"
 authors = ["Lars Brubaker <larsbrubaker@matterhackers.com>"]
 description = "Pure Rust port of the Manifold 3D geometry library"
 license = "Apache-2.0"
