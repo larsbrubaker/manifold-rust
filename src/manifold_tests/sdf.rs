@@ -217,23 +217,30 @@ fn test_cpp_sdf_void_subtract() {
 
 /// C++ TEST(SDF, SphereShell) — thin sphere shell via level set
 #[test]
-#[ignore = "Two issues: (1) perf — now 12s release after the voxel-grid Vec fix (was 80s); \
-            (2) CORRECTNESS — fails on genus: 9560 vs expected ~14235. The thin shell \
-            (r in [0.995, 1.0] at edge_length=0.01 ≈ half a voxel thick) exposes an \
-            SDF-marching topology difference vs C++ (fewer holes detected). Needs root-cause \
-            in the marching-tetrahedra crossing/snap logic; not a perf issue."]
+#[ignore = "Slow in debug only (~1min; ~5s in release) — PASSES with genus 13396, exactly \
+            matching the local C++ reference. The old 'marching-tet topology bug' was a \
+            test-porting error: the C++ test passes tolerance=0.0001 to LevelSet (enabling \
+            FindSurface vertex refinement), which the Rust test omitted (pure interpolation \
+            → genus ~9576 on the half-voxel-thin shell). Kept ignored only for debug-suite \
+            speed, like sdf_blobs."]
 fn test_cpp_sdf_sphere_shell() {
-    let sphere = Manifold::level_set(
+    // C++ writes `r - 0.995f` — a FLOAT literal inside a double expression —
+    // and passes level=0, tolerance=0.0001 to LevelSet.
+    let thin = 0.995f32 as f64;
+    let sphere = Manifold::level_set_with_tolerance(
         |p: Vec3| {
             let r = (p.x * p.x + p.y * p.y + p.z * p.z).sqrt();
-            (1.0 - r).min(r - 0.995)
+            (1.0 - r).min(r - thin)
         },
         crate::types::Box {
             min: Vec3::splat(-1.1),
             max: Vec3::splat(1.1),
         },
         0.01,
+        0.0,
+        0.0001,
     );
+    // Genus 13396 — matches the local C++ reference build exactly.
     assert!((sphere.genus() - 14235).abs() < 1000,
         "SphereShell genus={}, expected ~14235", sphere.genus());
 }

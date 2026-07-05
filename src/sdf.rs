@@ -17,10 +17,12 @@
 // Implements Marching Tetrahedra on a body-centered cubic (BCC) grid with:
 // - ITP root-finding for precise surface location
 // - GridVert snapping to avoid short edges
-// - HashMap-based grid vertex storage (replaces C++ HashTable)
+// - A faithful port of the C++ open-addressing HashTable (hashtable.h):
+//   ComputeVerts/BuildTris iterate the table in SLOT order, so the hash
+//   function, probing, sizing and resize protocol all determine the output
+//   vertex numbering and triangle order. A std HashMap iterates in a random
+//   order per process, which made the output nondeterministic.
 // - TetTri lookup tables for tetrahedra triangulation
-
-use std::collections::HashMap;
 
 use crate::edge_op::cleanup_topology;
 use crate::impl_mesh::ManifoldImpl;
@@ -211,7 +213,7 @@ fn find_surface(
     let mut bi_frac = 1.0;
     while frac > check {
         let t_raw = d0 / (d0 - d1);
-        let t = t_raw + (0.5 - t_raw) * k; // lerp(t_raw, 0.5, k)
+        let t = t_raw * (1.0 - k) + 0.5 * k; // la::lerp(t_raw, 0.5, k) = a*(1-t)+b*t
         let r = bi_frac / frac - 0.5;
         let x = if (t - 0.5).abs() < r {
             t
@@ -285,9 +287,16 @@ fn ivec4_add(a: IVec4, b: IVec4) -> IVec4 {
     IVec4::new(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w)
 }
 
+/// C++ `la::lerp(a, b, t)` is `a*(1-t) + b*t` — NOT `a + (b-a)*t`. The two
+/// differ in float association, which shifts the ITP midpoints and hence the
+/// refined surface verts; keep the C++ form bit-for-bit.
 #[inline]
 fn lerp_vec3(a: Vec3, b: Vec3, t: f64) -> Vec3 {
-    Vec3::new(a.x + (b.x - a.x) * t, a.y + (b.y - a.y) * t, a.z + (b.z - a.z) * t)
+    Vec3::new(
+        a.x * (1.0 - t) + b.x * t,
+        a.y * (1.0 - t) + b.y * t,
+        a.z * (1.0 - t) + b.z * t,
+    )
 }
 
 #[inline]
@@ -300,16 +309,97 @@ fn prev3(i: i32) -> i32 {
     if i == 0 { 2 } else { i - 1 }
 }
 
+// ---------------------------------------------------------------------------
+// HashTable — port of C++ hashtable.h (open addressing, linear probing)
+// ---------------------------------------------------------------------------
+
+const K_OPEN: u64 = u64::MAX;
+
+/// C++ `hash64bit` (utils.h) — splitmix64-style finalizer.
 #[inline]
-fn log2_ceil(v: i32) -> i32 {
-    if v <= 1 { return 1; }
-    let mut bits = 0;
-    let mut n = v - 1;
-    while n > 0 {
-        bits += 1;
-        n >>= 1;
+fn hash64bit(mut x: u64) -> u64 {
+    x = (x ^ (x >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94d049bb133111eb);
+    x ^ (x >> 31)
+}
+
+#[inline]
+fn ceil_log2_usize(v: usize) -> u32 {
+    if v <= 1 { 0 } else { usize::BITS - (v - 1).leading_zeros() }
+}
+
+/// Open-addressing hash table matching C++ `HashTable<GridVert>`: capacity is
+/// the next power of two, probing is linear (step 1), `Full()` is used*2 >
+/// size, and lookups of absent keys return the default value sitting in the
+/// first open slot — all of which the marching phases depend on for their
+/// SLOT-ORDER iteration.
+struct GridHashTable {
+    keys: Vec<u64>,
+    values: Vec<GridVert>,
+    used: usize,
+}
+
+impl GridHashTable {
+    fn new(size: usize) -> Self {
+        let n = if size == 0 { 0 } else { 1usize << ceil_log2_usize(size) };
+        GridHashTable {
+            keys: vec![K_OPEN; n],
+            values: vec![GridVert::default(); n],
+            used: 0,
+        }
     }
-    bits
+
+    #[inline]
+    fn size(&self) -> usize {
+        self.keys.len()
+    }
+
+    #[inline]
+    fn full(&self) -> bool {
+        self.used * 2 > self.size()
+    }
+
+    fn insert(&mut self, key: u64, val: GridVert) {
+        let mask = self.size() - 1;
+        let mut idx = (hash64bit(key) as usize) & mask;
+        loop {
+            if self.full() {
+                return;
+            }
+            let k = self.keys[idx];
+            if k == K_OPEN {
+                self.keys[idx] = key;
+                self.used += 1;
+                self.values[idx] = val;
+                return;
+            }
+            if k == key {
+                return;
+            }
+            idx = (idx + 1) & mask;
+        }
+    }
+
+    /// Probe for `key`; stops at the key's slot or the first open slot (whose
+    /// default-initialized value serves as the "missing" GridVert, matching
+    /// C++ operator[] semantics).
+    #[inline]
+    fn slot_of(&self, key: u64) -> usize {
+        let mask = self.size() - 1;
+        let mut idx = (hash64bit(key) as usize) & mask;
+        loop {
+            let k = self.keys[idx];
+            if k == key || k == K_OPEN {
+                return idx;
+            }
+            idx = (idx + 1) & mask;
+        }
+    }
+
+    #[inline]
+    fn get(&self, key: u64) -> &GridVert {
+        &self.values[self.slot_of(key)]
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -349,10 +439,14 @@ pub fn level_set<F: Fn(Vec3) -> f64>(
         dim.z / (grid_size.z as f64 - 1.0).max(1.0),
     );
 
+    // C++ ComputeGridPow: axisPow(n) = CeilLog2(n + 2 + 1) — the bit widths
+    // feed the index ENCODING, and encoded indices are the hash-table keys, so
+    // this must match C++ exactly for slot order to match.
+    let axis_pow = |n: i32| -> i32 { ceil_log2_usize((n as usize) + 3) as i32 };
     let grid_pow = IVec3::new(
-        log2_ceil(grid_size.x + 2) + 1,
-        log2_ceil(grid_size.y + 2) + 1,
-        log2_ceil(grid_size.z + 2) + 1,
+        axis_pow(grid_size.x),
+        axis_pow(grid_size.y),
+        axis_pow(grid_size.z),
     );
     let max_index = encode_index(
         IVec4::new(grid_size.x + 2, grid_size.y + 2, grid_size.z + 2, 1),
@@ -379,94 +473,144 @@ pub fn level_set<F: Fn(Vec3) -> f64>(
         voxels.get(key as usize).copied().unwrap_or(0.0)
     };
 
-    // Phase 1: NearSurface — identify grid verts near the surface
-    let mut grid_verts: HashMap<u64, GridVert> = HashMap::new();
+    // Table sizing per C++ LevelSet: dense cap of 2*maxIndex, sparse heuristic
+    // of 10*sqrt(maxIndex); on overflow the whole NearSurface pass reruns with
+    // a bigger table (sizing from the last vert's grid position).
+    let table_size_cap = usize::MAX as u64;
+    let dense_table_size = if max_index > table_size_cap / 2 {
+        table_size_cap
+    } else {
+        2 * max_index
+    };
+    let sparse_table_size =
+        table_size_cap.min((10.0 * (max_index as f64).sqrt()) as u64);
+    let mut table_size = dense_table_size.min(sparse_table_size).max(1) as usize;
+    let mut grid_verts = GridHashTable::new(table_size);
     let mut vert_pos: Vec<Vec3> = Vec::new();
 
     let surface_max = encode_index(IVec4::new(grid_size.x, grid_size.y, grid_size.z, 1), grid_pow);
-    for index in 0..surface_max {
-        let grid_index = decode_index(index, grid_pow);
-        if grid_index.x > grid_size.x || grid_index.y > grid_size.y || grid_index.z > grid_size.z
-        {
-            continue;
-        }
-
-        let mut grid_vert = GridVert::default();
-        grid_vert.distance = get_voxel(grid_index);
-
-        let mut keep = false;
-        let mut v_max: f64 = 0.0;
-        let mut closest_neighbor: i32 = -1;
-        let mut opposed_verts = 0;
-
-        for i in 0..7 {
-            let val = get_voxel(neighbor(grid_index, i));
-            let val_op = get_voxel(neighbor(grid_index, i + 7));
-
-            if !grid_vert.same_side(val) {
-                grid_vert.edge_verts[i] = K_CROSSING;
-                keep = true;
-                if !grid_vert.same_side(val_op) {
-                    opposed_verts += 1;
-                }
-                if val.abs() > K_D * grid_vert.distance.abs() && val.abs() > v_max.abs() {
-                    v_max = val;
-                    closest_neighbor = i as i32;
-                }
-            } else if !grid_vert.same_side(val_op)
-                && val_op.abs() > K_D * grid_vert.distance.abs()
-                && val_op.abs() > v_max.abs()
-            {
-                v_max = val_op;
-                closest_neighbor = (i + 7) as i32;
+    loop {
+        // Phase 1: NearSurface — identify grid verts near the surface
+        for index in 0..surface_max {
+            if grid_verts.full() {
+                break;
             }
-        }
-
-        // Snap to surface if possible
-        if closest_neighbor >= 0 && opposed_verts <= K_MAX_OPPOSED {
-            let grid_pos = position(grid_index, origin, spacing);
-            let neighbor_index = neighbor(grid_index, closest_neighbor as usize);
-            let pos = find_surface(
-                grid_pos,
-                grid_vert.distance,
-                position(neighbor_index, origin, spacing),
-                v_max,
-                tol,
-                level,
-                &sdf,
-            );
-            let delta = Vec3::new(
-                (pos.x - grid_pos.x).abs(),
-                (pos.y - grid_pos.y).abs(),
-                (pos.z - grid_pos.z).abs(),
-            );
-            if delta.x < K_S * spacing.x && delta.y < K_S * spacing.y && delta.z < K_S * spacing.z
+            let grid_index = decode_index(index, grid_pow);
+            if grid_index.x > grid_size.x
+                || grid_index.y > grid_size.y
+                || grid_index.z > grid_size.z
             {
-                let idx = vert_pos.len() as i32;
-                vert_pos.push(bound(pos, origin, spacing, grid_size));
-                grid_vert.moved_vert = idx;
-                for j in 0..7 {
-                    if grid_vert.edge_verts[j] == K_CROSSING {
-                        grid_vert.edge_verts[j] = idx;
+                continue;
+            }
+
+            let mut grid_vert = GridVert::default();
+            grid_vert.distance = get_voxel(grid_index);
+
+            let mut keep = false;
+            let mut v_max: f64 = 0.0;
+            let mut closest_neighbor: i32 = -1;
+            let mut opposed_verts = 0;
+
+            for i in 0..7 {
+                let val = get_voxel(neighbor(grid_index, i));
+                let val_op = get_voxel(neighbor(grid_index, i + 7));
+
+                if !grid_vert.same_side(val) {
+                    grid_vert.edge_verts[i] = K_CROSSING;
+                    keep = true;
+                    if !grid_vert.same_side(val_op) {
+                        opposed_verts += 1;
                     }
+                    if val.abs() > K_D * grid_vert.distance.abs() && val.abs() > v_max.abs() {
+                        v_max = val;
+                        closest_neighbor = i as i32;
+                    }
+                } else if !grid_vert.same_side(val_op)
+                    && val_op.abs() > K_D * grid_vert.distance.abs()
+                    && val_op.abs() > v_max.abs()
+                {
+                    v_max = val_op;
+                    closest_neighbor = (i + 7) as i32;
                 }
-                keep = true;
             }
-        } else {
-            for j in 0..7 {
-                grid_vert.edge_verts[j] = K_NONE;
+
+            // Snap to surface if possible
+            if closest_neighbor >= 0 && opposed_verts <= K_MAX_OPPOSED {
+                let grid_pos = position(grid_index, origin, spacing);
+                let neighbor_index = neighbor(grid_index, closest_neighbor as usize);
+                let pos = find_surface(
+                    grid_pos,
+                    grid_vert.distance,
+                    position(neighbor_index, origin, spacing),
+                    v_max,
+                    tol,
+                    level,
+                    &sdf,
+                );
+                let delta = Vec3::new(
+                    (pos.x - grid_pos.x).abs(),
+                    (pos.y - grid_pos.y).abs(),
+                    (pos.z - grid_pos.z).abs(),
+                );
+                if delta.x < K_S * spacing.x
+                    && delta.y < K_S * spacing.y
+                    && delta.z < K_S * spacing.z
+                {
+                    let idx = vert_pos.len() as i32;
+                    vert_pos.push(bound(pos, origin, spacing, grid_size));
+                    grid_vert.moved_vert = idx;
+                    for j in 0..7 {
+                        if grid_vert.edge_verts[j] == K_CROSSING {
+                            grid_vert.edge_verts[j] = idx;
+                        }
+                    }
+                    keep = true;
+                }
+            } else {
+                for j in 0..7 {
+                    grid_vert.edge_verts[j] = K_NONE;
+                }
+            }
+
+            if keep {
+                grid_verts.insert(index, grid_vert);
             }
         }
 
-        if keep {
-            grid_verts.insert(index, grid_vert);
+        if grid_verts.full() {
+            // Resize per C++: estimate the fill ratio from how far through the
+            // grid the last allocated vert got, then rerun from scratch.
+            let last_vert = *vert_pos.last().expect("table full before any vert");
+            let last_index = encode_index(
+                IVec4::new(
+                    ((last_vert.x - origin.x) / spacing.x) as i32,
+                    ((last_vert.y - origin.y) / spacing.y) as i32,
+                    ((last_vert.z - origin.z) / spacing.z) as i32,
+                    1,
+                ),
+                grid_pow,
+            );
+            let ratio = max_index as f64 / last_index as f64;
+            if ratio > 1000.0 {
+                table_size *= 2;
+            } else {
+                table_size = (table_size as f64 * ratio) as usize;
+            }
+            grid_verts = GridHashTable::new(table_size);
+            vert_pos.clear();
+        } else {
+            break;
         }
     }
 
-    // Phase 2: ComputeVerts — create edge-crossing vertices
-    let keys: Vec<u64> = grid_verts.keys().copied().collect();
-    for &base_key in &keys {
-        let grid_vert_clone = grid_verts[&base_key].clone();
+    // Phase 2: ComputeVerts — create edge-crossing vertices, iterating the
+    // hash table in SLOT order (this fixes the output vert numbering).
+    for slot in 0..grid_verts.size() {
+        if grid_verts.keys[slot] == K_OPEN {
+            continue;
+        }
+        let base_key = grid_verts.keys[slot];
+        let grid_vert_clone = grid_verts.values[slot].clone();
         if grid_vert_clone.has_moved() {
             continue;
         }
@@ -478,13 +622,10 @@ pub fn level_set<F: Fn(Vec3) -> f64>(
         for i in 0..7 {
             let neighbor_index = neighbor(grid_index, i);
             let neighbor_key = encode_index(neighbor_index, grid_pow);
+            let nv = grid_verts.get(neighbor_key);
 
-            let val = if let Some(nv) = grid_verts.get(&neighbor_key) {
-                if nv.distance.is_finite() {
-                    nv.distance
-                } else {
-                    get_voxel(neighbor_index)
-                }
+            let val = if nv.distance.is_finite() {
+                nv.distance
             } else {
                 get_voxel(neighbor_index)
             };
@@ -493,11 +634,9 @@ pub fn level_set<F: Fn(Vec3) -> f64>(
                 continue;
             }
 
-            if let Some(nv) = grid_verts.get(&neighbor_key) {
-                if nv.has_moved() {
-                    updates.push((i, nv.moved_vert));
-                    continue;
-                }
+            if nv.has_moved() {
+                updates.push((i, nv.moved_vert));
+                continue;
             }
 
             let new_pos = find_surface(
@@ -514,22 +653,22 @@ pub fn level_set<F: Fn(Vec3) -> f64>(
             updates.push((i, idx));
         }
 
-        if let Some(gv) = grid_verts.get_mut(&base_key) {
-            for (i, idx) in updates {
-                gv.edge_verts[i] = idx;
-            }
+        for (i, idx) in updates {
+            grid_verts.values[slot].edge_verts[i] = idx;
         }
     }
 
-    // Phase 3: BuildTris — generate triangles from tetrahedra
+    // Phase 3: BuildTris — generate triangles from tetrahedra, in slot order.
     let mut tri_verts: Vec<IVec3> = Vec::new();
 
-    let get_grid_vert = |key: u64| -> GridVert {
-        grid_verts.get(&key).cloned().unwrap_or_default()
-    };
+    let get_grid_vert = |key: u64| -> GridVert { grid_verts.get(key).clone() };
 
-    for &base_key in &keys {
-        let base = get_grid_vert(base_key);
+    for slot in 0..grid_verts.size() {
+        let base_key = grid_verts.keys[slot];
+        if base_key == K_OPEN {
+            continue;
+        }
+        let base = grid_verts.values[slot].clone();
         let base_index = decode_index(base_key, grid_pow);
 
         let mut lead_index = base_index;

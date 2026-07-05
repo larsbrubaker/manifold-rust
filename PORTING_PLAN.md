@@ -110,10 +110,23 @@ behavior (`cylinder_zero_radius_low`, `refine_quads` regressed, then both root-c
   winding flip). Cylinder(5,0,3,256) and its boolean results are now **bit-identical** to
   the C++ reference.
 
-### SDF thin-shell marching topology (1)
-`sdf_sphere_shell` — genus 9560 vs expected ~14235 (perf now fine, 12s in release after the
-Vec fix). The half-voxel-thick shell exposes a marching-tetrahedra crossing/snap topology
-difference vs C++. Real correctness bug; needs root-cause in the SDF crossing logic.
+### SDF thin-shell marching topology — FIXED (2026-07)
+`sdf_sphere_shell` now passes with genus **13396, exactly matching the local C++ build**
+(still `#[ignore]`d only for debug-suite speed, ~1min debug / ~5s release). Four findings:
+1. **Test-porting error (the "genus bug"):** the C++ test passes `tolerance=0.0001` to
+   `LevelSet` (enabling FindSurface vertex refinement) and uses `r - 0.995f` (a FLOAT
+   literal). The Rust test omitted the tolerance → pure interpolation → genus ~9576. The
+   marching implementation itself was never topologically wrong.
+2. **Nondeterminism:** `level_set` iterated a std `HashMap` for ComputeVerts/BuildTris —
+   random order per process; three runs gave three different genus values. Replaced with a
+   faithful port of C++ `hashtable.h` (`GridHashTable` in sdf.rs: splitmix64 `hash64bit`,
+   linear probing, power-of-2 sizing, used*2>size Full check, open-slot default-value
+   lookups, and the LevelSet resize-and-rerun protocol) iterated in SLOT order.
+3. **`la::lerp` association:** C++ lerp is `a*(1-t) + b*t`, not `a + (b-a)*t` — fixed in
+   `find_surface`'s scalar and vector lerps.
+4. **`ComputeGridPow`:** C++ is `CeilLog2(n+3)`; Rust computed `ceil_log2(n+2)+1` (one bit
+   wider) — encoded indices are the hash keys, so this changed slot order. Fixing it made
+   the genus match C++ exactly.
 
 ### Coplanar/coincident-face geometry — FIXED (2026-07)
 The whole cluster landed in one session; root causes and fixes:
