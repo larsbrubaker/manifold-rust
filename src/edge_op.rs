@@ -41,19 +41,16 @@ pub fn pair_up(halfedge: &mut Vec<Halfedge>, e0: usize, e1: usize) {
 /// Traverses CW from `start_edge` to `end_edge` (exclusive) around
 /// `start_edge.endVert`, repointing all traversed halfedges to `vert`.
 pub fn update_vert(mesh: &mut ManifoldImpl, vert: i32, start_edge: usize, end_edge: usize) {
+    // C++ UpdateVert: start_edge == end_edge is a legitimate no-op; the
+    // infinite-loop check is against *start_edge* after stepping (i.e. we
+    // wrapped all the way around without hitting end_edge).
     let mut current = start_edge;
-    loop {
-        debug_assert_ne!(current, end_edge, "infinite loop in update_vert!");
-        if current == end_edge {
-            break;
-        }
+    while current != end_edge {
         mesh.halfedge[current].end_vert = vert;
         let next = next_halfedge(current as i32) as usize;
         mesh.halfedge[next].start_vert = vert;
         current = mesh.halfedge[next].paired_halfedge as usize;
-        if current == end_edge {
-            break;
-        }
+        debug_assert_ne!(current, start_edge, "infinite loop in update_vert!");
     }
 }
 

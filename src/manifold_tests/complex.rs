@@ -393,11 +393,11 @@ fn test_cpp_complex_spiral() {
 }
 
 /// C++ TEST(Manifold, OpenscadCrash) — OBJ that previously crashed openscad
+///
+/// Passes since `face2tri` was rewritten to the C++ v3.5.0 halfedge-index
+/// pairing scheme (keeps overlapping-polygon triangulations manifold) and
+/// `update_vert` matched C++'s graceful start==end no-op.
 #[test]
-#[ignore = "Needs processOverlaps. The C++ TEST(Manifold, OpenscadCrash) is itself gated \
-            behind MANIFOLD_DEBUG and sets ManifoldParams().processOverlaps = true; Rust \
-            lacks processOverlaps, so the non-manifold-input boolean still leaves an unpaired \
-            halfedge (update_vert OOB). Distinct from the RecursiveEdgeSwap robustness fix."]
 fn test_cpp_openscad_crash() {
     let m = read_test_obj("openscad-nonmanifold-crash.obj");
     assert!(!m.is_empty(), "OBJ should load as non-empty manifold, status={:?}", m.status());

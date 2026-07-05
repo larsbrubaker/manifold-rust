@@ -466,8 +466,8 @@ pub fn boolean_result(
         false,
     );
 
-    // Triangulate polygonal faces
-    face2tri(&mut out_r, &face_edge, &halfedge_ref);
+    // Triangulate polygonal faces (allowConvex=false per C++ boolean_result.cpp)
+    face2tri(&mut out_r, &face_edge, &halfedge_ref, false);
     reorder_halfedges(&mut out_r);
 
     // Create properties via barycentric interpolation

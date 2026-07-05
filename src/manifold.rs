@@ -17,12 +17,64 @@ use crate::cross_section::CrossSection;
 use crate::constructors;
 use crate::math;
 use crate::impl_mesh::ManifoldImpl;
-use crate::linalg::{mat4_to_mat3x4, normalize, rotation_matrix, rotation_quat_axis_angle, scaling_matrix, translation_matrix, IVec3, Mat3x4, Vec2, Vec3};
+use crate::linalg::{mat4_to_mat3x4, normalize, scaling_matrix, translation_matrix, IVec3, Mat3, Mat3x4, Vec2, Vec3};
 use crate::minkowski;
 use crate::quickhull;
 use crate::sdf;
 use crate::subdivision;
 use crate::types::{Error, MeshGL, MeshGL64, OpType, Polygons, RayHit, Rect};
+
+/// `sind` with C++ `std::remquo` argument reduction (round-to-nearest, ties to
+/// even; remainder in [-45, 45]) instead of the floor-based reduction in
+/// `types::sind` (remainder in [0, 90)). Both are mathematically equal but
+/// differ by ~1 ULP for angles whose reduced argument lands in (45, 90) — e.g.
+/// `cosd(-0.08)` = `sind(89.92)` evaluates as `sin(rad(89.92))` under floor but
+/// as `cos(rad(-0.08))` under remquo, which is what C++ computes.
+///
+/// Local to `Manifold::rotate` on purpose: switching `types::sind` globally
+/// regresses `RefineQuads` (cylinder triangle count diverges from C++), while
+/// `rotate` needs the remquo form for bit-exact rotation matrices. See
+/// PORTING_PLAN.md (`almost_coplanar`).
+fn sind_remquo(x: f64) -> f64 {
+    if !x.is_finite() {
+        return f64::NAN;
+    }
+    if x < 0.0 {
+        return -sind_remquo(-x);
+    }
+    // std::remquo(x, 90.0, &quo): quo = nearest integer to the exact x/90
+    // (ties to even), remainder = x - quo*90 computed exactly. Reconstruct:
+    // round the computed quotient, then fix up the rare off-by-one where the
+    // rounded double quotient disagrees with the exact one.
+    let mut quo = (x / 90.0).round_ties_even() as i64;
+    let mut r = x - quo as f64 * 90.0;
+    if r > 45.0 {
+        quo += 1;
+        r -= 90.0;
+    } else if r < -45.0 {
+        quo -= 1;
+        r += 90.0;
+    } else if r == 45.0 && quo % 2 != 0 {
+        // Exact tie: remquo rounds the quotient to even.
+        quo += 1;
+        r = -45.0;
+    } else if r == -45.0 && quo % 2 != 0 {
+        quo -= 1;
+        r = 45.0;
+    }
+    match ((quo % 4) + 4) % 4 {
+        0 => math::sin(crate::types::radians(r)),
+        1 => math::cos(crate::types::radians(r)),
+        2 => -math::sin(crate::types::radians(r)),
+        3 => -math::cos(crate::types::radians(r)),
+        _ => 0.0,
+    }
+}
+
+/// `cosd` companion to [`sind_remquo`]; matches C++ `cosd(x) = sind(x + 90)`.
+fn cosd_remquo(x: f64) -> f64 {
+    sind_remquo(x + 90.0)
+}
 
 #[derive(Clone)]
 pub struct Manifold {
@@ -259,14 +311,33 @@ impl Manifold {
     }
 
     /// Rotate by Euler angles in degrees: first about X, then Y, then Z.
+    ///
+    /// Port of C++ `CsgNode::Rotate` (csg_tree.cpp): degree-based `sind`/`cosd`
+    /// axis matrices composed `rZ*rY*rX`. Quaternions (sin/cos of half-angles in
+    /// radians) differ from this by ~1 ULP, which is enough to flip
+    /// symbolic-perturbation ties in the boolean kernel on almost-coplanar
+    /// inputs (see PORTING_PLAN.md, `almost_coplanar`).
     pub fn rotate(&self, x_degrees: f64, y_degrees: f64, z_degrees: f64) -> Self {
-        let to_rad = std::f64::consts::PI / 180.0;
-        let qx = rotation_quat_axis_angle(Vec3::new(1.0, 0.0, 0.0), x_degrees * to_rad);
-        let qy = rotation_quat_axis_angle(Vec3::new(0.0, 1.0, 0.0), y_degrees * to_rad);
-        let qz = rotation_quat_axis_angle(Vec3::new(0.0, 0.0, 1.0), z_degrees * to_rad);
-        use crate::linalg::qmul;
-        let q = qmul(qz, qmul(qy, qx));
-        let t = mat4_to_mat3x4(rotation_matrix(q));
+        let (sx, cx) = (sind_remquo(x_degrees), cosd_remquo(x_degrees));
+        let (sy, cy) = (sind_remquo(y_degrees), cosd_remquo(y_degrees));
+        let (sz, cz) = (sind_remquo(z_degrees), cosd_remquo(z_degrees));
+        let rx = Mat3::from_cols(
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, cx, sx),
+            Vec3::new(0.0, -sx, cx),
+        );
+        let ry = Mat3::from_cols(
+            Vec3::new(cy, 0.0, -sy),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(sy, 0.0, cy),
+        );
+        let rz = Mat3::from_cols(
+            Vec3::new(cz, sz, 0.0),
+            Vec3::new(-sz, cz, 0.0),
+            Vec3::new(0.0, 0.0, 1.0),
+        );
+        let m = rz * ry * rx;
+        let t = Mat3x4::from_cols(m.x, m.y, m.z, Vec3::new(0.0, 0.0, 0.0));
         Self::from_impl(self.imp.transform(&t))
     }
 

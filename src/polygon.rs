@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use crate::linalg::{Vec2, IVec3};
-use crate::types::{PolyVert, PolygonsIdx, SimplePolygonIdx, Polygons, Rect, K_PRECISION};
+use crate::types::{Halfedge, PolyVert, PolygonsIdx, SimplePolygonIdx, Polygons, Rect, K_PRECISION};
 
 #[path = "polygon_earclip.rs"]
 mod polygon_earclip;
@@ -190,6 +190,128 @@ fn triangulate_convex(polys: &PolygonsIdx) -> Vec<IVec3Out> {
         }
     }
     triangles
+}
+
+// ---------------------------------------------------------------------------
+// HalfedgeTriangulation — triangulation result as paired halfedges
+// ---------------------------------------------------------------------------
+
+/// Triangulation result represented directly as halfedges, ported from
+/// `HalfedgeTriangulation` in C++ `polygon_internal.h`.
+///
+/// `halfedges[0..contour_end]` are the *exterior* contour halfedges (the
+/// input edges reversed, so their `end_vert` holds the original `idx` of the
+/// edge's start point). `halfedges[contour_end..]` hold three halfedges per
+/// output triangle. All vertex fields are original `idx` values.
+///
+/// Pairing happens incrementally with a LIFO multimap keyed on `(start, end)`,
+/// so duplicate vertex pairs (from degenerate/overlapping polygons) still pair
+/// one-to-one within the triangulation. This is what `Face2Tri` relies on to
+/// keep boolean results manifold on exactly-coplanar faces — re-deriving pairs
+/// from vertex positions after the fact cannot distinguish duplicates.
+pub struct HalfedgeTriangulation {
+    pub halfedges: Vec<Halfedge>,
+    pub contour_end: usize,
+}
+
+impl HalfedgeTriangulation {
+    pub fn num_tri(&self) -> usize {
+        (self.halfedges.len() - self.contour_end) / 3
+    }
+}
+
+/// Mirrors `HalfedgeTriangulation::AddHalfedge`: pair against the most
+/// recently added unpaired opposite edge, else record as unpaired.
+fn add_halfedge(
+    halfedges: &mut Vec<Halfedge>,
+    edge2halfedge: &mut HashMap<(i32, i32), Vec<i32>>,
+    start: i32,
+    end: i32,
+) {
+    let idx = halfedges.len() as i32;
+    let mut data = Halfedge {
+        start_vert: start,
+        end_vert: end,
+        paired_halfedge: -1,
+        prop_vert: -1,
+    };
+    if let Some(reverse) = edge2halfedge.get_mut(&(end, start)) {
+        if let Some(pair) = reverse.pop() {
+            data.paired_halfedge = pair;
+            halfedges[pair as usize].paired_halfedge = idx;
+            if reverse.is_empty() {
+                edge2halfedge.remove(&(end, start));
+            }
+            halfedges.push(data);
+            return;
+        }
+    }
+    edge2halfedge.entry((start, end)).or_default().push(idx);
+    halfedges.push(data);
+}
+
+/// Triangulates indexed polygons, returning both the triangle halfedges and
+/// the contour halfedges with their pairing. Port of C++
+/// `TriangulateIdxHalfedges` (polygon.cpp): the C++ triangulators build the
+/// `HalfedgeTriangulation` incrementally via `AddTriangle`; here we replay the
+/// triangle list (which `triangulate_idx` emits in exactly that call order)
+/// through the same `AddHalfedge` sequence, which yields identical pairing.
+pub fn triangulate_idx_halfedges(
+    polys: &PolygonsIdx,
+    epsilon: f64,
+    allow_convex: bool,
+) -> HalfedgeTriangulation {
+    let triangles = triangulate_idx(polys, epsilon, allow_convex);
+
+    let mut result = HalfedgeTriangulation {
+        halfedges: Vec::new(),
+        contour_end: 0,
+    };
+    let mut edge2halfedge: HashMap<(i32, i32), Vec<i32>> = HashMap::new();
+
+    // AddContours: store the exterior contour halfedge, opposite the filled
+    // contour, so each triangle edge on the boundary pairs against it.
+    for poly in polys {
+        for i in 0..poly.len() {
+            let start = poly[i].idx;
+            let end = poly[if i + 1 < poly.len() { i + 1 } else { 0 }].idx;
+            add_halfedge(&mut result.halfedges, &mut edge2halfedge, end, start);
+        }
+    }
+    result.contour_end = result.halfedges.len();
+
+    for tri in &triangles {
+        add_halfedge(&mut result.halfedges, &mut edge2halfedge, tri.x, tri.y);
+        add_halfedge(&mut result.halfedges, &mut edge2halfedge, tri.y, tri.z);
+        add_halfedge(&mut result.halfedges, &mut edge2halfedge, tri.z, tri.x);
+    }
+
+    // Mirror of C++ Finalize() MANIFOLD_DEBUG checks.
+    #[cfg(debug_assertions)]
+    {
+        debug_assert!(
+            edge2halfedge.is_empty(),
+            "triangulation has unpaired halfedges"
+        );
+        for (i, he) in result.halfedges.iter().enumerate() {
+            let pair = he.paired_halfedge;
+            debug_assert!(
+                pair >= 0 && (pair as usize) < result.halfedges.len(),
+                "invalid paired halfedge"
+            );
+            let other = &result.halfedges[pair as usize];
+            debug_assert!(
+                other.paired_halfedge == i as i32,
+                "halfedge pair is not reciprocal"
+            );
+            debug_assert!(
+                he.start_vert == other.end_vert && he.end_vert == other.start_vert,
+                "halfedge pair endpoints do not match"
+            );
+        }
+    }
+
+    result
 }
 
 // ---------------------------------------------------------------------------

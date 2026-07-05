@@ -36,8 +36,10 @@ fn test_cpp_convex_convex_minkowski() {
 }
 
 /// C++ TEST(Boolean, ConvexConvexMinkowskiDifference) — sphere erosion of cube
+///
+/// Passes since `face2tri` was rewritten to the C++ v3.5.0 halfedge-index
+/// pairing scheme (boolean pipeline no longer diverges on coplanar faces).
 #[test]
-#[ignore = "Correct collapse_edge (matching C++) exposes pre-existing boolean pipeline difference: intermediate hull simplification changes geometry, causing off-face vertices in final result (23.47 vs 19.44 area)"]
 fn test_cpp_convex_convex_minkowski_difference() {
     let r = 0.1;
     let w = 2.0;
@@ -67,11 +69,11 @@ fn test_cpp_convex_convex_minkowski_difference() {
 
 /// C++ TEST(Boolean, NonConvexConvexMinkowskiSum)
 #[test]
-#[ignore = "Fast in release (0.2-2.9s) — NOT slow. Fails on genus only: volume + area now \
-            match C++ exactly (after the n-way sphere fix), but the topology (genus) differs. \
-            C++ runs these with ManifoldParams().processOverlaps=true, which Rust lacks — \
-            same processOverlaps/overlapping-polygon-triangulation gap as the boolean \
-            non-manifold cluster. Correctness gap, not perf."]
+#[ignore = "Close but not exact (2026-07, after matrix-rotate + v3.5.0 face2tri landed): \
+            volume matches C++ (±1e-3) but area is 34.073 vs C++ 34.06 (±1e-2) — slightly \
+            too much surface survives. No longer the non-manifold/genus failure; the \
+            remaining gap is a small geometric divergence in the minkowski \
+            decompose→hull→batch-boolean pipeline. Needs instrumented comparison vs C++."]
 fn test_cpp_nonconvex_convex_minkowski_sum() {
     let sphere = Manifold::sphere(1.2, 20);
     let cube = Manifold::cube(Vec3::splat(2.0), true);
@@ -92,11 +94,9 @@ fn test_cpp_nonconvex_convex_minkowski_sum() {
 
 /// C++ TEST(Boolean, NonConvexConvexMinkowskiDifference)
 #[test]
-#[ignore = "Fast in release (0.2-2.9s) — NOT slow. Fails on genus only: volume + area now \
-            match C++ exactly (after the n-way sphere fix), but the topology (genus) differs. \
-            C++ runs these with ManifoldParams().processOverlaps=true, which Rust lacks — \
-            same processOverlaps/overlapping-polygon-triangulation gap as the boolean \
-            non-manifold cluster. Correctness gap, not perf."]
+#[ignore = "Close but not exact (2026-07, after matrix-rotate + v3.5.0 face2tri landed): \
+            volume matches C++ (±1e-3) but area is 16.742 vs C++ 16.70 (±1e-2). Same \
+            remaining minkowski-pipeline divergence as NonConvexConvexMinkowskiSum."]
 fn test_cpp_nonconvex_convex_minkowski_difference() {
     let sphere = Manifold::sphere(1.2, 20);
     let cube = Manifold::cube(Vec3::splat(2.0), true);
@@ -117,11 +117,10 @@ fn test_cpp_nonconvex_convex_minkowski_difference() {
 
 /// C++ TEST(Boolean, NonConvexNonConvexMinkowskiSum)
 #[test]
-#[ignore = "Fast in release (0.2-2.9s) — NOT slow. Fails on genus only: volume + area now \
-            match C++ exactly (after the n-way sphere fix), but the topology (genus) differs. \
-            C++ runs these with ManifoldParams().processOverlaps=true, which Rust lacks — \
-            same processOverlaps/overlapping-polygon-triangulation gap as the boolean \
-            non-manifold cluster. Correctness gap, not perf."]
+#[ignore = "Close but not exact (2026-07, after matrix-rotate + v3.5.0 face2tri landed): \
+            volume matches C++ exactly (±1e-5!) but area is 31.3996 vs C++ 31.17691 (±1e-5) \
+            — extra coplanar sliver surface survives simplification. Same remaining \
+            minkowski-pipeline divergence as NonConvexConvexMinkowskiSum."]
 fn test_cpp_nonconvex_nonconvex_minkowski_sum() {
     let tet = Manifold::tetrahedron();
     let non_convex = tet.difference(
@@ -144,12 +143,10 @@ fn test_cpp_nonconvex_nonconvex_minkowski_sum() {
 }
 
 /// C++ TEST(Boolean, NonConvexNonConvexMinkowskiDifference)
+///
+/// Passes since the matrix `rotate` + v3.5.0 `face2tri` pairing landed
+/// (exactly-coplanar boolean faces triangulate manifold, genus matches).
 #[test]
-#[ignore = "Fast in release (0.2-2.9s) — NOT slow. Fails on genus only: volume + area now \
-            match C++ exactly (after the n-way sphere fix), but the topology (genus) differs. \
-            C++ runs these with ManifoldParams().processOverlaps=true, which Rust lacks — \
-            same processOverlaps/overlapping-polygon-triangulation gap as the boolean \
-            non-manifold cluster. Correctness gap, not perf."]
 fn test_cpp_nonconvex_nonconvex_minkowski_difference() {
     let tet = Manifold::tetrahedron();
     let non_convex = tet.difference(
