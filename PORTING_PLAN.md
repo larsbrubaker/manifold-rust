@@ -5,7 +5,7 @@ This is a **roadmap of remaining work** to finish porting
 not what has already been done (use `git log` for history). Every change must reproduce the
 C++ reference with **exact numerical match** — identical results on identical inputs.
 
-**Status:** 516 passing, 0 failing, 9 ignored.
+**Status:** 517 passing, 0 failing, 8 ignored.
 **C++ reference target:** v3.5.0 (submodule at tag `v3.5.0`, commit `541c33bd`).
 **Core engine:** all 18 phases (linalg → boolean → CSG → cross-section → SDF → minkowski →
 WASM) are implemented. Remaining work is the v3.5.0 deltas below plus the ignored-test
@@ -32,7 +32,7 @@ optional/peripheral:
 
 ---
 
-## Ignored tests (9) — grouped by the work needed to clear them
+## Ignored tests (8) — grouped by the work needed to clear them
 
 > **Audit note:** C++ has zero `DISABLED_` tests, so the fair bar is Rust-release ≈
 > C++-release. The old "9 slow in debug" bucket was a mislabeled mix; broken out below.
@@ -72,14 +72,43 @@ real divergences; `nonconvex_convex_minkowski_sum/difference` now pass and are u
    edgePos AND collisionId, e.g. duplicated retained verts), which the stable sorts keep.
    Ported as `cpp_partition`.
 
-**Still ignored: `nonconvex_nonconvex_minkowski_sum`** — volume exact (±1e-5), area 31.2245
-vs 31.17691 (±1e-5). Booleans #1–#9 of its tet pipeline are now bit-exact vs C++; the first
-divergence is boolean #6's **simplify step**: identical verts + face2tri output, but
-`simplify_topology` (edge_op.rs) collapses/swaps different edges on a degenerate coplanar
-region (18 halfedges around verts 11–15 differ), shifting all later booleans. Next session:
-diff C++ `SimplifyTopology` (CollapseEdge/RecursiveEdgeSwap iteration order + tie-breaks)
-against `edge_op.rs` on that boolean (instrumentation recipe: `MK_TRACE`-style per-boolean
-`SB pre/post nv/nt` prints + `RES_DUMP=6` final-mesh dumps, see git history of this entry).
+**FIXED (2026-07, follow-up session): `nonconvex_nonconvex_minkowski_sum` un-ignored.**
+The trace-diff loop (BIN/ROUT input-output mesh fingerprints per boolean → B3 kernel dumps →
+per-phase simplify hashes → per-face triangulation dumps) found and fixed, in order:
+1. **Ear-queue FIFO tie-break** (`polygon_earclip.rs`): C++'s `std::multiset` pops
+   equal-cost ears in insertion order; the Rust `BinaryHeap` popped ties in arbitrary heap
+   order. Costs tie constantly (`kBest = -inf` for short ears). Added a monotonic `seq` to
+   `EarEntry`, tie-breaking older-first.
+2. **`cut_keyhole` connector selection** (`polygon_earclip.rs`): the C++ CheckEdge tests
+   `start->InsideEdge(edge)` per candidate; the Rust port tested `start` against its own
+   left neighbor (loop-invariant!) and only applied the vertical-ordering tie-break when
+   the CCW test returned 0 (C++: whenever it isn't 1). This mispicked keyhole bridges on
+   degenerate faces with holes — the last divergence blocking the test.
+3. **`swap_degenerates` neighbor check** (`edge_op.rs`): C++ `swappableEdge` projects the
+   PAIR triangle's verts (`pairTriEdge`) under the neighbor's projection; Rust projected
+   tri0's. (Note: inside `RecursiveEdgeSwap` C++ genuinely uses tri0edge — the two sites
+   differ on purpose.)
+4. **`recursive_edge_swap` tag by-reference** (`edge_op.rs`): C++ takes `int& tag` and
+   increments it in the facing-degenerates collapse branch so previously-visited edges
+   become re-processable; the Rust port took `tag` by value.
+5. **`collapse_edge` prop update** is an else-if chain in C++ (tri0's prop wins when a
+   triangle matches both face groups); `SwapEdge`'s prop writes reordered to match C++.
+
+Fixing #3 exposed two **construction-exactness** bugs previously masked by compensating
+behavior (`cylinder_zero_radius_low`, `refine_quads` regressed, then both root-caused):
+- **Global `sind` now uses remquo reduction** (`types.rs`), matching C++ `common.h` — the
+  floor-based reduction differed by ~1 ULP for reduced args in (45°, 90°), putting cylinder
+  circle verts off by 1 ULP. The old "global remquo-sind regresses RefineQuads" note was a
+  compensating-bug artifact; with the fixes below it holds exactly. The local
+  `sind_remquo` in `manifold.rs` was folded back into `types::sind`.
+- **`extrude` cap triangulation** (`constructors.rs`): C++ `TriangulateIdx` defaults to
+  `allowConvex=true` (alternating-fan for convex caps); Rust passed `false` (ear-clip) →
+  different cap triangle sets on every cylinder/extrude. Also the side-wall scale·rotation
+  is now built as matrix entries first (C++ `mat2` multiply association), and the
+  zero-radius cone branch now applies C++'s composed Mirror∘Translate via
+  `Impl::Transform` + `AsOriginal` instead of negating z in place (which skipped the
+  winding flip). Cylinder(5,0,3,256) and its boolean results are now **bit-identical** to
+  the C++ reference.
 
 ### SDF thin-shell marching topology (1)
 `sdf_sphere_shell` — genus 9560 vs expected ~14235 (perf now fine, 12s in release after the

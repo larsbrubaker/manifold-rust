@@ -258,24 +258,19 @@ pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usi
     while current != tri0edge[2] {
         current = next_halfedge(current as i32) as usize;
 
-        // Update propVert for property meshes
+        // Update propVert for property meshes. C++ is an else-if chain: when a
+        // triangle matches BOTH tri0's and tri1's face group, only tri0's prop
+        // is taken.
         if mesh.num_prop > 0 && !mesh.mesh_relation.tri_ref.is_empty() {
             let tri = current / 3;
             if tri < mesh.mesh_relation.tri_ref.len() {
                 let ref_tri = mesh.mesh_relation.tri_ref[tri];
-                if edge / 3 < mesh.mesh_relation.tri_ref.len() {
-                    let ref0 = mesh.mesh_relation.tri_ref[edge / 3];
-                    if ref_tri.same_face(&ref0) {
-                        let prop_v = mesh.halfedge[next_halfedge(edge as i32) as usize].prop_vert;
-                        mesh.halfedge[current].prop_vert = prop_v;
-                    }
-                }
-                if paired / 3 < mesh.mesh_relation.tri_ref.len() {
-                    let ref1 = mesh.mesh_relation.tri_ref[paired / 3];
-                    if ref_tri.same_face(&ref1) {
-                        let prop_v = mesh.halfedge[paired].prop_vert;
-                        mesh.halfedge[current].prop_vert = prop_v;
-                    }
+                if ref_tri.same_face(&mesh.mesh_relation.tri_ref[edge / 3]) {
+                    let prop_v = mesh.halfedge[next_halfedge(edge as i32) as usize].prop_vert;
+                    mesh.halfedge[current].prop_vert = prop_v;
+                } else if ref_tri.same_face(&mesh.mesh_relation.tri_ref[paired / 3]) {
+                    let prop_v = mesh.halfedge[paired].prop_vert;
+                    mesh.halfedge[current].prop_vert = prop_v;
                 }
             }
         }
@@ -318,7 +313,10 @@ pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usi
 pub fn recursive_edge_swap(
     mesh: &mut ManifoldImpl,
     edge: i32,
-    tag: i32,
+    // C++ takes `int& tag` and increments it in the facing-degenerates branch;
+    // the increment must persist into the caller's stack-drain loop so edges
+    // visited before a collapse can be re-processed after it.
+    tag: &mut i32,
     visited: &mut Vec<i32>,
     edge_swap_stack: &mut Vec<i32>,
     scratch: &mut Vec<usize>,
@@ -337,7 +335,7 @@ pub fn recursive_edge_swap(
     let pair = mesh.halfedge[edge].paired_halfedge as usize;
 
     // Avoid infinite recursion via visited tag
-    if visited.get(edge) == Some(&tag) && visited.get(pair) == Some(&tag) {
+    if visited.get(edge) == Some(&*tag) && visited.get(pair) == Some(&*tag) {
         return;
     }
 
@@ -397,25 +395,27 @@ pub fn recursive_edge_swap(
         if tri1 < mesh.mesh_relation.tri_ref.len() && tri0 < mesh.mesh_relation.tri_ref.len() {
             mesh.mesh_relation.tri_ref[tri0] = mesh.mesh_relation.tri_ref[tri1];
         }
-        // Update properties if applicable
+        // Update properties if applicable. Mirrors the C++ assignment order:
+        // tri0's props are copied from tri1's ORIGINAL props first, then the
+        // interpolated new prop vert replaces tri1edge[0]/tri0edge[2].
         if !mesh.properties.is_empty() {
             let num_prop = mesh.num_prop;
-            let new_prop = (mesh.properties.len() / num_prop) as i32;
             let l01 = length2_2(v[1] - v[0]).sqrt();
             let l02 = length2_2(v[2] - v[0]).sqrt();
-            let a = (l02 / l01).max(0.0).min(1.0);
+            let a = (l02 / l01).clamp(0.0, 1.0);
+            mesh.halfedge[tri0edge[1]].prop_vert = mesh.halfedge[tri1edge[0]].prop_vert;
+            mesh.halfedge[tri0edge[0]].prop_vert = mesh.halfedge[tri1edge[2]].prop_vert;
+            mesh.halfedge[tri0edge[2]].prop_vert = mesh.halfedge[tri1edge[2]].prop_vert;
+            let new_prop = (mesh.properties.len() / num_prop) as i32;
             let idx0 = mesh.halfedge[tri1edge[0]].prop_vert as usize;
             let idx1 = mesh.halfedge[tri1edge[1]].prop_vert as usize;
             for p in 0..num_prop {
-                let v = a * mesh.properties[num_prop * idx0 + p]
+                let val = a * mesh.properties[num_prop * idx0 + p]
                     + (1.0 - a) * mesh.properties[num_prop * idx1 + p];
-                mesh.properties.push(v);
+                mesh.properties.push(val);
             }
             mesh.halfedge[tri1edge[0]].prop_vert = new_prop;
             mesh.halfedge[tri0edge[2]].prop_vert = new_prop;
-            mesh.halfedge[tri1edge[0]].prop_vert = new_prop;
-            mesh.halfedge[tri0edge[0]].prop_vert = mesh.halfedge[tri1edge[2]].prop_vert;
-            mesh.halfedge[tri0edge[1]].prop_vert = mesh.halfedge[tri1edge[0]].prop_vert;
         }
 
         // If the new (swapped) edge already exists elsewhere, the swap has
@@ -445,12 +445,15 @@ pub fn recursive_edge_swap(
         do_swap(mesh);
         let e23 = v[3] - v[2];
         if dot2(e23, e23) < mesh.tolerance * mesh.tolerance {
-            // Also collapse the resulting short edge
+            // Also collapse the resulting short edge. C++ bumps the tag here so
+            // previously-visited edges become re-processable after the mesh
+            // changed under them.
+            *tag += 1;
             let _ = collapse_edge(mesh, tri0edge[2], scratch, -1.0, 0);
             scratch.clear();
         } else {
-            if edge < visited.len() { visited[edge] = tag; }
-            if pair < visited.len() { visited[pair] = tag; }
+            if edge < visited.len() { visited[edge] = *tag; }
+            if pair < visited.len() { visited[pair] = *tag; }
             for &e in &[tri1edge[1], tri1edge[0], tri0edge[1], tri0edge[0]] {
                 edge_swap_stack.push(e as i32);
             }
@@ -462,8 +465,8 @@ pub fn recursive_edge_swap(
     } else {
         // Normal swap path
         do_swap(mesh);
-        if edge < visited.len() { visited[edge] = tag; }
-        if pair < visited.len() { visited[pair] = tag; }
+        if edge < visited.len() { visited[edge] = *tag; }
+        if pair < visited.len() { visited[pair] = *tag; }
         // These pair lookups can be -1; C++ pushes them as-is and relies on the
         // `edge < 0` guard at the top of the next call to skip them.
         let p1 = mesh.halfedge[tri1edge[0]].paired_halfedge;
@@ -918,12 +921,13 @@ pub fn swap_degenerates(mesh: &mut ManifoldImpl, first_new_vert: i32) {
         if ccw(v[0], v[1], v[2], mesh.tolerance) > 0 || !is_01_longest(v[0], v[1], v[2]) {
             continue;
         }
-        // Check neighbor
+        // Switch to the neighbor's projection — C++ projects the PAIR
+        // triangle's verts (pairTriEdge), not tri0's.
         let tri_p = pair / 3;
         if tri_p >= mesh.face_normal.len() { continue; }
         let proj_p = get_axis_aligned_projection(mesh.face_normal[tri_p]);
         for j in 0..3 {
-            let sv = mesh.halfedge[tri0edge[j]].start_vert;
+            let sv = mesh.halfedge[tri1edge[j]].start_vert;
             if sv >= 0 && (sv as usize) < mesh.vert_pos.len() {
                 v[j] = proj_p.apply(mesh.vert_pos[sv as usize]);
             }
@@ -940,9 +944,9 @@ pub fn swap_degenerates(mesh: &mut ManifoldImpl, first_new_vert: i32) {
 
     for &i in &flagged {
         tag += 1;
-        recursive_edge_swap(mesh, i as i32, tag, &mut visited, &mut edge_swap_stack, &mut scratch);
+        recursive_edge_swap(mesh, i as i32, &mut tag, &mut visited, &mut edge_swap_stack, &mut scratch);
         while let Some(e) = edge_swap_stack.pop() {
-            recursive_edge_swap(mesh, e, tag, &mut visited, &mut edge_swap_stack, &mut scratch);
+            recursive_edge_swap(mesh, e, &mut tag, &mut visited, &mut edge_swap_stack, &mut scratch);
         }
     }
 }

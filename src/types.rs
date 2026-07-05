@@ -41,23 +41,45 @@ pub fn smoothstep(edge0: f64, edge1: f64, a: f64) -> f64 {
 }
 
 /// Sine function where multiples of 90 degrees come out exact.
+///
+/// Matches C++ `sind` (common.h), which reduces the argument with
+/// `std::remquo(x, 90.0, &quo)` — round-to-nearest (ties to even), remainder
+/// in [-45, 45]. A floor-based reduction (remainder in [0, 90)) is
+/// mathematically equal but differs by ~1 ULP for reduced arguments in
+/// (45, 90), which breaks bit-exactness with the C++ reference (e.g. cylinder
+/// circle vertices).
 pub fn sind(x: f64) -> f64 {
     if !x.is_finite() {
-        return math::sin(x);
+        return f64::NAN;
     }
     if x < 0.0 {
         return -sind(-x);
     }
-    let (remainder, quo) = {
-        let q = (x / 90.0).floor() as i64;
-        let r = x - q as f64 * 90.0;
-        (r, q)
-    };
+    // Reconstruct std::remquo(x, 90.0, &quo): quo = nearest integer to the
+    // exact x/90 (ties to even), remainder computed exactly. Round the
+    // computed quotient, then fix up the rare off-by-one where the rounded
+    // double quotient disagrees with the exact one.
+    let mut quo = (x / 90.0).round_ties_even() as i64;
+    let mut r = x - quo as f64 * 90.0;
+    if r > 45.0 {
+        quo += 1;
+        r -= 90.0;
+    } else if r < -45.0 {
+        quo -= 1;
+        r += 90.0;
+    } else if r == 45.0 && quo % 2 != 0 {
+        // Exact tie: remquo rounds the quotient to even.
+        quo += 1;
+        r = -45.0;
+    } else if r == -45.0 && quo % 2 != 0 {
+        quo -= 1;
+        r = 45.0;
+    }
     match ((quo % 4) + 4) % 4 {
-        0 => math::sin(radians(remainder)),
-        1 => math::cos(radians(remainder)),
-        2 => -math::sin(radians(remainder)),
-        3 => -math::cos(radians(remainder)),
+        0 => math::sin(radians(r)),
+        1 => math::cos(radians(r)),
+        2 => -math::sin(radians(r)),
+        3 => -math::cos(radians(r)),
         _ => 0.0,
     }
 }

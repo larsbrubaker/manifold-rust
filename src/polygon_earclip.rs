@@ -42,6 +42,11 @@ struct EarEntry {
     cost: f64,
     idx: usize,
     version: u32,
+    /// Monotonic insertion sequence. C++ uses a std::multiset, which keeps
+    /// equal-cost entries in INSERTION order and pops the oldest first —
+    /// equal costs are common (kBest = -inf for short ears), so this FIFO
+    /// tie-break decides which degenerate ear clips first and must match.
+    seq: u64,
 }
 
 impl Eq for EarEntry {}
@@ -54,12 +59,14 @@ impl PartialOrd for EarEntry {
 
 impl Ord for EarEntry {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Min-heap: lower cost = higher priority (appears first in pop)
-        // BinaryHeap is max-heap, so "greater" = higher priority = lower cost
+        // Min-heap: lower cost = higher priority (appears first in pop);
+        // ties: lower seq (older insertion) = higher priority.
+        // BinaryHeap is max-heap, so "greater" = higher priority.
         other
             .cost
             .partial_cmp(&self.cost)
             .unwrap_or(std::cmp::Ordering::Equal)
+            .then(other.seq.cmp(&self.seq))
     }
 }
 
@@ -79,6 +86,8 @@ pub(super) struct EarClip {
     simples: Vec<usize>,
     hole2bbox: HashMap<usize, Rect>,
     ears_queue: std::collections::BinaryHeap<EarEntry>,
+    /// Monotonic counter for EarEntry::seq (FIFO tie-break among equal costs).
+    ear_seq: u64,
     pub triangles: Vec<IVec3Out>,
     bbox: Rect,
     pub epsilon: f64,
@@ -94,6 +103,7 @@ impl EarClip {
             simples: Vec::new(),
             hole2bbox: HashMap::new(),
             ears_queue: std::collections::BinaryHeap::new(),
+            ear_seq: 0,
             triangles: Vec::with_capacity(num_vert + 2 * polys.len()),
             bbox: Rect::new(),
             epsilon,
@@ -542,6 +552,11 @@ impl EarClip {
         };
         let mut connector: usize = INVALID;
 
+        // Port of the C++ CheckEdge lambda: take `edge` as the new connector
+        // when the horizontal ray from `start` crosses it (finite x), `start`
+        // lies inside THAT edge's wedge, and it beats the current connector —
+        // either the crossing point is CCW of the connector edge, or (for any
+        // non-CCW result) the vertical-ordering InsideEdge tie-break holds.
         let outers: Vec<usize> = self.outers.clone();
         for outer_start in &outers {
             let verts = match self.loop_verts(*outer_start) {
@@ -550,34 +565,22 @@ impl EarClip {
             };
             for &edge in &verts {
                 let x = self.vert_interp_y2x(edge, start_pos, on_top);
-                if x.is_finite() && self.vert_inside_edge(start, self.polygon[start].left, true) {
-                    // Simplified connector selection: first valid edge
-                    if connector == INVALID {
-                        connector = edge;
-                    } else {
-                        // Pick the edge that results in a more leftward connection
-                        let edge_x = x;
-                        let conn_x = self.vert_interp_y2x(connector, start_pos, on_top);
-                        let conn_right = self.polygon[connector].right;
-                        let inside_edge_check = ccw(
-                            Vec2::new(edge_x, start_pos.y),
+                if x.is_finite()
+                    && self.vert_inside_edge(start, edge, true)
+                    && (connector == INVALID
+                        || ccw(
+                            Vec2::new(x, start_pos.y),
                             self.polygon[connector].pos,
-                            self.polygon[conn_right].pos,
+                            self.polygon[self.polygon[connector].right].pos,
                             self.epsilon,
-                        );
-                        if inside_edge_check == 1 {
-                            connector = edge;
-                        } else if inside_edge_check == 0 {
-                            // Use vertical ordering as tiebreak
-                            if self.polygon[connector].pos.y < self.polygon[edge].pos.y {
-                                if self.vert_inside_edge(edge, connector, false) {
-                                    connector = edge;
-                                }
-                            } else if !self.vert_inside_edge(connector, edge, false) {
-                                connector = edge;
-                            }
-                        }
-                    }
+                        ) == 1
+                        || (if self.polygon[connector].pos.y < self.polygon[edge].pos.y {
+                            self.vert_inside_edge(edge, connector, false)
+                        } else {
+                            !self.vert_inside_edge(connector, edge, false)
+                        }))
+                {
+                    connector = edge;
                 }
             }
         }
@@ -669,12 +672,16 @@ impl EarClip {
         if self.vert_is_short(v) {
             self.polygon[v].cost = K_BEST;
             let version = self.polygon[v].ear_version;
-            self.ears_queue.push(EarEntry { cost: K_BEST, idx: v, version });
+            let seq = self.ear_seq;
+            self.ear_seq += 1;
+            self.ears_queue.push(EarEntry { cost: K_BEST, idx: v, version, seq });
         } else if self.vert_is_convex(v, 2.0 * self.epsilon) {
             let cost = self.vert_ear_cost(v, collider);
             self.polygon[v].cost = cost;
             let version = self.polygon[v].ear_version;
-            self.ears_queue.push(EarEntry { cost, idx: v, version });
+            let seq = self.ear_seq;
+            self.ear_seq += 1;
+            self.ears_queue.push(EarEntry { cost, idx: v, version, seq });
         } else {
             self.polygon[v].cost = 1.0; // reflex, not an ear
         }

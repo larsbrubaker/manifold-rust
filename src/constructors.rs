@@ -65,8 +65,13 @@ pub fn extrude(
         let cos_phi = cosd(phi);
         let sin_phi = sind(phi);
 
-        // transform = scale * rotation
-        // result: (x', y') = (scale.x*(cos*x - sin*y), scale.y*(sin*x + cos*y))
+        // C++ builds transform = mat2(scale) * mat2(rotation) FIRST (entries
+        // are products like sx*cos), then multiplies the vector — match that
+        // association exactly.
+        let t00 = scale.x * cos_phi; // col0.x
+        let t01 = scale.y * sin_phi; // col0.y
+        let t10 = scale.x * -sin_phi; // col1.x
+        let t11 = scale.y * cos_phi; // col1.y
 
         let mut j: i32 = 0; // apex vertex index for cone top
         let mut poly_offset: i32 = 0; // offset within cross-section for this level
@@ -86,9 +91,9 @@ pub fn extrude(
                     ));
                 } else {
                     let pos2 = poly[vert as usize];
-                    let rx = cos_phi * pos2.x - sin_phi * pos2.y;
-                    let ry = sin_phi * pos2.x + cos_phi * pos2.y;
-                    vert_pos.push(Vec3::new(scale.x * rx, scale.y * ry, height * alpha));
+                    let px = t00 * pos2.x + t10 * pos2.y;
+                    let py = t01 * pos2.x + t11 * pos2.y;
+                    vert_pos.push(Vec3::new(px, py, height * alpha));
                     tri_verts.push(IVec3::new(this_vert, last_vert, this_vert - n_cross));
                     tri_verts.push(IVec3::new(last_vert, last_vert - n_cross, this_vert - n_cross));
                 }
@@ -106,8 +111,10 @@ pub fn extrude(
         }
     }
 
-    // Triangulate bottom (winding reversed for outward normal) and top
-    let top_tris = triangulate_idx(&polygons_indexed, -1.0, false);
+    // Triangulate bottom (winding reversed for outward normal) and top.
+    // C++ calls TriangulateIdx with its DEFAULTS: epsilon=-1, allowConvex=true
+    // (the convex fast path picks the alternating fan for e.g. circle caps).
+    let top_tris = triangulate_idx(&polygons_indexed, -1.0, true);
     for tri in &top_tris {
         // Bottom: reverse winding for correct outward normal (points -Z)
         tri_verts.push(IVec3::new(tri.x, tri.z, tri.y));
@@ -331,19 +338,23 @@ pub fn cylinder(
         if radius_high <= 0.0 {
             return ManifoldImpl::new();
         }
-        // Cone with apex at bottom: build apex-at-top version then flip Z
-        let mut cone = cylinder(height, radius_high, 0.0, circular_segments, true);
-        // Mirror Z: negate z coordinates
-        for v in cone.vert_pos.iter_mut() {
-            v.z = -v.z;
-        }
-        if !center {
-            for v in cone.vert_pos.iter_mut() {
-                v.z += height / 2.0;
-            }
-        }
-        cone.calculate_bbox();
+        // Cone with apex at bottom: C++ builds the centered apex-at-top cone,
+        // Mirrors over z, Translates, and finishes with AsOriginal. Mirror and
+        // Translate are lazy CSG transforms that compose into ONE
+        // Impl::Transform application (which also flips triangle winding for
+        // the negative-determinant mirror) — replicate that exactly.
+        let cone = cylinder(height, radius_high, 0.0, circular_segments, true);
+        let translate_z = if center { 0.0 } else { height / 2.0 };
+        let m = Mat3x4::from_cols(
+            Vec3::new(1.0, 0.0, 0.0),
+            Vec3::new(0.0, 1.0, 0.0),
+            Vec3::new(0.0, 0.0, -1.0),
+            Vec3::new(0.0, 0.0, translate_z),
+        );
+        let mut cone = cone.transform(&m);
+        // AsOriginal
         cone.initialize_original();
+        crate::face_op::set_normals_and_coplanar(&mut cone);
         return cone;
     }
 

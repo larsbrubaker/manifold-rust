@@ -115,17 +115,10 @@ fn test_cpp_nonconvex_convex_minkowski_difference() {
 }
 
 /// C++ TEST(Boolean, NonConvexNonConvexMinkowskiSum)
+///
+/// Passes since the ear-queue FIFO tie-break, the `cut_keyhole` connector
+/// fix, and the edge_op tag/neighbor-projection fixes landed (2026-07).
 #[test]
-#[ignore = "Very close but not exact (2026-07): volume matches C++ exactly (±1e-5) and area \
-            is 31.2245 vs C++ 31.17691 (±1e-5) after the BatchBoolean-order, vert-normal \
-            ForVert-order, and edgeVec fixes. Instrumented trace vs local C++ build shows \
-            booleans #1-#9 of the tet pipeline now match bit-for-bit; the first divergence \
-            is in boolean #6's SIMPLIFY step: identical verts and face2tri output, but \
-            simplify_topology (edge collapse/swap order in edge_op.rs) picks different \
-            edges on the degenerate coplanar region (verts 11-15, 18 halfedges differ), \
-            which shifts later booleans. Next step: diff C++ SimplifyTopology's collapse \
-            ordering (CollapseEdge/RecursiveEdgeSwap iteration + tie-breaks) against \
-            edge_op.rs on that boolean."]
 fn test_cpp_nonconvex_nonconvex_minkowski_sum() {
     let tet = Manifold::tetrahedron();
     let non_convex = tet.difference(
