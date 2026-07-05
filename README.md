@@ -1,5 +1,9 @@
 # manifold-rust
 
+[![crates.io](https://img.shields.io/crates/v/manifold-rust.svg)](https://crates.io/crates/manifold-rust)
+[![docs.rs](https://docs.rs/manifold-rust/badge.svg)](https://docs.rs/manifold-rust)
+[![license](https://img.shields.io/crates/l/manifold-rust.svg)](https://github.com/larsbrubaker/manifold-rust/blob/main/LICENSE)
+
 [![Demo](README_HERO.png)](https://larsbrubaker.github.io/manifold-rust/)
 
 ## Support the Project
@@ -41,6 +45,16 @@ This Rust port targets **exact numerical match** with the C++ implementation —
 ## Why
 
 [MatterHackers](https://www.matterhackers.com) uses 3D mesh boolean operations extensively in production for 3D printing workflows. A pure Rust implementation avoids FFI overhead and integrates cleanly with Rust tooling including WASM compilation.
+
+## Installation
+
+Available on [crates.io](https://crates.io/crates/manifold-rust):
+
+```bash
+cargo add manifold-rust
+```
+
+API documentation: <https://docs.rs/manifold-rust>
 
 ## Usage
 
