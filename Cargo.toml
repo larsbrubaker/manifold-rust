@@ -24,6 +24,14 @@ path = "src/lib.rs"
 [dependencies]
 num-traits = "0.2"
 clipper2-rust = "1.0.3"
+rayon = { version = "1.10", optional = true }
+
+[features]
+# Parallel execution via rayon. Only determinism-preserving sites are
+# parallelized, so results stay bit-identical to the sequential build
+# (unlike upstream C++ MANIFOLD_PAR, which permits nondeterministic
+# vertex ordering in some phases).
+parallel = ["dep:rayon"]
 
 [dev-dependencies]
 criterion = "0.5"

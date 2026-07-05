@@ -194,17 +194,19 @@ pub fn calculate_vert_normals(mesh: &mut ManifoldImpl) {
         }
     }
 
-    for vert in 0..num_vert {
+    // Each vertex's normal reads only shared mesh data and its own walk, so
+    // the per-vertex work parallelizes with results identical to sequential
+    // (the accumulation order WITHIN a vertex is the fixed ForVert walk).
+    let halfedge = &mesh.halfedge;
+    let vert_pos = &mesh.vert_pos;
+    let face_normal = &mesh.face_normal;
+    let normals: Vec<Vec3> = crate::par::maybe_par_map(num_vert, 10_000, |vert| {
         let first_edge = vert_first_edge[vert];
         if first_edge == i32::MAX {
-            mesh.vert_normal[vert] = Vec3::new(0.0, 0.0, 0.0);
-            continue;
+            return Vec3::new(0.0, 0.0, 0.0);
         }
 
         let mut normal = Vec3::new(0.0, 0.0, 0.0);
-        let halfedge = &mesh.halfedge;
-        let vert_pos = &mesh.vert_pos;
-        let face_normal = &mesh.face_normal;
 
         // ForVert equivalent: walk CW around the vertex. C++ ForVert (impl.h)
         // STEPS FIRST and calls func after, so first_edge is processed LAST.
@@ -255,8 +257,9 @@ pub fn calculate_vert_normals(mesh: &mut ManifoldImpl) {
         }
 
         let len = length2(normal).sqrt();
-        mesh.vert_normal[vert] = if len > 0.0 { normal / len } else { Vec3::new(0.0, 0.0, 0.0) };
-    }
+        if len > 0.0 { normal / len } else { Vec3::new(0.0, 0.0, 0.0) }
+    });
+    mesh.vert_normal = normals;
 }
 
 // -----------------------------------------------------------------------
@@ -547,28 +550,40 @@ pub fn face2tri(
     let mut contour2tri = vec![-1i32; face_halfedge.len()];
 
     // First pass: count triangles per face; run the general triangulator for
-    // faces with more than four edges.
+    // faces with more than four edges. Each face triangulates independently
+    // (C++ spawns a TBB task per general face), so the parallel path yields
+    // identical per-face results, merged in face order.
+    let face_normal_ref = &mesh.face_normal;
+    let vert_pos_ref = &mesh.vert_pos;
+    let epsilon = mesh.epsilon;
+    let general: Vec<Option<HalfedgeTriangulation>> =
+        crate::par::maybe_par_map(num_faces, 512, |face| {
+            let num_edge = (face_edge[face + 1] - face_edge[face]) as usize;
+            if num_edge <= 4 {
+                return None;
+            }
+            let first_edge = face_edge[face] as usize;
+            let last_edge = face_edge[face + 1] as usize;
+            let projection = get_axis_aligned_projection(face_normal_ref[face]);
+            let polys_loops =
+                assemble_halfedges(&face_halfedge[first_edge..last_edge], first_edge as i32);
+            let polys = project_polygons(&polys_loops, &face_halfedge, vert_pos_ref, &projection);
+            Some(triangulate_idx_halfedges(&polys, epsilon, allow_convex))
+        });
+
     let mut tri_offset = vec![0usize; face_edge.len()];
     let mut results: std::collections::HashMap<usize, HalfedgeTriangulation> =
         std::collections::HashMap::new();
-    for face in 0..num_faces {
+    for (face, triangulation) in general.into_iter().enumerate() {
         let num_edge = (face_edge[face + 1] - face_edge[face]) as usize;
         if num_edge == 0 {
             continue;
         }
         debug_assert!(num_edge >= 3, "face has less than three edges");
         tri_offset[face] = num_edge - 2;
-        if num_edge > 4 {
-            let first_edge = face_edge[face] as usize;
-            let last_edge = face_edge[face + 1] as usize;
-            let projection = get_axis_aligned_projection(mesh.face_normal[face]);
-            let polys_loops =
-                assemble_halfedges(&face_halfedge[first_edge..last_edge], first_edge as i32);
-            let polys =
-                project_polygons(&polys_loops, &face_halfedge, &mesh.vert_pos, &projection);
-            let triangulation = triangulate_idx_halfedges(&polys, mesh.epsilon, allow_convex);
-            tri_offset[face] = triangulation.num_tri();
-            results.insert(face, triangulation);
+        if let Some(t) = triangulation {
+            tri_offset[face] = t.num_tri();
+            results.insert(face, t);
         }
     }
 

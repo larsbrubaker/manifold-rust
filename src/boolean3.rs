@@ -416,32 +416,42 @@ fn intersect12(
 
     let mut result = Intersections::default();
 
-    // For each forward edge of a, generate its bounding box
+    // For each forward edge of a, query its bounding box against b's face BVH
+    // and run kernel12 on each candidate. Per-edge work is independent and the
+    // final stable sort below fully orders the unique (edge, face) pairs, so
+    // the parallel path is bit-identical to the sequential one.
     let n = a.halfedge.len();
-    collider.collisions_fn(
-        |query_idx| {
+    let per_edge: Vec<Vec<([i32; 2], i32, Vec3)>> =
+        crate::par::maybe_par_map(n, 10_000, |query_idx| {
+            let mut local: Vec<([i32; 2], i32, Vec3)> = Vec::new();
             if !a.halfedge[query_idx].is_forward() {
-                return BBox::default(); // empty box, will be skipped
+                return local;
             }
-            BBox::from_points(
+            let query = BBox::from_points(
                 a.vert_pos[a.halfedge[query_idx].start_vert as usize],
                 a.vert_pos[a.halfedge[query_idx].end_vert as usize],
-            )
-        },
-        n,
-        |query_idx, face_idx| {
-            let (x, v) = kernel12(query_idx, face_idx, a, b, in_p, in_q, expand_p, forward);
-            if v.x.is_finite() {
-                if forward {
-                    result.p1q2.push([query_idx as i32, face_idx as i32]);
-                } else {
-                    result.p1q2.push([face_idx as i32, query_idx as i32]);
+            );
+            collider.collisions_one(&query, query_idx, |query_idx, face_idx| {
+                let (x, v) =
+                    kernel12(query_idx, face_idx, a, b, in_p, in_q, expand_p, forward);
+                if v.x.is_finite() {
+                    let pair = if forward {
+                        [query_idx as i32, face_idx as i32]
+                    } else {
+                        [face_idx as i32, query_idx as i32]
+                    };
+                    local.push((pair, x, v));
                 }
-                result.x12.push(x);
-                result.v12.push(v);
-            }
-        },
-    );
+            });
+            local
+        });
+    for local in per_edge {
+        for (pair, x, v) in local {
+            result.p1q2.push(pair);
+            result.x12.push(x);
+            result.v12.push(v);
+        }
+    }
 
     // Sort by edge index for deterministic results
     let mut indices: Vec<usize> = (0..result.p1q2.len()).collect();
@@ -527,15 +537,23 @@ fn winding03(
         (vi, qbox)
     }).collect();
 
-    // For each vert, query the BVH
-    for &(vi, ref qbox) in &query_boxes {
-        collider.collisions_with_boxes(std::slice::from_ref(qbox), false, |_qi, face_idx| {
-            let (s02, z02) = kernel02(vi, face_idx, a, b, expand_p, forward);
-            if z02.is_finite() {
-                let contribution = s02 * if forward { 1 } else { -1 };
-                w03[vi] += contribution;
-            }
+    // For each representative vert, query the BVH and sum kernel02 winding
+    // contributions. The sums are integers, so accumulation order is
+    // irrelevant and the per-vert work can run in parallel bit-exactly.
+    let sums: Vec<(usize, i32)> =
+        crate::par::maybe_par_map(query_boxes.len(), 1_000, |qi| {
+            let (vi, ref qbox) = query_boxes[qi];
+            let mut sum = 0i32;
+            collider.collisions_one(qbox, 0, |_qi, face_idx| {
+                let (s02, z02) = kernel02(vi, face_idx, a, b, expand_p, forward);
+                if z02.is_finite() {
+                    sum += s02 * if forward { 1 } else { -1 };
+                }
+            });
+            (vi, sum)
         });
+    for (vi, sum) in sums {
+        w03[vi] += sum;
     }
 
     // Flood fill: propagate representative's winding number to all component members

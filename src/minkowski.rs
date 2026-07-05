@@ -77,28 +77,29 @@ pub fn minkowski(a: &ManifoldImpl, b: &ManifoldImpl, inset: bool) -> ManifoldImp
     } else if (inset || !a_convex) && b_convex {
         let num_tri = a_impl.num_tri();
 
-        // Process in batches
+        // Process in batches. Each per-triangle hull is independent (C++ runs
+        // this loop via for_each_n); results are collected in index order so
+        // the batch content matches sequential. C++ pushes every hull
+        // unconditionally — no empty filter here (unlike the
+        // non-convex×non-convex branch); filtering would shift BatchBoolean
+        // serials and change the reduction order.
         let mut offset = 0;
         while offset < num_tri {
             let num_iter = (num_tri - offset).min(BATCH_SIZE);
-            let mut new_hulls: Vec<ManifoldImpl> = Vec::with_capacity(num_iter);
-
-            for iter in 0..num_iter {
-                let tri = offset + iter;
-                let mut simple_hull: Vec<Vec3> =
-                    Vec::with_capacity(3 * b_impl.vert_pos.len());
-                for i in 0..3 {
-                    let a_vert =
-                        a_impl.vert_pos[a_impl.halfedge[tri * 3 + i].start_vert as usize];
-                    for &b_vert in &b_impl.vert_pos {
-                        simple_hull.push(a_vert + b_vert);
+            let new_hulls: Vec<ManifoldImpl> =
+                crate::par::maybe_par_map(num_iter, 8, |iter| {
+                    let tri = offset + iter;
+                    let mut simple_hull: Vec<Vec3> =
+                        Vec::with_capacity(3 * b_impl.vert_pos.len());
+                    for i in 0..3 {
+                        let a_vert =
+                            a_impl.vert_pos[a_impl.halfedge[tri * 3 + i].start_vert as usize];
+                        for &b_vert in &b_impl.vert_pos {
+                            simple_hull.push(a_vert + b_vert);
+                        }
                     }
-                }
-                // C++ pushes every hull unconditionally — no empty filter here
-                // (unlike the non-convex×non-convex branch). Filtering would
-                // shift BatchBoolean serials and change the reduction order.
-                new_hulls.push(quickhull::convex_hull(&simple_hull));
-            }
+                    quickhull::convex_hull(&simple_hull)
+                });
 
             composed_hulls.push(batch_boolean_impls(&new_hulls, OpType::Add));
             offset += BATCH_SIZE;
@@ -117,29 +118,34 @@ pub fn minkowski(a: &ManifoldImpl, b: &ManifoldImpl, inset: bool) -> ManifoldImp
             let a3 = a_impl.vert_pos[a_impl.halfedge[a_face * 3 + 2].start_vert as usize];
             let n_a = a_impl.face_normal[a_face];
 
+            // Per-B-face hulls are independent (C++ parallel for_each_n over
+            // bFace); collect in index order, then filter like C++'s
+            // validFaceHulls pass so batch content and order match sequential.
+            let hulls: Vec<Option<ManifoldImpl>> =
+                crate::par::maybe_par_map(num_tri_b, 8, |b_face| {
+                    let n_b = b_impl.face_normal[b_face];
+                    let dot_same = dot(n_a, n_b);
+                    let dot_opp = dot(n_a, Vec3::new(-n_b.x, -n_b.y, -n_b.z));
+                    let coplanar = (dot_same - 1.0).abs() < K_COPLANAR_TOL
+                        || (dot_opp - 1.0).abs() < K_COPLANAR_TOL;
+                    if coplanar {
+                        return None;
+                    }
+
+                    let b1 = b_impl.vert_pos[b_impl.halfedge[b_face * 3].start_vert as usize];
+                    let b2 =
+                        b_impl.vert_pos[b_impl.halfedge[b_face * 3 + 1].start_vert as usize];
+                    let b3 =
+                        b_impl.vert_pos[b_impl.halfedge[b_face * 3 + 2].start_vert as usize];
+
+                    Some(quickhull::convex_hull(&[
+                        a1 + b1, a1 + b2, a1 + b3,
+                        a2 + b1, a2 + b2, a2 + b3,
+                        a3 + b1, a3 + b2, a3 + b3,
+                    ]))
+                });
             let mut face_hulls: Vec<ManifoldImpl> = Vec::new();
-
-            for b_face in 0..num_tri_b {
-                let n_b = b_impl.face_normal[b_face];
-                let dot_same = dot(n_a, n_b);
-                let dot_opp = dot(n_a, Vec3::new(-n_b.x, -n_b.y, -n_b.z));
-                let coplanar = (dot_same - 1.0).abs() < K_COPLANAR_TOL
-                    || (dot_opp - 1.0).abs() < K_COPLANAR_TOL;
-                if coplanar {
-                    continue;
-                }
-
-                let b1 = b_impl.vert_pos[b_impl.halfedge[b_face * 3].start_vert as usize];
-                let b2 =
-                    b_impl.vert_pos[b_impl.halfedge[b_face * 3 + 1].start_vert as usize];
-                let b3 =
-                    b_impl.vert_pos[b_impl.halfedge[b_face * 3 + 2].start_vert as usize];
-
-                let hull = quickhull::convex_hull(&[
-                    a1 + b1, a1 + b2, a1 + b3,
-                    a2 + b1, a2 + b2, a2 + b3,
-                    a3 + b1, a3 + b2, a3 + b3,
-                ]);
+            for hull in hulls.into_iter().flatten() {
                 if !hull.is_empty() {
                     face_hulls.push(hull);
                 }

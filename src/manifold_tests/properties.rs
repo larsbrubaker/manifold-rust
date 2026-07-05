@@ -103,11 +103,11 @@ fn stretchy_bracelet() -> Manifold {
 
 /// C++ TEST(Properties, MingapStretchyBracelet) — two stacked bracelets 20 apart.
 /// Width is 15, so gap along z is 20 - 15 = 5.
+///
+/// Heavy boolean composition: 3.8s release (matching sequential C++ at 3.83s;
+/// 3.1s with the `parallel` feature), ~41s debug — enabled like the other
+/// roughly-one-minute debug tests.
 #[test]
-// Genuinely slow: heavy boolean composition (stretchy bracelet). Gap vs C++ is
-// primarily the deferred boolean parallelism (rayon `parallel` feature), not an
-// identified algorithmic bug.
-#[ignore = "slow: heavy boolean composition; gap vs C++ is deferred parallelism"]
 fn test_cpp_properties_mingap_stretchy_bracelet() {
     let a = stretchy_bracelet();
     let b = stretchy_bracelet().translate(Vec3::new(0.0, 0.0, 20.0));

@@ -199,11 +199,9 @@ fn test_cpp_hull_menger_sponge_depth2() {
 
 /// C++ TEST(Hull, MengerSponge) — hull of a Menger sponge is a cube
 #[test]
-#[ignore = "Genuinely slow: depth-4 CSG (~400k tris), >60s even in release. Heavy \
-            boolean/CSG workload — the gap vs C++ is primarily the deferred parallelism \
-            (C++ runs Boolean/CSG via TBB; Rust is sequential-first, rayon behind the \
-            `parallel` feature), not yet verified against a C++ build. Not an algorithmic bug \
-            we've identified."]
+#[ignore = "Slow: depth-4 CSG (~400k tris). 19.9s release sequential (parity with \
+            sequential C++ at 19.1s), 9.6s with `--features parallel`; debug takes \
+            minutes. Kept ignored purely for suite speed — passes in release."]
 fn test_cpp_hull_menger_sponge() {
     let sponge = menger_sponge(4).rotate(10.0, 20.0, 30.0);
     let hull = sponge.convex_hull();

@@ -5,7 +5,7 @@ This is a **roadmap of remaining work** to finish porting
 not what has already been done (use `git log` for history). Every change must reproduce the
 C++ reference with **exact numerical match** — identical results on identical inputs.
 
-**Status:** 517 passing, 0 failing, 8 ignored.
+**Status:** 518 passing, 0 failing, 7 ignored.
 **C++ reference target:** v3.5.0 (submodule at tag `v3.5.0`, commit `541c33bd`).
 **Core engine:** all 18 phases (linalg → boolean → CSG → cross-section → SDF → minkowski →
 WASM) are implemented. Remaining work is the v3.5.0 deltas below plus the ignored-test
@@ -32,7 +32,7 @@ optional/peripheral:
 
 ---
 
-## Ignored tests (8) — grouped by the work needed to clear them
+## Ignored tests (7) — grouped by the work needed to clear them
 
 > **Audit note:** C++ has zero `DISABLED_` tests, so the fair bar is Rust-release ≈
 > C++-release. The old "9 slow in debug" bucket was a mislabeled mix; broken out below.
@@ -43,10 +43,26 @@ optional/peripheral:
 the RecursiveEdgeSwap fix). Legitimately debug-slow; no further work unless we run a release
 test lane.
 
-### Heavy CSG/boolean — gap is deferred parallelism (2)
-`hull_menger_sponge` (depth-4 CSG, >60s in release), `properties_mingap_stretchy_bracelet`.
-C++ runs Boolean/CSG via TBB; Rust is sequential-first (rayon behind the `parallel` feature).
-Closing the gap = enabling/validating rayon, not an identified algorithmic bug.
+### Heavy CSG/boolean — RESOLVED (2026-07): sequential parity + rayon `parallel` feature
+The "perf gap vs C++" no longer exists: after the exactness fixes,
+`properties_mingap_stretchy_bracelet` runs 3.83s vs sequential C++ 3.831s (now un-ignored;
+~41s debug) and `hull_menger_sponge` runs 19.9s vs C++ 19.1s (still ignored for suite
+speed only). A rayon-based `parallel` cargo feature now exists, parallelizing ONLY
+determinism-preserving sites so results stay bit-identical to sequential (stricter than
+upstream MANIFOLD_PAR, which permits nondeterministic vert order):
+- `intersect12` per-edge kernel batches (final unique-pair sort fixes order),
+- `winding03` per-representative integer sums,
+- `face2tri` general-face triangulations (merged in face order),
+- SDF voxel grid fill (indexed writes; NearSurface/ComputeVerts stay sequential — their
+  vert allocation order is the output numbering),
+- minkowski per-face hull batches (collected in index order),
+- `calculate_vert_normals` per-vertex walks.
+One documented caveat: mesh-ID *values* from the global atomic counter can be consumed in
+a different order under parallel minkowski hulls — they are opaque process-global handles
+(already test-order dependent) and do not affect geometry, topology, or any assertion.
+With `--features parallel`: menger 9.6s (2.1×), twins 13.7s for both (2.2×),
+bracelet 3.1s, sdf_blobs 3.5s. Full suite passes identically with the feature on and off,
+in both debug and release.
 
 ### Minkowski exactness — 2 of 3 FIXED (2026-07), 1 near-match left
 The instrumented-trace session (Rust vs local C++ MSVC build, per-boolean diff of
@@ -184,11 +200,16 @@ infinite loop, fixed by the `RecursiveEdgeSwap` change above. They now pass in r
 
 ---
 
-## After all tests pass: performance parity
-- Benchmark identical operations (sphere booleans, complex OBJ booleans).
-- Profile hotspots (collider queries, boolean result assembly).
-- Add `rayon` parallelism behind the `parallel` feature.
-- Target: within 2× of C++ for all operations.
+## Performance parity — ACHIEVED (2026-07)
+- Sequential Rust matches sequential C++ on the heavy benchmarks: bracelet 3.83s vs
+  3.831s, menger depth-4 19.9s vs 19.1s (the old ">60s" predated the exactness fixes,
+  which were also the perf fixes).
+- `rayon` parallelism landed behind the `parallel` feature (see the resolved
+  "Heavy CSG/boolean" section above for sites, exactness constraints, and numbers:
+  ~2.1–2.2× on boolean-heavy workloads, bit-identical results).
+- Remaining perf ideas if ever needed: parallel stable sorts in `sort_geometry`,
+  parallel `create_properties` barycentrics, collider build. All must keep the
+  determinism guarantee.
 
 ---
 

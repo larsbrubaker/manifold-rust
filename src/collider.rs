@@ -252,6 +252,31 @@ impl Collider {
         // The C++ separates these for GPU parallelism; we combine them.
     }
 
+    /// Run a single query box against the BVH, invoking `record(query_idx,
+    /// leaf_idx)` per overlap. Same traversal as `collisions_fn` for one
+    /// index — the per-query entry point for parallel callers (`&self` only,
+    /// so queries can run concurrently with thread-local recording).
+    pub fn collisions_one<R: FnMut(usize, usize)>(
+        &self,
+        query: &BBox,
+        query_idx: usize,
+        mut record: R,
+    ) {
+        if query.is_empty() {
+            return;
+        }
+        if self.internal_children.is_empty() {
+            if self.leaf_bbox.len() == 1 {
+                let original_idx = self.sorted_to_original[0];
+                if query.does_overlap_box(&self.leaf_bbox[0]) {
+                    record(query_idx, original_idx);
+                }
+            }
+            return;
+        }
+        self.traverse_bvh(query, query_idx, false, &mut record);
+    }
+
     /// BVH-accelerated collision query with function-generated query boxes.
     /// For each query index 0..n, calls query_box_fn(i) to get the query AABB,
     /// then traverses the BVH to find overlapping leaves.

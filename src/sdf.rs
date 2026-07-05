@@ -172,7 +172,7 @@ fn bounded_sdf(
     spacing: Vec3,
     grid_size: IVec3,
     level: f64,
-    sdf: &dyn Fn(Vec3) -> f64,
+    sdf: &(dyn Fn(Vec3) -> f64 + Sync),
 ) -> f64 {
     let xyz = IVec3::new(grid_index.x, grid_index.y, grid_index.z);
     let lower_bound_dist = xyz.x.min(xyz.y).min(xyz.z);
@@ -197,7 +197,7 @@ fn find_surface(
     mut d1: f64,
     tol: f64,
     level: f64,
-    sdf: &dyn Fn(Vec3) -> f64,
+    sdf: &(dyn Fn(Vec3) -> f64 + Sync),
 ) -> Vec3 {
     if d0 == 0.0 {
         return pos0;
@@ -414,7 +414,7 @@ impl GridHashTable {
 /// `edge_length`: Approximate maximum edge length of output triangles.
 /// `level`: Extract surface at this SDF value (default 0).
 /// `tolerance`: Max distance from true surface per vertex. Negative = use interpolation only.
-pub fn level_set<F: Fn(Vec3) -> f64>(
+pub fn level_set<F: Fn(Vec3) -> f64 + Sync>(
     sdf: F,
     bounds: BBox,
     edge_length: f64,
@@ -461,12 +461,16 @@ pub fn level_set<F: Fn(Vec3) -> f64>(
     // direct access; the previous HashMap<u64,f64> paid SipHash on millions of
     // keys (both inserts and the 14-neighbor lookups per grid vert), which
     // dominated runtime on fine grids (sdf_blobs/sdf_sphere_shell).
-    let mut voxels = vec![0.0f64; max_index as usize];
-    for idx in 0..max_index {
-        let gi = decode_index(idx, grid_pow);
-        let gi_shifted = ivec4_add(gi, IVec4::new(-K_VOXEL_OFFSET.x, -K_VOXEL_OFFSET.y, -K_VOXEL_OFFSET.z, -K_VOXEL_OFFSET.w));
-        voxels[idx as usize] = bounded_sdf(gi_shifted, origin, spacing, grid_size, level, &sdf);
-    }
+    // Each voxel is an independent SDF evaluation with an indexed write, so
+    // the parallel path is bit-identical to sequential.
+    let voxels: Vec<f64> = crate::par::maybe_par_map(max_index as usize, 10_000, |idx| {
+        let gi = decode_index(idx as u64, grid_pow);
+        let gi_shifted = ivec4_add(
+            gi,
+            IVec4::new(-K_VOXEL_OFFSET.x, -K_VOXEL_OFFSET.y, -K_VOXEL_OFFSET.z, -K_VOXEL_OFFSET.w),
+        );
+        bounded_sdf(gi_shifted, origin, spacing, grid_size, level, &sdf)
+    });
 
     let get_voxel = |gi: IVec4| -> f64 {
         let key = encode_index(ivec4_add(gi, K_VOXEL_OFFSET), grid_pow);
@@ -778,7 +782,7 @@ fn create_tris(tri_verts: &mut Vec<IVec3>, tet: IVec4, edges: &[i32; 6]) {
 // ---------------------------------------------------------------------------
 
 /// Simple wrapper that calls level_set with default level=0 and tolerance=-1.
-pub fn level_set_simple<F: Fn(Vec3) -> f64>(
+pub fn level_set_simple<F: Fn(Vec3) -> f64 + Sync>(
     sdf: F,
     bounds: BBox,
     edge_length: f64,

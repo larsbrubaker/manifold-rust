@@ -247,6 +247,7 @@ dependencies = [
  "clipper2-rust",
  "criterion",
  "num-traits",
+ "rayon",
 ]
 
 [[package]]

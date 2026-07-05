@@ -803,18 +803,18 @@ impl Manifold {
         meshes
     }
 
-    pub fn level_set<F: Fn(Vec3) -> f64>(sdf_fn: F, bounds: crate::types::Box, edge_length: f64) -> Self {
+    pub fn level_set<F: Fn(Vec3) -> f64 + Sync>(sdf_fn: F, bounds: crate::types::Box, edge_length: f64) -> Self {
         Self::from_impl(sdf::level_set(sdf_fn, bounds, edge_length, 0.0, -1.0))
     }
 
-    pub fn level_set_with_level<F: Fn(Vec3) -> f64>(sdf_fn: F, bounds: crate::types::Box, edge_length: f64, level: f64) -> Self {
+    pub fn level_set_with_level<F: Fn(Vec3) -> f64 + Sync>(sdf_fn: F, bounds: crate::types::Box, edge_length: f64, level: f64) -> Self {
         Self::from_impl(sdf::level_set(sdf_fn, bounds, edge_length, level, -1.0))
     }
 
     /// Full-parameter LevelSet matching C++ `Manifold::LevelSet(sdf, bounds,
     /// edgeLength, level, tolerance)`. Positive `tolerance` refines each
     /// crossing vertex to within that distance of the true surface.
-    pub fn level_set_with_tolerance<F: Fn(Vec3) -> f64>(
+    pub fn level_set_with_tolerance<F: Fn(Vec3) -> f64 + Sync>(
         sdf_fn: F,
         bounds: crate::types::Box,
         edge_length: f64,
