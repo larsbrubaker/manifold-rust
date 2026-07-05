@@ -68,12 +68,11 @@ fn test_cpp_convex_convex_minkowski_difference() {
 }
 
 /// C++ TEST(Boolean, NonConvexConvexMinkowskiSum)
+///
+/// Passes since the C++-exact BatchBoolean reduction order (serial-tie-broken
+/// max-heap, rounds of 4), the ForVert-order vertex normals, and the
+/// input-space `edgeVec` fix in `append_partial_edges` landed together.
 #[test]
-#[ignore = "Close but not exact (2026-07, after matrix-rotate + v3.5.0 face2tri landed): \
-            volume matches C++ (±1e-3) but area is 34.073 vs C++ 34.06 (±1e-2) — slightly \
-            too much surface survives. No longer the non-manifold/genus failure; the \
-            remaining gap is a small geometric divergence in the minkowski \
-            decompose→hull→batch-boolean pipeline. Needs instrumented comparison vs C++."]
 fn test_cpp_nonconvex_convex_minkowski_sum() {
     let sphere = Manifold::sphere(1.2, 20);
     let cube = Manifold::cube(Vec3::splat(2.0), true);
@@ -93,10 +92,10 @@ fn test_cpp_nonconvex_convex_minkowski_sum() {
 }
 
 /// C++ TEST(Boolean, NonConvexConvexMinkowskiDifference)
+///
+/// Passes since the C++-exact BatchBoolean reduction order, ForVert-order
+/// vertex normals, and the `append_partial_edges` edgeVec fix landed.
 #[test]
-#[ignore = "Close but not exact (2026-07, after matrix-rotate + v3.5.0 face2tri landed): \
-            volume matches C++ (±1e-3) but area is 16.742 vs C++ 16.70 (±1e-2). Same \
-            remaining minkowski-pipeline divergence as NonConvexConvexMinkowskiSum."]
 fn test_cpp_nonconvex_convex_minkowski_difference() {
     let sphere = Manifold::sphere(1.2, 20);
     let cube = Manifold::cube(Vec3::splat(2.0), true);
@@ -117,10 +116,16 @@ fn test_cpp_nonconvex_convex_minkowski_difference() {
 
 /// C++ TEST(Boolean, NonConvexNonConvexMinkowskiSum)
 #[test]
-#[ignore = "Close but not exact (2026-07, after matrix-rotate + v3.5.0 face2tri landed): \
-            volume matches C++ exactly (±1e-5!) but area is 31.3996 vs C++ 31.17691 (±1e-5) \
-            — extra coplanar sliver surface survives simplification. Same remaining \
-            minkowski-pipeline divergence as NonConvexConvexMinkowskiSum."]
+#[ignore = "Very close but not exact (2026-07): volume matches C++ exactly (±1e-5) and area \
+            is 31.2245 vs C++ 31.17691 (±1e-5) after the BatchBoolean-order, vert-normal \
+            ForVert-order, and edgeVec fixes. Instrumented trace vs local C++ build shows \
+            booleans #1-#9 of the tet pipeline now match bit-for-bit; the first divergence \
+            is in boolean #6's SIMPLIFY step: identical verts and face2tri output, but \
+            simplify_topology (edge collapse/swap order in edge_op.rs) picks different \
+            edges on the degenerate coplanar region (verts 11-15, 18 halfedges differ), \
+            which shifts later booleans. Next step: diff C++ SimplifyTopology's collapse \
+            ordering (CollapseEdge/RecursiveEdgeSwap iteration + tie-breaks) against \
+            edge_op.rs on that boolean."]
 fn test_cpp_nonconvex_nonconvex_minkowski_sum() {
     let tet = Manifold::tetrahedron();
     let non_convex = tet.difference(

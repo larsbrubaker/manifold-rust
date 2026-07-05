@@ -313,16 +313,19 @@ fn simple_boolean(a: &CsgLeafNode, b: &CsgLeafNode, op: OpType) -> CsgLeafNode {
 }
 
 // ---------------------------------------------------------------------------
-// BatchBoolean — min-heap approach for commutative ops
-// Port of C++ BatchBoolean() (lines 376-428)
+// BatchBoolean — heap-ordered reduction for commutative ops
+// Port of C++ BatchBoolean() in csg_tree.cpp (v3.5.0)
 // ---------------------------------------------------------------------------
 
-/// Wrapper for BinaryHeap ordering by vertex count (smallest first).
-struct MeshEntry(CsgLeafNode);
+/// Heap entry ordered like C++ `MeshCompare` on `(CsgLeafNode, serial)` pairs:
+/// by vertex count, tie-broken by insertion serial. The serial makes the order
+/// total, so the pop sequence is deterministic and heap-implementation
+/// independent — required for exact match with the C++ reduction order.
+struct MeshEntry(CsgLeafNode, u64);
 
 impl PartialEq for MeshEntry {
     fn eq(&self, other: &Self) -> bool {
-        self.0.num_vert() == other.0.num_vert()
+        self.cmp(other) == Ordering::Equal
     }
 }
 impl Eq for MeshEntry {}
@@ -334,8 +337,13 @@ impl PartialOrd for MeshEntry {
 }
 impl Ord for MeshEntry {
     fn cmp(&self, other: &Self) -> Ordering {
-        // Reverse ordering: BinaryHeap is a max-heap, we want smallest first
-        other.0.num_vert().cmp(&self.0.num_vert())
+        // C++ std::pop_heap with MeshCompare (a less-than) pops the MAX:
+        // the node with the most verts, ties going to the largest serial.
+        // Rust's BinaryHeap is a max-heap, so use the same less-than order.
+        self.0
+            .num_vert()
+            .cmp(&other.0.num_vert())
+            .then(self.1.cmp(&other.1))
     }
 }
 
@@ -352,18 +360,30 @@ fn batch_boolean(op: OpType, children: &mut Vec<CsgLeafNode>) -> CsgLeafNode {
         return simple_boolean(&a, &b, op);
     }
 
-    // Build min-heap by vertex count
     let mut heap: BinaryHeap<MeshEntry> = BinaryHeap::new();
-    for child in children.drain(..) {
-        heap.push(MeshEntry(child));
+    let mut next_serial = children.len() as u64;
+    for (i, child) in children.drain(..).enumerate() {
+        heap.push(MeshEntry(child, i as u64));
     }
 
-    // Pop two smallest, boolean them, push result back
+    // C++ processes up to 4 pairs per round (for its parallel lane), pushing
+    // the results back only at the end of the round — even in sequential
+    // builds. The round structure changes which meshes pair up, so mirror it.
+    let mut tmp: Vec<MeshEntry> = Vec::new();
     while heap.len() > 1 {
-        let a = heap.pop().unwrap().0;
-        let b = heap.pop().unwrap().0;
-        let result = simple_boolean(&a, &b, op);
-        heap.push(MeshEntry(result));
+        for _ in 0..4 {
+            if heap.len() <= 1 {
+                break;
+            }
+            let a = heap.pop().unwrap();
+            let b = heap.pop().unwrap();
+            let result = simple_boolean(&a.0, &b.0, op);
+            tmp.push(MeshEntry(result, next_serial));
+            next_serial += 1;
+        }
+        for entry in tmp.drain(..) {
+            heap.push(entry);
+        }
     }
 
     heap.pop().unwrap().0
@@ -429,14 +449,13 @@ fn batch_union(children: &mut Vec<CsgLeafNode>) -> CsgLeafNode {
             }
         }
 
-        // BatchBoolean the composed results
-        if results.len() == 1 {
-            // Insert at front (most complex, best for subsequent batches)
-            children.insert(0, results.remove(0));
-        } else {
-            let result = batch_boolean(OpType::Add, &mut results);
-            children.insert(0, result);
-        }
+        // BatchBoolean the composed results, then move the (complicated) new
+        // child to the front: C++ push_backs and swaps front↔back, which also
+        // moves the old front to the back when chunking (>kMaxUnionSize).
+        let result = batch_boolean(OpType::Add, &mut results);
+        children.push(result);
+        let last = children.len() - 1;
+        children.swap(0, last);
     }
 
     children.remove(0)

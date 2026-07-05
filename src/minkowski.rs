@@ -94,16 +94,13 @@ pub fn minkowski(a: &ManifoldImpl, b: &ManifoldImpl, inset: bool) -> ManifoldImp
                         simple_hull.push(a_vert + b_vert);
                     }
                 }
-                let hull = quickhull::convex_hull(&simple_hull);
-                if !hull.is_empty() {
-                    new_hulls.push(hull);
-                }
+                // C++ pushes every hull unconditionally — no empty filter here
+                // (unlike the non-convex×non-convex branch). Filtering would
+                // shift BatchBoolean serials and change the reduction order.
+                new_hulls.push(quickhull::convex_hull(&simple_hull));
             }
 
-            if !new_hulls.is_empty() {
-                let result = batch_boolean_impls(&new_hulls, OpType::Add);
-                composed_hulls.push(result);
-            }
+            composed_hulls.push(batch_boolean_impls(&new_hulls, OpType::Add));
             offset += BATCH_SIZE;
         }
 
@@ -165,11 +162,12 @@ pub fn minkowski(a: &ManifoldImpl, b: &ManifoldImpl, inset: bool) -> ManifoldImp
         }
     }
 
-    // Final merge
+    // Final merge; C++ finishes with AsOriginal() = InitializeOriginal +
+    // SetNormalsAndCoplanar.
     let op = if inset { OpType::Subtract } else { OpType::Add };
-    let result = batch_boolean_impls(&composed_hulls, op);
-    let mut out = result;
+    let mut out = batch_boolean_impls(&composed_hulls, op);
     out.initialize_original();
+    out.set_normals_and_coplanar();
     out
 }
 

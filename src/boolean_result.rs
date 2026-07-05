@@ -278,6 +278,39 @@ pub(super) fn add_new_edge_verts(
 // PairUp — pair start/end vertices to form halfedges
 // ---------------------------------------------------------------------------
 
+/// Port of C++ `std::partition` (Hoare two-pointer, bidirectional form used by
+/// MSVC and libstdc++): elements satisfying `pred` end up first. UNSTABLE — the
+/// swap pattern determines the relative order of fully-tied `EdgePos` entries
+/// (identical edgePos AND collisionId, e.g. duplicated retained verts on
+/// coincident geometry), which the subsequent stable sorts preserve. That order
+/// decides how degenerate edges pair up, so it must match C++ exactly.
+fn cpp_partition<T, P: Fn(&T) -> bool>(v: &mut [T], pred: P) -> usize {
+    let mut first = 0usize;
+    let mut last = v.len();
+    loop {
+        loop {
+            if first == last {
+                return first;
+            }
+            if !pred(&v[first]) {
+                break;
+            }
+            first += 1;
+        }
+        loop {
+            last -= 1;
+            if first == last {
+                return first;
+            }
+            if pred(&v[last]) {
+                break;
+            }
+        }
+        v.swap(first, last);
+        first += 1;
+    }
+}
+
 fn pair_up<F: FnMut(Halfedge)>(edge_pos: &mut Vec<EdgePos>, mut f: F) {
     assert!(
         edge_pos.len() % 2 == 0,
@@ -288,23 +321,17 @@ fn pair_up<F: FnMut(Halfedge)>(edge_pos: &mut Vec<EdgePos>, mut f: F) {
     );
     let n_edges = edge_pos.len() / 2;
 
-    // Partition: starts first, then ends
-    let (starts, ends): (Vec<_>, Vec<_>) = edge_pos
-        .drain(..)
-        .partition(|e| e.is_start);
-
-    // Stable sort both halves
-    let mut starts: Vec<_> = starts;
-    let mut ends: Vec<_> = ends;
-    starts.sort_by_key(|e| e.sort_key());
-    ends.sort_by_key(|e| e.sort_key());
-
-    debug_assert_eq!(starts.len(), n_edges, "Non-manifold edge!");
+    // C++ PairUp: unstable partition (starts first), then stable_sort each
+    // half, then pair edgePos[i] with edgePos[i + nEdges].
+    let middle = cpp_partition(edge_pos, |e| e.is_start);
+    debug_assert_eq!(middle, n_edges, "Non-manifold edge!");
+    edge_pos[..n_edges].sort_by_key(|e| e.sort_key());
+    edge_pos[n_edges..].sort_by_key(|e| e.sort_key());
 
     for i in 0..n_edges {
         f(Halfedge {
-            start_vert: starts[i].vert,
-            end_vert: ends[i].vert,
+            start_vert: edge_pos[i].vert,
+            end_vert: edge_pos[i + n_edges].vert,
             paired_halfedge: -1,
             prop_vert: -1,
         });
@@ -337,42 +364,44 @@ pub(super) fn append_partial_edges(
         let v_start = halfedge.start_vert as usize;
         let v_end = halfedge.end_vert as usize;
 
-        // Bounds check: vp2r must be valid for these vertices
-        if vp2r[v_start] < 0 || vp2r[v_start] as usize >= out_r.vert_pos.len() {
-            continue;
-        }
-        if vp2r[v_end] < 0 || vp2r[v_end] as usize >= out_r.vert_pos.len() {
-            continue;
-        }
-        let edge_vec = out_r.vert_pos[vp2r[v_end] as usize] - out_r.vert_pos[vp2r[v_start] as usize];
+        // C++ computes edgeVec from the INPUT mesh positions — the output
+        // slots at vp2r[v] hold this vertex's position only when it is
+        // retained (i03 != 0), so projecting along an output-derived vector
+        // would use garbage for non-retained endpoints.
+        let edge_vec = in_p.vert_pos[v_end] - in_p.vert_pos[v_start];
 
         // Fill in edge positions of existing intersection verts
         for edge in edge_pos_p.iter_mut() {
             edge.edge_pos = dot(out_r.vert_pos[edge.vert as usize], edge_vec);
         }
 
-        // Add start vertex
+        // Add start vertex (only retained verts — inclusion != 0 — have
+        // valid output positions at vp2r)
         let inclusion = i03[v_start];
-        let start_pos = dot(out_r.vert_pos[vp2r[v_start] as usize], edge_vec);
-        for j in 0..inclusion.abs() {
-            edge_pos_p.push(EdgePos {
-                edge_pos: start_pos,
-                vert: vp2r[v_start] + j,
-                collision_id: i32::MAX,
-                is_start: inclusion > 0,
-            });
+        if inclusion != 0 {
+            let start_pos = dot(out_r.vert_pos[vp2r[v_start] as usize], edge_vec);
+            for j in 0..inclusion.abs() {
+                edge_pos_p.push(EdgePos {
+                    edge_pos: start_pos,
+                    vert: vp2r[v_start] + j,
+                    collision_id: i32::MAX,
+                    is_start: inclusion > 0,
+                });
+            }
         }
 
         // Add end vertex
         let inclusion = i03[v_end];
-        let end_pos = dot(out_r.vert_pos[vp2r[v_end] as usize], edge_vec);
-        for j in 0..inclusion.abs() {
-            edge_pos_p.push(EdgePos {
-                edge_pos: end_pos,
-                vert: vp2r[v_end] + j,
-                collision_id: i32::MAX,
-                is_start: inclusion < 0,
-            });
+        if inclusion != 0 {
+            let end_pos = dot(out_r.vert_pos[vp2r[v_end] as usize], edge_vec);
+            for j in 0..inclusion.abs() {
+                edge_pos_p.push(EdgePos {
+                    edge_pos: end_pos,
+                    vert: vp2r[v_end] + j,
+                    collision_id: i32::MAX,
+                    is_start: inclusion < 0,
+                });
+            }
         }
 
         // Pair up and add halfedges to result

@@ -206,9 +206,18 @@ pub fn calculate_vert_normals(mesh: &mut ManifoldImpl) {
         let vert_pos = &mesh.vert_pos;
         let face_normal = &mesh.face_normal;
 
-        // ForVert equivalent: walk CW around the vertex
+        // ForVert equivalent: walk CW around the vertex. C++ ForVert (impl.h)
+        // STEPS FIRST and calls func after, so first_edge is processed LAST.
+        // The visit order fixes the float accumulation order of the
+        // angle-weighted normal sum — it must match C++ bit-for-bit because
+        // vertex normals feed the Boolean3 SOS tie-breaks.
         let mut current = first_edge as usize;
         loop {
+            let paired = halfedge[current].paired_halfedge;
+            if paired < 0 {
+                break;
+            }
+            current = next_halfedge(paired) as usize;
             let h = &halfedge[current];
             let tri_verts = [
                 h.start_vert as usize,
@@ -240,12 +249,6 @@ pub fn calculate_vert_normals(mesh: &mut ManifoldImpl) {
                 }
             }
 
-            // ForVert step: next_halfedge(halfedge[current].pairedHalfedge)
-            let paired = halfedge[current].paired_halfedge;
-            if paired < 0 {
-                break;
-            }
-            current = next_halfedge(paired) as usize;
             if current == first_edge as usize {
                 break;
             }

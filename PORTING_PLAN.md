@@ -5,7 +5,7 @@ This is a **roadmap of remaining work** to finish porting
 not what has already been done (use `git log` for history). Every change must reproduce the
 C++ reference with **exact numerical match** — identical results on identical inputs.
 
-**Status:** 514 passing, 0 failing, 11 ignored.
+**Status:** 516 passing, 0 failing, 9 ignored.
 **C++ reference target:** v3.5.0 (submodule at tag `v3.5.0`, commit `541c33bd`).
 **Core engine:** all 18 phases (linalg → boolean → CSG → cross-section → SDF → minkowski →
 WASM) are implemented. Remaining work is the v3.5.0 deltas below plus the ignored-test
@@ -32,7 +32,7 @@ optional/peripheral:
 
 ---
 
-## Ignored tests (11) — grouped by the work needed to clear them
+## Ignored tests (9) — grouped by the work needed to clear them
 
 > **Audit note:** C++ has zero `DISABLED_` tests, so the fair bar is Rust-release ≈
 > C++-release. The old "9 slow in debug" bucket was a mislabeled mix; broken out below.
@@ -48,14 +48,38 @@ test lane.
 C++ runs Boolean/CSG via TBB; Rust is sequential-first (rayon behind the `parallel` feature).
 Closing the gap = enabling/validating rayon, not an identified algorithmic bug.
 
-### Minkowski area slightly high — near-match (3)
-`nonconvex_convex_minkowski_sum/difference`, `nonconvex_nonconvex_minkowski_sum`.
-**Fast in release — not slow.** After the 2026-07 matrix-`rotate` + v3.5.0-`face2tri` fixes
-(below), these are no longer non-manifold/genus failures. **Volume matches C++** (sum even to
-±1e-5) but **surface area is slightly high**: 34.073 vs 34.06, 16.742 vs 16.70, 31.3996 vs
-31.17691 — extra (likely coplanar sliver) surface survives the pipeline. The remaining gap
-is a small geometric divergence in the minkowski decompose→hull→batch-boolean chain; needs
-instrumented comparison against a local C++ build (hull-by-hull, then per-boolean).
+### Minkowski exactness — 2 of 3 FIXED (2026-07), 1 near-match left
+The instrumented-trace session (Rust vs local C++ MSVC build, per-boolean diff of
+BatchBoolean order → Boolean3 kernels → vert normals → PairUp inputs) found and fixed four
+real divergences; `nonconvex_convex_minkowski_sum/difference` now pass and are un-ignored:
+1. **BatchBoolean reduction order** (`csg_tree.rs`): C++ v3.5.0 heap entries are
+   `(leaf, serial)` pairs — pops the MOST-vert node (ties → largest serial), processes up to
+   4 pairs per round before re-pushing (even sequentially). Rust popped smallest with no
+   serials, one pair at a time. Also `batch_union` now push-back + front/back-swaps like C++
+   (matters when chunking >1000 children).
+2. **Vertex-normal accumulation order** (`face_op.rs calculate_vert_normals`): C++
+   `ForVert` STEPS FIRST then calls func, so `firstEdge` is processed LAST. The Rust port
+   processed it first — same triangles, shifted float-sum order, ~1-ULP different vertex
+   normals, which flip `Shadows` SOS ties in Boolean3's kernels on exactly-coincident
+   geometry (verified: `kernel02` attributed a vert-on-edge crossing to the wrong coplanar
+   face).
+3. **`append_partial_edges` edgeVec** (`boolean_result.rs`): C++ projects along
+   `inP.vertPos[vEnd] - inP.vertPos[vStart]` (INPUT positions); Rust used output positions
+   via `vp2r`, which are garbage for non-retained (i03==0) endpoints → wildly wrong edgePos
+   → wrong PairUp pairing on degenerate edges (verified with PairUp input dumps).
+4. **`pair_up` partition** (`boolean_result.rs`): C++ `std::partition` is the unstable
+   Hoare two-pointer form; its swap pattern decides the order of fully-tied entries (same
+   edgePos AND collisionId, e.g. duplicated retained verts), which the stable sorts keep.
+   Ported as `cpp_partition`.
+
+**Still ignored: `nonconvex_nonconvex_minkowski_sum`** — volume exact (±1e-5), area 31.2245
+vs 31.17691 (±1e-5). Booleans #1–#9 of its tet pipeline are now bit-exact vs C++; the first
+divergence is boolean #6's **simplify step**: identical verts + face2tri output, but
+`simplify_topology` (edge_op.rs) collapses/swaps different edges on a degenerate coplanar
+region (18 halfedges around verts 11–15 differ), shifting all later booleans. Next session:
+diff C++ `SimplifyTopology` (CollapseEdge/RecursiveEdgeSwap iteration order + tie-breaks)
+against `edge_op.rs` on that boolean (instrumentation recipe: `MK_TRACE`-style per-boolean
+`SB pre/post nv/nt` prints + `RES_DUMP=6` final-mesh dumps, see git history of this entry).
 
 ### SDF thin-shell marching topology (1)
 `sdf_sphere_shell` — genus 9560 vs expected ~14235 (perf now fine, 12s in release after the
