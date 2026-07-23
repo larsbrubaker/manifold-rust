@@ -1,7 +1,7 @@
 // Phase 2: Core Types — ported from include/manifold/common.h, include/manifold/polygon.h,
 // include/manifold/manifold.h (MeshGLP/Error), src/shared.h (Halfedge, TriRef, Barycentric, TmpEdge)
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use crate::linalg::{Vec2, Vec3, Vec4, Mat3, Mat3x4};
 use crate::math;
 
@@ -1034,7 +1034,10 @@ impl Relation {
 pub struct MeshRelationD {
     /// originalID of this Manifold if it is an original; -1 otherwise.
     pub original_id: i32,
-    pub mesh_id_transform: HashMap<i32, Relation>,
+    // C++ uses std::map (ordered by meshID); several sites iterate this map
+    // and feed the order into output runs and fresh-ID assignment, so an
+    // unordered map here breaks determinism and C++ parity.
+    pub mesh_id_transform: BTreeMap<i32, Relation>,
     pub tri_ref: Vec<TriRef>,
 }
 
@@ -1042,7 +1045,7 @@ impl MeshRelationD {
     pub fn new() -> Self {
         MeshRelationD {
             original_id: -1,
-            mesh_id_transform: HashMap::new(),
+            mesh_id_transform: BTreeMap::new(),
             tri_ref: Vec::new(),
         }
     }

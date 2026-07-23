@@ -702,7 +702,7 @@ pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
     // Concatenate tri_refs and merge mesh_id_transforms from all input meshes.
     // Each mesh's coplanar_id is a triangle-local group index, so offset by tri_offset.
     let mut all_tri_refs: Vec<TriRef> = Vec::new();
-    let mut merged_transforms = std::collections::HashMap::new();
+    let mut merged_transforms = std::collections::BTreeMap::new();
     let mut tri_offset = 0i32;
     for mesh in meshes {
         let mesh_tri_count = mesh.num_tri() as i32;

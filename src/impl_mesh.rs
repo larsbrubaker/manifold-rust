@@ -517,10 +517,11 @@ impl ManifoldImpl {
     /// Allocates fresh unique mesh IDs and remaps all triRef.meshID values.
     /// This ensures boolean results don't collide with source mesh IDs.
     pub fn increment_mesh_ids(&mut self) {
-        use std::collections::HashMap;
+        use std::collections::{BTreeMap, HashMap};
 
-        // Build old -> new ID mapping
-        let old_transforms: HashMap<i32, Relation> =
+        // Build old -> new ID mapping. Iteration order determines which old
+        // ID gets which fresh ID, so it must be sorted like C++ std::map.
+        let old_transforms: BTreeMap<i32, Relation> =
             std::mem::take(&mut self.mesh_relation.mesh_id_transform);
         let num_mesh_ids = old_transforms.len() as u32;
         if num_mesh_ids == 0 { return; }
