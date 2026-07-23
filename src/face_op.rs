@@ -896,9 +896,8 @@ impl ManifoldImpl {
         plane.min.z = height;
         plane.max.z = height;
 
-        // Build BVH for face bounding boxes
-        let (face_box, face_morton) = get_face_box_morton(self);
-        let collider = Collider::new(face_box, face_morton);
+        // Query the cached face BVH (C++ Slice uses collider_).
+        let collider = &self.collider;
 
         // Find all triangles that straddle the slice plane
         let mut tris: std::collections::HashSet<usize> = std::collections::HashSet::new();

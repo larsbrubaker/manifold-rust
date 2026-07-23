@@ -69,7 +69,11 @@ pub struct ManifoldImpl {
     pub face_normal: Vec<Vec3>,
     pub halfedge_tangent: Vec<Vec4>,
     pub mesh_relation: MeshRelationD,
-    // Collider will be added in Phase 10
+    /// Cached face BVH, built by sort_geometry and updated (not rebuilt) on
+    /// transform — mirrors C++ Impl::collider_. Query sites (boolean kernels,
+    /// ray cast, face merging, self-intersection) use this instead of
+    /// rebuilding the tree per query.
+    pub collider: crate::collider::Collider,
 }
 
 impl Default for ManifoldImpl {
@@ -87,6 +91,7 @@ impl Default for ManifoldImpl {
             face_normal: Vec::new(),
             halfedge_tangent: Vec::new(),
             mesh_relation: MeshRelationD::new(),
+            collider: crate::collider::Collider::default(),
         }
     }
 }
@@ -140,6 +145,7 @@ impl ManifoldImpl {
         self.face_normal.clear();
         self.halfedge_tangent.clear();
         self.mesh_relation = MeshRelationD::new();
+        self.collider = crate::collider::Collider::default();
         self.status = status;
     }
 
@@ -855,10 +861,26 @@ impl ManifoldImpl {
 
         result.calculate_bbox();
         result.set_epsilon(result.epsilon, false);
+
+        // Keep the cached collider valid without a full rebuild, mirroring C++
+        // Impl::Transform: an axis-aligned transform maps the existing tree's
+        // boxes directly; otherwise recompute leaf boxes on the transformed
+        // mesh and refit the same tree topology.
+        if !result.is_empty() {
+            if crate::collider::Collider::is_axis_aligned(t) {
+                result.collider = self.collider.clone();
+                result.collider.transform(t);
+            } else {
+                result.collider = self.collider.clone();
+                let (face_box, _face_morton) = crate::sort::get_face_box_morton(&result);
+                result.collider.update_boxes(face_box);
+            }
+        }
         result
     }
 
-    /// Clone without collider (shallow copy for transform operations)
+    /// Field-by-field copy used by the identity-transform fast path; the
+    /// collider is copied as-is (C++ copies collider_ with the Impl).
     fn shallow_clone(&self) -> Self {
         ManifoldImpl {
             bbox: self.bbox,
@@ -873,6 +895,7 @@ impl ManifoldImpl {
             face_normal: self.face_normal.clone(),
             halfedge_tangent: self.halfedge_tangent.clone(),
             mesh_relation: self.mesh_relation.clone(),
+            collider: self.collider.clone(),
         }
     }
 }

@@ -285,14 +285,19 @@ pub fn compact_props(mesh: &mut ManifoldImpl) {
 /// Note: Collider construction is done in Phase 10.
 pub fn sort_geometry(mesh: &mut ManifoldImpl) {
     if mesh.halfedge.is_empty() {
+        mesh.collider = crate::collider::Collider::default();
         return;
     }
     sort_verts(mesh);
     let (mut face_box, mut face_morton) = get_face_box_morton(mesh);
     sort_faces(mesh, &mut face_box, &mut face_morton);
     if mesh.halfedge.is_empty() {
+        mesh.collider = crate::collider::Collider::default();
         return;
     }
+    // Cache the face BVH on the mesh (C++ builds collider_ here in
+    // SortGeometry); query sites reuse it instead of rebuilding per query.
+    mesh.collider = crate::collider::Collider::new(face_box, face_morton);
     compact_props(mesh);
 
     debug_assert!(

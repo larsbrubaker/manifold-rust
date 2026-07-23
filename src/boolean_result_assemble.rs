@@ -269,6 +269,10 @@ pub fn boolean_result(
 
     let invert_q = op == OpType::Subtract;
 
+    // Timing boundaries mirror the C++ MANIFOLD_TIMING stages (Assembly /
+    // Triangulation / Simplification / Sorting) for side-by-side comparison.
+    let t_assembly = crate::timing::start();
+
     // Convert winding numbers to inclusion values
     let i12: Vec<i32> = bool3.xv12.x12.iter().map(|&v| c3 * v).collect();
     let i21: Vec<i32> = bool3.xv21.x12.iter().map(|&v| c3 * v).collect();
@@ -466,10 +470,15 @@ pub fn boolean_result(
         false,
     );
 
+    crate::timing::print("Assembly", t_assembly);
+
     // Triangulate polygonal faces (allowConvex=false per C++ boolean_result.cpp)
+    let t = crate::timing::start();
     face2tri(&mut out_r, &face_edge, &halfedge_ref, false);
     reorder_halfedges(&mut out_r);
+    crate::timing::print("Triangulation", t);
 
+    let t = crate::timing::start();
     // Create properties via barycentric interpolation
     create_properties(&mut out_r, in_p, in_q, invert_q);
 
@@ -479,11 +488,14 @@ pub fn boolean_result(
     // Simplify topology
     simplify_topology(&mut out_r, (n_pv + n_qv) as i32);
     out_r.remove_unreferenced_verts();
+    crate::timing::print("Simplification", t);
 
     // Finalize
+    let t = crate::timing::start();
     out_r.calculate_bbox();
     out_r.sort_geometry();
     out_r.increment_mesh_ids();
+    crate::timing::print("Sorting", t);
 
     out_r
 }

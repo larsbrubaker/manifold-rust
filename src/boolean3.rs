@@ -411,8 +411,9 @@ fn intersect12(
     // a: edge mesh, b: face mesh
     let (a, b) = if forward { (in_p, in_q) } else { (in_q, in_p) };
 
-    let (face_box, face_morton) = get_face_box_morton(b);
-    let collider = Collider::new(face_box, face_morton);
+    // Query b's cached face BVH (built in sort_geometry), as C++ queries
+    // b.collider_ — rebuilding here dominated the intersection stage.
+    let collider = &b.collider;
 
     let mut result = Intersections::default();
 
@@ -518,9 +519,9 @@ fn winding03(
     }
     let verts: Vec<usize> = components.into_iter().map(|v| v as usize).collect();
 
-    // Build face collider for mesh b
-    let (face_box, face_morton) = get_face_box_morton(b);
-    let collider = Collider::new(face_box, face_morton);
+    // Query b's cached face BVH (built in sort_geometry), as C++ queries
+    // b.collider_.
+    let collider = &b.collider;
 
     // For each representative vertex, compute winding number via kernel02
     let mut w03 = vec![0i32; a.vert_pos.len()];
@@ -588,8 +589,13 @@ impl Boolean3 {
         }
 
         // Level 3: find all edge-face intersections in both directions
+        let t_total = crate::timing::start();
+        let t = crate::timing::start();
         let xv12 = intersect12(in_p, in_q, expand_p, true);
+        crate::timing::print("  Intersect12 P->Q", t);
+        let t = crate::timing::start();
         let xv21 = intersect12(in_p, in_q, expand_p, false);
+        crate::timing::print("  Intersect12 Q->P", t);
 
         if xv12.x12.len() > i32::MAX as usize || xv21.x12.len() > i32::MAX as usize {
             return Boolean3 {
@@ -603,8 +609,13 @@ impl Boolean3 {
         }
 
         // Compute winding numbers via flood fill
+        let t = crate::timing::start();
         let w03 = winding03(in_p, in_q, &xv12.p1q2, expand_p, true);
+        crate::timing::print("  Winding03 P", t);
+        let t = crate::timing::start();
         let w30 = winding03(in_p, in_q, &xv21.p1q2, expand_p, false);
+        crate::timing::print("  Winding03 Q", t);
+        crate::timing::print("Intersections (total)", t_total);
 
         Boolean3 {
             xv12,
@@ -809,9 +820,8 @@ pub fn ray_cast(mesh: &ManifoldImpl, origin: Vec3, endpoint: Vec3) -> Vec<RayHit
     ];
     ray_impl.face_normal = vec![Vec3::splat(0.0)];
 
-    // Build BVH over mesh triangles.
-    let (face_box, face_morton) = get_face_box_morton(mesh);
-    let collider = Collider::new(face_box, face_morton);
+    // Query the mesh's cached face BVH (C++ RayCast uses collider_).
+    let collider = &mesh.collider;
 
     // Ray AABB for BVH query.
     let ray_box = BBox::from_points(

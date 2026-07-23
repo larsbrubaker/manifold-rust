@@ -34,6 +34,13 @@ rayon = { version = "1.10", optional = true }
 # vertex ordering in some phases).
 parallel = ["dep:rayon"]
 
+# Match the optimization latitude the C++ reference gets from MSVC /O2 with
+# unity-style TUs: fat LTO + one codegen unit lets rustc inline across the
+# module graph. Measurably faster on the boolean pipeline; slower to build.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+
 [dev-dependencies]
 criterion = "0.5"
 

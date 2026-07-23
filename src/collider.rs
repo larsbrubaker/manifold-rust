@@ -675,8 +675,10 @@ impl ManifoldImpl {
     pub fn is_self_intersecting(&self) -> bool {
         let ep = 2.0 * self.epsilon;
         let epsilon_sq = ep * ep;
-        let (face_box, face_morton) = get_face_box_morton(self);
-        let collider = Collider::new(face_box.clone(), face_morton);
+        // Fresh face boxes for the queries; the tree itself is the cached
+        // collider (C++ SelfIntersecting queries collider_ the same way).
+        let (face_box, _face_morton) = get_face_box_morton(self);
+        let collider = &self.collider;
         let mut intersecting = false;
 
         collider.collisions_with_boxes(&face_box, true, |tri0, tri1| {
@@ -729,14 +731,14 @@ impl ManifoldImpl {
     }
 
     pub fn min_gap(&self, other: &ManifoldImpl, search_length: f64) -> f64 {
-        let (self_box, self_morton) = get_face_box_morton(self);
         let (mut other_box, _) = get_face_box_morton(other);
         for bbox in &mut other_box {
             bbox.min = bbox.min - Vec3::splat(search_length);
             bbox.max = bbox.max + Vec3::splat(search_length);
         }
 
-        let collider = Collider::new(self_box, self_morton);
+        // Query self's cached face BVH (C++ MinGap queries collider_).
+        let collider = &self.collider;
         let mut min_distance = f64::INFINITY;
         collider.collisions_with_boxes(&other_box, false, |tri_other, tri| {
             let p = self.face_triangle_vertices(tri);
