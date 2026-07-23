@@ -6,12 +6,36 @@ not what has already been done (use `git log` for history). Every change must re
 C++ reference with **exact numerical match** — identical results on identical inputs.
 
 **Status:** 521 passing, 0 failing, 7 ignored. Every C++ test ported or covered.
-**C++ reference target:** v3.5.0 (submodule at tag `v3.5.0`, commit `541c33bd`).
+**C++ reference target:** v3.5.0 (parent repo pins commit `541c33bd`; submodule working
+tree currently checked out at `v3.5.2` — delta audited 2026-07-22, nothing to port, see
+"v3.5.0 → v3.5.2 audit" below).
 **Core engine:** all 18 phases (linalg → boolean → CSG → cross-section → SDF → minkowski →
 WASM) are implemented. Remaining work is the v3.5.0 deltas below plus the ignored-test
 backlog.
 
 ---
+
+## v3.5.0 → v3.5.2 audit (2026-07-22) — nothing to port
+
+All 12 upstream commits reviewed (`git log 541c33bd..11235e6b` in the submodule). No
+numerical or algorithmic behavior changed; every delta is N/A for the Rust port:
+
+- **ExecutionContext expansion** (#1723, #1734, #1739, #1742, #1743, #1745) — eager
+  ctx-aware `FromMeshGL`/`Smooth`/`LevelSet` factories, cancel/progress checkpoints
+  threaded through sdf.cpp/smoothing.cpp, per-phase timing in `Boolean3::Result`. The
+  LevelSet/Smooth bodies were refactored (`Impl::CreateLevelSet`, `MakeSmoothImpl`) but
+  execute the identical step sequence. Already declared out of scope above.
+- **originalID races on shared CSG nodes** (#1740/#1741) — C++ mutexes around
+  `CsgLeafNode`'s lazy transform realization (mutation through const accessors) and
+  `CsgOpNode::cache_`. Structurally impossible in our `csg_tree.rs`: `get_impl()` clones
+  and transforms into a fresh value instead of mutating in place, and there is no op-node
+  cache or interior mutability.
+- **`&v[size]` UB in test sentinels** (#1736) — C++ pointer-sentinel issue; our
+  `related_gl_impl` uses index ranges with exclusive ends.
+- **remove async free** (vec.h/impl.cpp), **camera radius reset** (WASM editor JS),
+  timing/bindings/test-only changes — no Rust counterpart.
+
+When the submodule bump to v3.5.2 is committed, update the reference-target line above.
 
 ## Remaining v3.5.0 work
 
