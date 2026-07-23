@@ -3,7 +3,7 @@ members = [".", "demo/wasm"]
 
 [package]
 name = "manifold-rust"
-version = "0.9.2"
+version = "0.9.3"
 edition = "2021"
 # f64::round_ties_even (used in the C++-exact sind) stabilized in 1.77.
 rust-version = "1.77"
