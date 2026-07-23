@@ -130,6 +130,47 @@ bun run build:wasm
 bun run dev
 ```
 
+## Performance
+
+The port is benchmarked against the C++ reference using Rust ports of the
+upstream perf drivers, printing identical output lines so runs diff cleanly:
+
+- `cargo run --release --example perf_test` — a sphere-minus-sphere boolean at
+  doubling tessellation levels (`extras/perf_test.cpp`)
+- `cargo run --release --example large_scene_test -- <n>` — union of an
+  n×n×n grid of unit spheres through the CSG tree (`extras/large_scene_test.cpp`)
+
+Representative timings, best of several runs on the same machine (Windows 10,
+i7-7660U 2C/4T, 8 GB RAM; both sides sequential: C++ built Release with
+`MANIFOLD_PAR=OFF`, Rust default features, MSVC 19.44 / rustc via fat LTO):
+
+| Benchmark | input tris | C++ | Rust |
+|---|---|---|---|
+| sphere ∖ sphere | 2 048 | 5.2 ms | 5.5 ms |
+| sphere ∖ sphere | 32 768 | 48 ms | 43 ms |
+| sphere ∖ sphere | 131 072 | 170 ms | 177 ms |
+| sphere ∖ sphere | 524 288 | 659 ms | 621 ms |
+| sphere ∖ sphere | 2 097 152 | 2.61 s | 2.57 s |
+| sphere grid union, n=10 (999 spheres) | — | 2.29 s | 2.32 s |
+| sphere grid union, n=20 (7 999 spheres) | — | 13.5 s | 14.5 s |
+
+Both implementations produce identical triangle counts on every benchmark (and
+the test suite validates bit-exact geometry). The largest perf_test round
+(8.4 M input tris) needs ~3–4 GB of working set and is dominated by paging on
+the 8 GB test machine, so its timings are not comparable there; peak memory
+runs roughly 20–30 % higher in Rust than C++ (~3.5 GB vs ~2.9 GB at that
+size), which is a known follow-up item.
+
+Per-stage timing is available on both sides for gap hunting: set the
+`MANIFOLD_TIMING` environment variable for the Rust build (stage boundaries
+match the C++ `MANIFOLD_TIMING` build's output) — this is how the cached-face-
+collider optimization was found, which brought the intersection stage from
+2.7× slower than C++ to faster than C++.
+
+An optional `parallel` cargo feature parallelizes determinism-preserving
+sites with rayon (results stay bit-identical to the sequential build); see
+`PORTING_PLAN.md` for which stages it covers.
+
 ## Architecture
 
 The port follows the C++ module structure:

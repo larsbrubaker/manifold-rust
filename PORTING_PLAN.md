@@ -56,6 +56,20 @@ optional/peripheral:
 
 ---
 
+## Performance vs C++ (2026-07-23 benchmark session)
+
+Rust ports of the upstream perf drivers live in `examples/` (`perf_test`,
+`large_scene_test`); README "Performance" has the numbers. Sequential Rust is at
+parity or ahead of sequential C++ on every benchmark after the cached-collider fix
+(`ManifoldImpl::collider`, mirroring C++ `Impl::collider_`) and fat-LTO release
+profile. Stage timing for future gap hunting: set `MANIFOLD_TIMING=1` (Rust) and
+compare against a `-DMANIFOLD_TIMING=ON` C++ build at `verbose >= 2`.
+
+Open follow-up: **peak memory is ~20–30% above C++** on large booleans (~3.5 GB vs
+~2.9 GB at 8.4M input tris). Untraced; candidates are intermediate Vec sizing in
+boolean_result assembly (C++ sizes several outputs exactly where the port
+over-reserves) and clone-heavy get_impl in the CSG path.
+
 ## Ignored tests (7) — grouped by the work needed to clear them
 
 > **Audit note:** C++ has zero `DISABLED_` tests, so the fair bar is Rust-release ≈
