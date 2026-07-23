@@ -72,9 +72,10 @@ impl CsgLeafNode {
         if self.transform == Mat3x4::identity() {
             (*self.p_impl).clone()
         } else {
-            let mut result = (*self.p_impl).clone();
-            result.transform(&self.transform);
-            result
+            // ManifoldImpl::transform returns the transformed mesh (it is not
+            // in-place) — discarding its return value silently drops the lazy
+            // transform.
+            self.p_impl.transform(&self.transform)
         }
     }
 
@@ -540,6 +541,32 @@ mod tests {
         let tree = CsgNode::op_n(OpType::Add, nodes);
         let result = tree.evaluate();
         assert_eq!(result.num_tri(), 48, "N-ary union of 4 disjoint cubes should have 48 tris");
+    }
+
+    #[test]
+    fn test_lazy_leaf_transform_applied_on_evaluate() {
+        // Regression: get_impl discarded ManifoldImpl::transform's return value
+        // (it is not in-place), so lazily-transformed leaves evaluated at the
+        // origin. Two disjoint cubes — one translated via the *leaf* transform,
+        // not baked into the mesh — must union to 24 tris, not collapse to 12.
+        let cube = ManifoldImpl::cube(&Mat3x4::identity());
+        let a = CsgLeafNode::new(cube.clone());
+        let b = CsgLeafNode::new(cube).apply_transform(
+            mat4_to_mat3x4(translation_matrix(Vec3::new(3.0, 0.0, 0.0))),
+        );
+        let bbox = b.get_impl().bbox;
+        assert!(
+            bbox.min.x >= 2.9 && bbox.max.x <= 4.1,
+            "lazy transform not applied by get_impl: bbox.x = [{}, {}]",
+            bbox.min.x,
+            bbox.max.x
+        );
+        let tree = CsgNode::op(
+            OpType::Add,
+            CsgNode::leaf_node(a),
+            CsgNode::leaf_node(b),
+        );
+        assert_eq!(tree.evaluate().num_tri(), 24);
     }
 
     #[test]
