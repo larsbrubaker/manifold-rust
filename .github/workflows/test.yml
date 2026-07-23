@@ -1,0 +1,33 @@
+# Runs the full cargo test suite on pushes and PRs. The cpp-reference/manifold
+# submodule must be checked out: 15 tests load OBJ models from the C++ test
+# suite (cpp-reference/manifold/test/models) and fail without it.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --release
