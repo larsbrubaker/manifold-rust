@@ -65,10 +65,17 @@ parity or ahead of sequential C++ on every benchmark after the cached-collider f
 profile. Stage timing for future gap hunting: set `MANIFOLD_TIMING=1` (Rust) and
 compare against a `-DMANIFOLD_TIMING=ON` C++ build at `verbose >= 2`.
 
-Open follow-up: **peak memory is ~20–30% above C++** on large booleans (~3.5 GB vs
-~2.9 GB at 8.4M input tris). Untraced; candidates are intermediate Vec sizing in
-boolean_result assembly (C++ sizes several outputs exactly where the port
-over-reserves) and clone-heavy get_impl in the CSG path.
+Peak memory (2026-07-23, second pass): now **within ~10% of C++** (1.47 GB vs
+1.34 GB peak working set on the 2M-tri sphere difference; was 47% over). Fixed by
+(a) restructuring Collider to the C++ storage layout — one interleaved node array
+instead of duplicate leaf boxes + stored mortons + a sort mapping, with
+refit-not-rebuild update_boxes/transform — and (b) dropping boolean_result
+assembly intermediates at the same points C++ clears them. Attribution tool:
+`MANIFOLD_TIMING=1 cargo run --release --example mem_profile [round]` (counting
+global allocator + per-stage heap reporting via timing::set_mem_hook). The
+remaining ~10% is transient: face2tri temporaries and intersect12's per-edge
+Vec-of-Vecs (C++ uses counted two-pass output); worth revisiting only if memory
+parity becomes a hard requirement.
 
 ## Ignored tests (7) — grouped by the work needed to clear them
 

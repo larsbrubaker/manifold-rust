@@ -156,10 +156,13 @@ i7-7660U 2C/4T, 8 GB RAM; both sides sequential: C++ built Release with
 
 Both implementations produce identical triangle counts on every benchmark (and
 the test suite validates bit-exact geometry). The largest perf_test round
-(8.4 M input tris) needs ~3–4 GB of working set and is dominated by paging on
-the 8 GB test machine, so its timings are not comparable there; peak memory
-runs roughly 20–30 % higher in Rust than C++ (~3.5 GB vs ~2.9 GB at that
-size), which is a known follow-up item.
+(8.4 M input tris) needs several GB of working set and is dominated by paging
+on the 8 GB test machine, so its timings are not comparable there. Peak memory
+is within ~10 % of C++ (1.47 GB vs 1.34 GB peak working set on the 2 M-tri
+round) after slimming the cached collider to the C++ storage layout and
+dropping assembly intermediates at the same points the C++ clears them; use
+`cargo run --release --example mem_profile` with `MANIFOLD_TIMING=1` to see
+per-stage heap use.
 
 Per-stage timing is available on both sides for gap hunting: set the
 `MANIFOLD_TIMING` environment variable for the Rust build (stage boundaries

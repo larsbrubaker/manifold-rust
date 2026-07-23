@@ -387,6 +387,11 @@ pub fn boolean_result(
         bool3.xv12.p1q2.len(),
     );
 
+    // C++ clears v12R/v21R here (after AddNewEdgeVerts); drop the counterparts
+    // so the large scans don't ride through the rest of the pipeline.
+    drop(v12r);
+    drop(v21r);
+
     // Size output
     let (face_edge, face_pq2r) = size_output(
         &mut out_r,
@@ -400,6 +405,10 @@ pub fn boolean_result(
         &bool3.xv21.p1q2,
         invert_q,
     );
+
+    // C++ clears i12/i21 after SizeOutput.
+    drop(i12);
+    drop(i21);
 
     // Assemble edges
     let mut face_ptr_r = face_edge.clone();
@@ -439,6 +448,10 @@ pub fn boolean_result(
         &face_pq2r[in_p.num_tri()..],
         false,
     );
+    // C++ clears edgesP/edgesQ after AppendPartialEdges.
+    drop(edges_p);
+    drop(edges_q);
+
     append_new_edges(
         &mut out_r,
         &mut face_ptr_r,
@@ -447,6 +460,9 @@ pub fn boolean_result(
         &face_pq2r,
         in_p.num_tri(),
     );
+    // C++ clears edgesNew after AppendNewEdges.
+    drop(edges_new);
+
     append_whole_edges(
         &mut out_r,
         &mut face_ptr_r,
@@ -470,12 +486,26 @@ pub fn boolean_result(
         false,
     );
 
+    // C++ clears wholeHalfedgeP/Q, vP2R/vQ2R and friends after
+    // AppendWholeEdges; nothing below needs these.
+    drop(whole_halfedge_p);
+    drop(whole_halfedge_q);
+    drop(face_ptr_r);
+    drop(face_pq2r);
+    drop(vp2r);
+    drop(vq2r);
+    drop(i03);
+    drop(i30);
+
     crate::timing::print("Assembly", t_assembly);
 
     // Triangulate polygonal faces (allowConvex=false per C++ boolean_result.cpp)
     let t = crate::timing::start();
     face2tri(&mut out_r, &face_edge, &halfedge_ref, false);
     reorder_halfedges(&mut out_r);
+    // C++ clears faceEdge after Face2Tri; halfedgeRef is likewise done.
+    drop(face_edge);
+    drop(halfedge_ref);
     crate::timing::print("Triangulation", t);
 
     let t = crate::timing::start();

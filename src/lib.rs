@@ -53,6 +53,6 @@ pub mod minkowski;
 pub mod quickhull;
 pub mod disjoint_sets;
 pub mod math;
-pub(crate) mod timing;
+pub mod timing;
 pub mod interp_tri;
 pub mod par;

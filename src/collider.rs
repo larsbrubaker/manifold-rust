@@ -46,75 +46,59 @@ fn is_internal(node: i32) -> bool {
     node % 2 == 1
 }
 
+/// Face BVH matching the C++ Collider's storage layout exactly: one interleaved
+/// node array (leaves at even indices, internals at odd), the radix-tree
+/// topology, and parent links for bottom-up box refits. Leaf boxes live inside
+/// `node_bbox` — no separate leaf copy, and the morton codes are consumed at
+/// construction rather than stored, which matters because a collider is cached
+/// on every ManifoldImpl.
 #[derive(Clone, Debug, Default)]
 pub struct Collider {
-    leaf_bbox: Vec<BBox>,
-    leaf_morton: Vec<u32>,
-    sorted_to_original: Vec<usize>, // Maps sorted leaf index → original index
-    // BVH tree data (built on demand)
-    node_bbox: Vec<BBox>,          // AABBs for all nodes (2*num_leaves - 1)
-    internal_children: Vec<[i32; 2]>, // Child pairs for internal nodes (num_leaves - 1)
+    node_bbox: Vec<BBox>,             // AABBs for all nodes (2*num_leaves - 1)
+    node_parent: Vec<i32>,            // parent node per node (-1 at root)
+    internal_children: Vec<[i32; 2]>, // child pairs for internal nodes (num_leaves - 1)
 }
 
 impl Collider {
     /// Create a new Collider from leaf bounding boxes and morton codes.
-    /// Sorts leaves by morton code internally (required by radix tree algorithm).
+    /// Like the C++ constructor, leaves must already be sorted by morton code
+    /// — every production caller builds them from a morton-sorted source
+    /// (sort_geometry sorts faces, merge sorts open verts).
     pub fn new(leaf_bbox: Vec<BBox>, leaf_morton: Vec<u32>) -> Self {
         debug_assert_eq!(leaf_bbox.len(), leaf_morton.len());
+        debug_assert!(
+            leaf_morton.windows(2).all(|w| w[0] <= w[1]),
+            "Collider leaves must be pre-sorted by morton code"
+        );
         let n = leaf_bbox.len();
-        // Sort leaves by morton code (matching C++ SortGeometry ordering)
-        let mut order: Vec<usize> = (0..n).collect();
-        order.sort_by_key(|&i| leaf_morton[i]);
-        let sorted_bbox: Vec<BBox> = order.iter().map(|&i| leaf_bbox[i]).collect();
-        let sorted_morton: Vec<u32> = order.iter().map(|&i| leaf_morton[i]).collect();
-        let sorted_to_original = order;
-
+        if n == 0 {
+            return Self::default();
+        }
+        let num_nodes = 2 * n - 1;
         let mut collider = Self {
-            leaf_bbox: sorted_bbox,
-            leaf_morton: sorted_morton,
-            sorted_to_original,
-            node_bbox: Vec::new(),
-            internal_children: Vec::new(),
+            node_bbox: vec![BBox::default(); num_nodes],
+            node_parent: vec![-1; num_nodes],
+            internal_children: vec![[-1, -1]; n.saturating_sub(1)],
         };
-        collider.build_bvh();
+        collider.create_radix_tree(&leaf_morton);
+        collider.update_boxes(leaf_bbox);
         collider
     }
 
-
-    fn build_bvh(&mut self) {
-        let num_leaves = self.leaf_bbox.len();
-        if num_leaves == 0 {
-            return;
+    fn num_leaves(&self) -> usize {
+        if self.node_bbox.is_empty() {
+            0
+        } else {
+            self.internal_children.len() + 1
         }
-        if num_leaves == 1 {
-            // Single leaf: root bbox = leaf bbox
-            self.node_bbox = vec![BBox::default(); 2];
-            self.node_bbox[0] = self.leaf_bbox[0]; // leaf 0 -> node 0
-            self.node_bbox[1] = self.leaf_bbox[0]; // root node 1
-            self.internal_children = vec![[0, 0]; 1]; // root points to leaf 0
-            return;
-        }
-
-        let num_internal = num_leaves - 1;
-        let num_nodes = 2 * num_leaves - 1;
-        self.node_bbox = vec![BBox::default(); num_nodes];
-        self.internal_children = vec![[-1, -1]; num_internal];
-
-        // Copy leaf bboxes into node array
-        for i in 0..num_leaves {
-            self.node_bbox[leaf_to_node(i as i32) as usize] = self.leaf_bbox[i];
-        }
-
-        // Build radix tree structure
-        self.create_radix_tree();
-
-        // Build internal bounding boxes bottom-up
-        self.build_internal_boxes();
     }
 
+
     /// Build radix tree from sorted Morton codes (matches C++ CreateRadixTree).
-    fn create_radix_tree(&mut self) {
-        let num_leaves = self.leaf_bbox.len();
+    /// Only fills in topology (internal_children, node_parent); boxes are
+    /// populated afterwards by update_boxes.
+    fn create_radix_tree(&mut self, leaf_morton: &[u32]) {
+        let num_leaves = leaf_morton.len();
         if num_leaves <= 1 {
             return;
         }
@@ -128,8 +112,8 @@ impl Collider {
             if j < 0 || j >= num_leaves as i32 {
                 return -1;
             }
-            let mi = self.leaf_morton[i as usize];
-            let mj = self.leaf_morton[j as usize];
+            let mi = leaf_morton[i as usize];
+            let mj = leaf_morton[j as usize];
             let xor = mi ^ mj;
             if xor == 0 {
                 // Same morton code, use index as tiebreaker (matches C++ clz)
@@ -179,8 +163,6 @@ impl Collider {
         };
 
         // For each internal node, find its range and split point
-        let mut node_parent = vec![-1i32; 2 * num_leaves - 1];
-
         for internal in 0..num_internal {
             let i = internal as i32;
             let mut first = i;
@@ -212,18 +194,25 @@ impl Collider {
 
             self.internal_children[internal] = [child1, child2];
             let node = internal_to_node(i);
-            node_parent[child1 as usize] = node;
-            node_parent[child2 as usize] = node;
+            self.node_parent[child1 as usize] = node;
+            self.node_parent[child2 as usize] = node;
         }
+    }
 
-        // Build bboxes bottom-up using a counter-based approach
-        // Process leaves and walk up to root
+    /// Refit internal boxes bottom-up from the leaf boxes already present in
+    /// node_bbox, using the parent links (matches C++ BuildInternalBoxes).
+    fn build_internal_boxes(&mut self) {
+        let num_leaves = self.num_leaves();
+        let num_internal = self.internal_children.len();
+        if num_internal == 0 {
+            return;
+        }
         let mut counter = vec![0u32; num_internal];
 
         for leaf in 0..num_leaves {
             let mut node = leaf_to_node(leaf as i32);
             loop {
-                let parent = node_parent[node as usize];
+                let parent = self.node_parent[node as usize];
                 if parent < 0 {
                     break; // at root
                 }
@@ -246,12 +235,6 @@ impl Collider {
         }
     }
 
-    /// Build internal bounding boxes (already done in create_radix_tree for sequential).
-    fn build_internal_boxes(&mut self) {
-        // Already built in create_radix_tree above.
-        // The C++ separates these for GPU parallelism; we combine them.
-    }
-
     /// Run a single query box against the BVH, invoking `record(query_idx,
     /// leaf_idx)` per overlap. Same traversal as `collisions_fn` for one
     /// index — the per-query entry point for parallel callers (`&self` only,
@@ -265,13 +248,9 @@ impl Collider {
         if query.is_empty() {
             return;
         }
+        // No internal nodes (0-1 leaves): no collisions, matching C++
+        // Collisions' early return on internalChildren_.empty().
         if self.internal_children.is_empty() {
-            if self.leaf_bbox.len() == 1 {
-                let original_idx = self.sorted_to_original[0];
-                if query.does_overlap_box(&self.leaf_bbox[0]) {
-                    record(query_idx, original_idx);
-                }
-            }
             return;
         }
         self.traverse_bvh(query, query_idx, false, &mut record);
@@ -290,16 +269,6 @@ impl Collider {
         R: FnMut(usize, usize),
     {
         if self.internal_children.is_empty() {
-            // Fallback for 0-1 leaves
-            if self.leaf_bbox.len() == 1 {
-                let original_idx = self.sorted_to_original[0];
-                for query_idx in 0..n {
-                    let query = query_box_fn(query_idx);
-                    if !query.is_empty() && query.does_overlap_box(&self.leaf_bbox[0]) {
-                        record(query_idx, original_idx);
-                    }
-                }
-            }
             return;
         }
 
@@ -320,15 +289,6 @@ impl Collider {
         mut record: F,
     ) {
         if self.internal_children.is_empty() {
-            // Fallback for 0-1 leaves
-            if self.leaf_bbox.len() == 1 {
-                let original_idx = self.sorted_to_original[0];
-                for (qi, q) in queries.iter().enumerate() {
-                    if !(self_collision && qi == original_idx) && q.does_overlap_box(&self.leaf_bbox[0]) {
-                        record(qi, original_idx);
-                    }
-                }
-            }
             return;
         }
 
@@ -351,16 +311,6 @@ impl Collider {
         R: FnMut(usize, usize),
     {
         if self.internal_children.is_empty() {
-            if self.leaf_bbox.len() == 1 {
-                let original_idx = self.sorted_to_original[0];
-                for query_idx in 0..n {
-                    let pt = point_fn(query_idx);
-                    let query = BBox::from_point(pt);
-                    if query.does_overlap_box(&self.leaf_bbox[0]) {
-                        record(query_idx, original_idx);
-                    }
-                }
-            }
             return;
         }
 
@@ -430,41 +380,35 @@ impl Collider {
         let node_box = &self.node_bbox[node as usize];
         let overlaps = query.does_overlap_box(node_box);
         if overlaps && is_leaf(node) {
-            let sorted_idx = node_to_leaf(node) as usize;
-            let original_idx = self.sorted_to_original[sorted_idx];
-            if !self_collision || original_idx != query_idx {
-                record(query_idx, original_idx);
+            // Leaves are stored in tree order == input order (pre-sorted by
+            // morton), so the leaf index IS the caller's index — no mapping.
+            let leaf_idx = node_to_leaf(node) as usize;
+            if !self_collision || leaf_idx != query_idx {
+                record(query_idx, leaf_idx);
             }
         }
         overlaps && is_internal(node)
     }
 
+    /// Replace the leaf boxes (given in leaf/tree order — for a face collider
+    /// that is face order, since faces are morton-sorted) and refit the
+    /// internal boxes. Tree topology is untouched (C++ UpdateBoxes).
     pub fn update_boxes(&mut self, leaf_bbox: Vec<BBox>) {
-        debug_assert_eq!(leaf_bbox.len(), self.leaf_bbox.len());
-        // Reorder to sorted order (sorted_to_original maps sorted→original)
-        // We need original→sorted, which is the inverse
-        for (sorted_idx, &orig_idx) in self.sorted_to_original.iter().enumerate() {
-            self.leaf_bbox[sorted_idx] = leaf_bbox[orig_idx];
+        debug_assert_eq!(leaf_bbox.len(), self.num_leaves());
+        for (i, bbox) in leaf_bbox.into_iter().enumerate() {
+            self.node_bbox[leaf_to_node(i as i32) as usize] = bbox;
         }
-        // Rebuild BVH with new boxes (morton codes and sort order unchanged)
-        self.build_bvh();
+        self.build_internal_boxes();
     }
 
+    /// Map every node box through an axis-aligned transform (C++
+    /// Collider::Transform) — no refit needed since axis-aligned transforms
+    /// map AABBs to exact AABBs.
     pub fn transform(&mut self, transform: &Mat3x4) {
         debug_assert!(Self::is_axis_aligned(transform));
-        for bbox in &mut self.leaf_bbox {
+        for bbox in &mut self.node_bbox {
             *bbox = bbox.transform(transform);
         }
-        // Rebuild BVH after transform
-        self.build_bvh();
-    }
-
-    pub fn leaf_count(&self) -> usize {
-        self.leaf_bbox.len()
-    }
-
-    pub fn leaf_bbox(&self) -> &[BBox] {
-        &self.leaf_bbox
     }
 
     pub fn morton_code(position: Vec3, bbox: &BBox) -> u32 {
@@ -486,9 +430,6 @@ impl Collider {
         true
     }
 
-    pub fn leaf_morton(&self) -> &[u32] {
-        &self.leaf_morton
-    }
 }
 
 pub fn edge_edge_dist(p: Vec3, a: Vec3, q: Vec3, b: Vec3) -> (Vec3, Vec3) {
