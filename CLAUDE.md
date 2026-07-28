@@ -24,15 +24,7 @@ Do not skip the reproducing test. Even if the fix seems obvious.
 - Tests must verify **exact behavioral match** with the C++ implementation — same floating-point results, same triangle counts, same vertex positions
 - To confirm numerical exactness, instrument both the Rust and C++ implementations and compare output byte-for-byte where applicable
 - All tests must pass before advancing to the next phase
-- When test failures occur, use the fix-test-failures skill — treat all failures as real bugs, resolve through instrumentation and root cause analysis, never by weakening tests
-
-**Running tests:**
-```bash
-cargo test
-cargo test --lib vec_tests
-cargo test test_name -- --exact
-cargo test -- --nocapture
-```
+- When test failures occur, treat all failures as real bugs, resolve through instrumentation and root cause analysis, never by weakening tests
 
 ## Coding Standards
 
@@ -54,27 +46,11 @@ cargo test -- --nocapture
   signature already tell the full story.
 - Explain *why*, not *what*. A comment that restates the code is noise.
 
-### Bug workflow — always follow this order
-1. **Write a failing test** that reproduces the bug.
-2. **Fix the bug.**
-3. **Confirm the test passes** (`cargo test`).
-
-Never commit a bug fix that isn't covered by a test.
-
 ### General style
 - Prefer `Result`/`Option` over `unwrap` in library code; `expect` is acceptable in
   `main` for startup failures with a clear message.
 - Keep handler functions focused — if a handler grows complex, extract helpers.
 - Avoid unsafe code unless there is no alternative; document every `unsafe` block.
-
-### Names
-Follow Rust conventions (`snake_case` for functions/variables, `PascalCase` for types, `SCREAMING_SNAKE_CASE` for constants). Mirror C++ names where they are clear; use better Rust names where they aren't.
-
-### Comments
-Explain *why*, not *what*. When porting, note where Rust differs from C++ and why.
-
-### Refactoring
-Improve code when it serves a purpose, not for aesthetics.
 
 ## C++ to Rust Porting Rules
 
@@ -118,9 +94,6 @@ To validate numerical exactness, we build and run both implementations:
 ## C++ Reference
 
 The original C++ source is at `cpp-reference/manifold/` (git submodule).
-- Public API: `cpp-reference/manifold/include/manifold/`
-- Implementation: `cpp-reference/manifold/src/`
-- Tests: `cpp-reference/manifold/test/`
 
 ## Shell
 
