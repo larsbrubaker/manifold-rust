@@ -1,0 +1,16 @@
+[package]
+name = "manifold-ffi"
+version = "0.1.0"
+edition = "2021"
+description = "C ABI shared library exposing manifold-rust to non-Rust callers"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+# The shared library is named manifold_rs so consumers load manifold_rs.dll /
+# libmanifold_rs.so rather than a name that collides with the C++ manifoldc.
+name = "manifold_rs"
+crate-type = ["cdylib"]
+
+[dependencies]
+manifold-rust = { path = "..", features = ["parallel"] }

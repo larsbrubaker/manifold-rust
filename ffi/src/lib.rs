@@ -1,0 +1,481 @@
+// Copyright 2026 Lars Brubaker
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//      http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+//! C ABI for manifold-rust, built as `manifold_rs.dll` / `libmanifold_rs.so`.
+//!
+//! The surface is deliberately small: import a triangle soup, run an n-ary
+//! boolean, export the result. It mirrors the subset of the C++ `manifoldc`
+//! API that MatterCAD actually calls, with the same integer op ordering, so a
+//! P/Invoke consumer can switch libraries without changing call sites.
+//!
+//! Three rules hold for every exported function:
+//! - it never unwinds (see [`error::guard`]);
+//! - it null-checks every pointer argument and returns a documented sentinel;
+//! - handles are owned by the caller and freed with the matching destroy call.
+//!
+//! `manifold_rs.h` is the normative description of the ABI.
+
+// Every raw-pointer dereference here is a caller-supplied pointer, so each one
+// gets its own `unsafe` block with a SAFETY note stating which part of the C
+// contract makes it sound. Denying the lint keeps that discipline from eroding
+// as functions are added.
+#![deny(unsafe_op_in_unsafe_fn)]
+
+mod error;
+#[cfg(test)]
+mod tests;
+
+use std::os::raw::c_char;
+use std::ptr;
+
+use manifold_rust::csg_tree::CsgNode;
+use manifold_rust::manifold::Manifold;
+use manifold_rust::types::{Error, MeshGL, OpType};
+
+use crate::error::{guard, last_error_message, set_last_error};
+
+/// Opaque handle wrapping a [`Manifold`]. Created by the constructor and
+/// operation functions, released by [`manifold_rs_destroy`].
+pub struct ManifoldRs {
+    inner: Manifold,
+}
+
+/// Opaque handle wrapping an exported [`MeshGL`]. The array accessors hand out
+/// pointers that borrow from this handle, so it must outlive their use.
+pub struct MeshGlRs {
+    inner: MeshGL,
+}
+
+fn into_handle(manifold: Manifold) -> *mut ManifoldRs {
+    Box::into_raw(Box::new(ManifoldRs { inner: manifold }))
+}
+
+/// Stable numeric codes for [`Error`], matching the declaration order of the
+/// enum in the core crate (which in turn matches C++ `ManifoldError`).
+fn error_code(status: Error) -> i32 {
+    match status {
+        Error::NoError => 0,
+        Error::NonFiniteVertex => 1,
+        Error::NotManifold => 2,
+        Error::VertexOutOfBounds => 3,
+        Error::PropertiesWrongLength => 4,
+        Error::MissingPositionProperties => 5,
+        Error::MergeVectorsDifferentLengths => 6,
+        Error::MergeIndexOutOfBounds => 7,
+        Error::TransformWrongLength => 8,
+        Error::RunIndexWrongLength => 9,
+        Error::FaceIdWrongLength => 10,
+        Error::InvalidConstruction => 11,
+        Error::ResultTooLarge => 12,
+        Error::InvalidTangents => 13,
+    }
+}
+
+/// NUL terminator is part of the literal so the pointer can be handed to C
+/// directly without allocating a CString at runtime.
+const VERSION: &str = concat!(
+    "manifold-ffi ",
+    env!("CARGO_PKG_VERSION"),
+    " (manifold-rust ",
+    env!("MANIFOLD_RUST_VERSION"),
+    ")\0"
+);
+
+/// Static NUL-terminated version string. Never NULL; must not be freed.
+#[no_mangle]
+pub extern "C" fn manifold_rs_version() -> *const c_char {
+    VERSION.as_ptr() as *const c_char
+}
+
+// ---------------------------------------------------------------------------
+// Manifold construction and queries
+// ---------------------------------------------------------------------------
+
+/// Build a manifold from interleaved vertex properties and triangle indices.
+///
+/// Returns a handle even when the mesh fails validation — the handle then
+/// carries a non-zero [`manifold_rs_status`], which is how the caller learns
+/// *why* (matching the C++ behaviour of returning an error-status manifold).
+/// NULL is returned only for arguments that cannot describe a mesh at all, or
+/// if the import panics.
+///
+/// # Safety
+/// `vert_properties` and `tri_verts` must point to at least the stated number
+/// of elements, or be NULL when the corresponding length is 0.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_from_mesh(
+    vert_properties: *const f32,
+    vert_properties_len: usize,
+    tri_verts: *const u32,
+    tri_verts_len: usize,
+    num_prop: u32,
+) -> *mut ManifoldRs {
+    guard(ptr::null_mut(), || {
+        if num_prop < 3 {
+            set_last_error(format!("manifold_rs_from_mesh: num_prop {num_prop} < 3"));
+            return ptr::null_mut();
+        }
+        if vert_properties_len % num_prop as usize != 0 {
+            set_last_error(format!(
+                "manifold_rs_from_mesh: vert_properties_len {vert_properties_len} is not a multiple of num_prop {num_prop}"
+            ));
+            return ptr::null_mut();
+        }
+        if tri_verts_len % 3 != 0 {
+            set_last_error(format!(
+                "manifold_rs_from_mesh: tri_verts_len {tri_verts_len} is not a multiple of 3"
+            ));
+            return ptr::null_mut();
+        }
+        if (vert_properties.is_null() && vert_properties_len > 0)
+            || (tri_verts.is_null() && tri_verts_len > 0)
+        {
+            set_last_error("manifold_rs_from_mesh: null array with non-zero length");
+            return ptr::null_mut();
+        }
+        if !length_fits::<f32>(vert_properties_len) || !length_fits::<u32>(tri_verts_len) {
+            set_last_error(format!(
+                "manifold_rs_from_mesh: implausible length (vert_properties_len {vert_properties_len}, tri_verts_len {tri_verts_len})"
+            ));
+            return ptr::null_mut();
+        }
+
+        // SAFETY: both pointers are non-null for the non-empty case, and the
+        // lengths are within the isize::MAX byte limit `from_raw_parts`
+        // requires (both checked above); the caller guarantees the pointers
+        // really cover that many elements.
+        let (verts, tris) = unsafe {
+            (
+                slice_or_empty(vert_properties, vert_properties_len),
+                slice_or_empty(tri_verts, tri_verts_len),
+            )
+        };
+
+        let mesh = MeshGL {
+            num_prop,
+            vert_properties: verts.to_vec(),
+            tri_verts: tris.to_vec(),
+            ..Default::default()
+        };
+        into_handle(Manifold::from_mesh_gl(&mesh))
+    })
+}
+
+/// Copy of `m` re-tagged as an original mesh (a fresh mesh ID, no boolean
+/// history). NULL if `m` is NULL or the copy panics.
+///
+/// # Safety
+/// `m` must be NULL or a live handle from this library.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_as_original(m: *const ManifoldRs) -> *mut ManifoldRs {
+    guard(ptr::null_mut(), || {
+        // SAFETY: caller contract; as_ref() handles the NULL case.
+        let Some(handle) = (unsafe { m.as_ref() }) else {
+            set_last_error("manifold_rs_as_original: null manifold");
+            return ptr::null_mut();
+        };
+        into_handle(handle.inner.as_original())
+    })
+}
+
+/// Original mesh ID, or -1 for a NULL handle or a manifold that is not an
+/// original (the core crate uses -1 for both).
+///
+/// # Safety
+/// `m` must be NULL or a live handle from this library.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_original_id(m: *const ManifoldRs) -> i32 {
+    guard(-1, || {
+        // SAFETY: caller contract; as_ref() handles the NULL case.
+        match unsafe { m.as_ref() } {
+            Some(handle) => handle.inner.original_id(),
+            None => {
+                set_last_error("manifold_rs_original_id: null manifold");
+                -1
+            }
+        }
+    })
+}
+
+/// Error status code (0 = no error, see the table in `manifold_rs.h`).
+/// Returns -1 for a NULL handle, which is not a valid status code.
+///
+/// # Safety
+/// `m` must be NULL or a live handle from this library.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_status(m: *const ManifoldRs) -> i32 {
+    guard(-1, || {
+        // SAFETY: caller contract; as_ref() handles the NULL case.
+        match unsafe { m.as_ref() } {
+            Some(handle) => error_code(handle.inner.status()),
+            None => {
+                set_last_error("manifold_rs_status: null manifold");
+                -1
+            }
+        }
+    })
+}
+
+/// Release a manifold handle. NULL is ignored.
+///
+/// # Safety
+/// `m` must be NULL or a handle from this library that has not already been
+/// destroyed, and no other thread may be using it.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_destroy(m: *mut ManifoldRs) {
+    guard((), || {
+        if !m.is_null() {
+            // SAFETY: caller guarantees single ownership of a live handle.
+            drop(unsafe { Box::from_raw(m) });
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Boolean operations
+// ---------------------------------------------------------------------------
+
+/// N-ary boolean over `count` manifolds.
+///
+/// `op` is 0 = union, 1 = difference, 2 = intersection, matching the C++
+/// `ManifoldOpType` ordering. Difference is *first operand minus the union of
+/// the rest*, the same as C++ `BatchBoolean`.
+///
+/// This routes through the CSG tree rather than folding pairwise booleans, so
+/// a union of many parts gets the bounding-box partitioning and heap-ordered
+/// reduction the kernel was designed around. Returns NULL for an empty list,
+/// an unknown op, a NULL entry, or a panic.
+///
+/// # Safety
+/// `manifolds` must point to `count` live handles.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_batch_boolean(
+    manifolds: *const *const ManifoldRs,
+    count: usize,
+    op: i32,
+) -> *mut ManifoldRs {
+    guard(ptr::null_mut(), || {
+        let op = match op {
+            0 => OpType::Add,
+            1 => OpType::Subtract,
+            2 => OpType::Intersect,
+            other => {
+                set_last_error(format!("manifold_rs_batch_boolean: unknown op {other}"));
+                return ptr::null_mut();
+            }
+        };
+        if manifolds.is_null() || count == 0 {
+            set_last_error("manifold_rs_batch_boolean: no input manifolds");
+            return ptr::null_mut();
+        }
+        if !length_fits::<*const ManifoldRs>(count) {
+            set_last_error(format!("manifold_rs_batch_boolean: implausible count {count}"));
+            return ptr::null_mut();
+        }
+
+        // SAFETY: non-null with a count that is > 0 and within the isize::MAX
+        // byte limit (both checked above); the caller guarantees the array
+        // really holds that many handles.
+        let handles = unsafe { std::slice::from_raw_parts(manifolds, count) };
+        let mut inputs = Vec::with_capacity(count);
+        for (i, &entry) in handles.iter().enumerate() {
+            // SAFETY: caller contract; as_ref() handles the NULL case.
+            let Some(handle) = (unsafe { entry.as_ref() }) else {
+                set_last_error(format!("manifold_rs_batch_boolean: null manifold at index {i}"));
+                return ptr::null_mut();
+            };
+            inputs.push(&handle.inner);
+        }
+
+        // A single operand has nothing to combine with; every op is identity.
+        if let [only] = inputs[..] {
+            return into_handle(only.clone());
+        }
+
+        let leaves = inputs
+            .into_iter()
+            .map(|m| CsgNode::leaf(m.as_impl().clone()))
+            .collect();
+        let result = CsgNode::op_n(op, leaves).evaluate();
+        into_handle(Manifold::from_impl(result))
+    })
+}
+
+// ---------------------------------------------------------------------------
+// MeshGL export
+// ---------------------------------------------------------------------------
+
+/// Export `m` as a MeshGL handle (normal index -1: normals are exported only
+/// if the manifold already carries them). An error-status manifold exports as
+/// an empty mesh rather than failing. NULL on a NULL handle or a panic.
+///
+/// # Safety
+/// `m` must be NULL or a live handle from this library.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_get_meshgl(m: *const ManifoldRs) -> *mut MeshGlRs {
+    guard(ptr::null_mut(), || {
+        // SAFETY: caller contract; as_ref() handles the NULL case.
+        let Some(handle) = (unsafe { m.as_ref() }) else {
+            set_last_error("manifold_rs_get_meshgl: null manifold");
+            return ptr::null_mut();
+        };
+        Box::into_raw(Box::new(MeshGlRs {
+            inner: handle.inner.get_mesh_gl(-1),
+        }))
+    })
+}
+
+/// Properties per vertex (>= 3; the first three are the position). 0 for a
+/// NULL handle.
+///
+/// # Safety
+/// `g` must be NULL or a live handle from this library.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_meshgl_num_prop(g: *const MeshGlRs) -> u32 {
+    guard(0, || {
+        // SAFETY: caller contract; as_ref() handles the NULL case.
+        match unsafe { g.as_ref() } {
+            Some(handle) => handle.inner.num_prop,
+            None => {
+                set_last_error("manifold_rs_meshgl_num_prop: null mesh");
+                0
+            }
+        }
+    })
+}
+
+/// Defines a borrowing array accessor over one `MeshGlRs` field. All five share
+/// the same contract, and writing them out by hand five times would only add
+/// places for the null/length handling to drift apart.
+///
+/// `merge_from_vert` / `merge_to_vert` are deliberately not exposed: the export
+/// path already resolves merges, so a caller reconstructing geometry from these
+/// arrays does not need them.
+macro_rules! meshgl_array_accessor {
+    ($name:ident, $field:ident, $elem:ty) => {
+        /// Borrowed pointer to the field's data, valid until the mesh handle is
+        /// destroyed. Writes the element count to `out_len` when it is non-NULL.
+        /// NULL (with `*out_len` = 0) for a NULL handle; for an empty field the
+        /// pointer is non-NULL but must not be dereferenced.
+        ///
+        /// # Safety
+        /// `g` must be NULL or a live handle; `out_len` must be NULL or
+        /// writable.
+        #[no_mangle]
+        pub unsafe extern "C" fn $name(g: *const MeshGlRs, out_len: *mut usize) -> *const $elem {
+            // Zero the length up front, outside the guard: if the body panics
+            // the caller gets NULL and a length of 0 rather than whatever was
+            // in their variable before the call.
+            // SAFETY: out_len is null-checked inside write_len.
+            unsafe { write_len(out_len, 0) };
+            guard(ptr::null(), || {
+                // SAFETY: caller contract; as_ref() handles the NULL case.
+                let Some(handle) = (unsafe { g.as_ref() }) else {
+                    set_last_error(concat!(stringify!($name), ": null mesh"));
+                    return ptr::null();
+                };
+                let data = &handle.inner.$field;
+                // SAFETY: out_len is null-checked inside write_len.
+                unsafe { write_len(out_len, data.len()) };
+                data.as_ptr()
+            })
+        }
+    };
+}
+
+meshgl_array_accessor!(manifold_rs_meshgl_vert_properties, vert_properties, f32);
+meshgl_array_accessor!(manifold_rs_meshgl_tri_verts, tri_verts, u32);
+meshgl_array_accessor!(manifold_rs_meshgl_run_index, run_index, u32);
+meshgl_array_accessor!(manifold_rs_meshgl_run_original_id, run_original_id, u32);
+meshgl_array_accessor!(manifold_rs_meshgl_face_id, face_id, u32);
+
+/// Release a mesh handle, invalidating every pointer previously returned by the
+/// array accessors. NULL is ignored.
+///
+/// # Safety
+/// `g` must be NULL or a handle from this library that has not already been
+/// destroyed, and no other thread may be using it.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_meshgl_destroy(g: *mut MeshGlRs) {
+    guard((), || {
+        if !g.is_null() {
+            // SAFETY: caller guarantees single ownership of a live handle.
+            drop(unsafe { Box::from_raw(g) });
+        }
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Error reporting
+// ---------------------------------------------------------------------------
+
+/// Copy this thread's last failure message (UTF-8, *not* NUL-terminated) into
+/// `buf`, and return the full message length in bytes — so a caller can size a
+/// buffer by calling once with `buf` = NULL. The message is set when a function
+/// returns a failure sentinel and is not cleared by later successful calls.
+///
+/// # Safety
+/// `buf` must be NULL or writable for `buf_len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_last_error(buf: *mut u8, buf_len: usize) -> usize {
+    guard(0, || {
+        // Copy the message out before touching the caller's buffer: a panic
+        // while the thread-local was borrowed would poison later reads.
+        let message = last_error_message();
+        let bytes = message.as_bytes();
+        if !buf.is_null() && buf_len > 0 {
+            let n = bytes.len().min(buf_len);
+            // SAFETY: buf is non-null and the caller guarantees buf_len bytes;
+            // n is clamped to both lengths and the regions cannot overlap (the
+            // source is a freshly allocated String).
+            unsafe { ptr::copy_nonoverlapping(bytes.as_ptr(), buf, n) };
+        }
+        bytes.len()
+    })
+}
+
+/// Whether `len` elements of `T` can legally form a slice: `from_raw_parts`
+/// requires the total size to fit in `isize::MAX` bytes, and violating that is
+/// immediate UB. A caller that widens a negative int to `usize` — an easy
+/// mistake in a P/Invoke signature — lands here instead of in the kernel.
+fn length_fits<T>(len: usize) -> bool {
+    match std::mem::size_of::<T>() {
+        0 => true,
+        size => len <= (isize::MAX as usize) / size,
+    }
+}
+
+/// `from_raw_parts` requires a non-null aligned pointer even for length 0, so
+/// route the empty case around it.
+///
+/// # Safety
+/// When `len > 0`, `ptr` must be valid for `len` elements and `len` must have
+/// passed [`length_fits`].
+unsafe fn slice_or_empty<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
+    if len == 0 {
+        &[]
+    } else {
+        // SAFETY: caller contract, plus the non-null check at the call site.
+        unsafe { std::slice::from_raw_parts(ptr, len) }
+    }
+}
+
+/// # Safety
+/// `out_len` must be NULL or writable.
+unsafe fn write_len(out_len: *mut usize, len: usize) {
+    if !out_len.is_null() {
+        // SAFETY: non-null and caller guarantees it is writable.
+        unsafe { *out_len = len };
+    }
+}

@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "demo/wasm"]
+members = [".", "demo/wasm", "ffi"]
 
 [package]
 name = "manifold-rust"
@@ -16,7 +16,7 @@ documentation = "https://docs.rs/manifold-rust/"
 readme = "README.md"
 keywords = ["3d", "geometry", "mesh", "boolean", "csg"]
 categories = ["algorithms", "graphics", "mathematics", "wasm"]
-exclude = ["demo/", "docs/", "tests/", ".github/", ".claude/", "cpp-reference/", "CLAUDE.md"]
+exclude = ["demo/", "docs/", "tests/", "ffi/", ".github/", ".claude/", "cpp-reference/", "CLAUDE.md"]
 
 [lib]
 name = "manifold_rust"

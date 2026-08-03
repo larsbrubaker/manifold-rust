@@ -31,3 +31,9 @@ jobs:
 
       - name: Run tests
         run: cargo test --release
+
+      # The step above only covers the root package. The FFI crate is named
+      # explicitly rather than using --workspace, which would also pull in the
+      # wasm demo member (a wasm32 cdylib with no host tests).
+      - name: Run FFI tests
+        run: cargo test --release -p manifold-ffi
