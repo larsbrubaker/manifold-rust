@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <RootNamespace>ManifoldRust.Tests</RootNamespace>
+    <IsTestProject>true</IsTestProject>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" Version="1.63.0" />
+    <PackageReference Include="TUnit.Engine" Version="1.63.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ManifoldRust\ManifoldRust.csproj" />
+  </ItemGroup>
+
+  <!--
+    The tests exercise the real shared library, so it has to be next to the test
+    binaries. It is produced by cargo, not by MSBuild, hence the explicit check
+    instead of a silent glob that would leave the failure until a DllNotFound at
+    run time.
+  -->
+  <PropertyGroup>
+    <ManifoldRustNativeName Condition="'$(OS)' == 'Windows_NT'">manifold_rs.dll</ManifoldRustNativeName>
+    <ManifoldRustNativeName Condition="'$(ManifoldRustNativeName)' == '' AND $([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))">libmanifold_rs.dylib</ManifoldRustNativeName>
+    <ManifoldRustNativeName Condition="'$(ManifoldRustNativeName)' == ''">libmanifold_rs.so</ManifoldRustNativeName>
+    <ManifoldRustNativePath>$(MSBuildThisFileDirectory)..\..\target\release\$(ManifoldRustNativeName)</ManifoldRustNativePath>
+  </PropertyGroup>
+
+  <Target Name="CopyManifoldRustNative" BeforeTargets="Build">
+    <Error Condition="!Exists('$(ManifoldRustNativePath)')"
+           Text="Native library not found at '$(ManifoldRustNativePath)'. Build it first from the repository root: cargo build --release -p manifold-ffi" />
+    <Copy SourceFiles="$(ManifoldRustNativePath)"
+          DestinationFolder="$(OutDir)"
+          SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>
