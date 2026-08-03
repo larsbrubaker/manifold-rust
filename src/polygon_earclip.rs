@@ -120,7 +120,15 @@ impl EarClip {
         for start in starts {
             ec.find_start(start);
         }
-
+        // C++ stores holes_ in a multiset ordered by MaxX. Keyholing from
+        // right to left prevents a later bridge from crossing an earlier one.
+        ec.holes.sort_by(|&left, &right| {
+            ec.polygon[right]
+                .pos
+                .x
+                .partial_cmp(&ec.polygon[left].pos.x)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         ec
     }
 
@@ -528,7 +536,7 @@ impl EarClip {
 
         if max_x.is_finite() && area < -min_area {
             // Hole (negative area)
-            // Insert into holes sorted by max_x descending
+            // Collected here and sorted by descending max X after classification.
             self.holes.push(start);
             self.hole2bbox.insert(start, bbox);
         } else {
@@ -756,3 +764,7 @@ impl EarClip {
         }
     }
 }
+
+#[cfg(test)]
+#[path = "polygon_earclip_tests.rs"]
+mod tests;
