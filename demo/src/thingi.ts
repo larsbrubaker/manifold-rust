@@ -21,6 +21,13 @@ export interface ThingiModel {
   vertex_manifold: boolean;
   faces: number;
   vertices: number;
+  /**
+   * Ground truth computed by manifold-rust itself (Thingi10K repo's
+   * update_weld_status bin): the outcome of normalize + weld + robust
+   * import, i.e. exactly what this demo's pipeline will see.
+   * Absent on records not yet processed.
+   */
+  weld_result?: 'manifold' | 'nonmanifold' | 'not_closed';
 }
 
 export interface ParsedMesh {
@@ -34,7 +41,12 @@ export interface ParsedMesh {
 
 export type PairKind = 'mm' | 'mn' | 'nn';
 
-const METADATA_URL = 'https://cdn.jsdelivr.net/gh/larsbrubaker/Thingi10K@main/docs/data/models.json';
+// GitHub Pages first (updates on every push; jsDelivr caches @main for
+// hours), CDN as fallback.
+const METADATA_URLS = [
+  'https://larsbrubaker.github.io/Thingi10K/data/models.json',
+  'https://cdn.jsdelivr.net/gh/larsbrubaker/Thingi10K@main/docs/data/models.json',
+];
 const MESH_CDN = 'https://cdn.jsdelivr.net/gh/larsbrubaker';
 
 // Keep interactive: robust (exact-rational) booleans on big meshes get slow.
@@ -54,13 +66,36 @@ async function ensureMetadata(): Promise<void> {
   if (manifoldPool && nonManifoldPool) return;
   if (!metadataPromise) {
     metadataPromise = (async () => {
-      const resp = await fetch(METADATA_URL);
-      if (!resp.ok) throw new Error(`Thingi10K metadata fetch failed: HTTP ${resp.status}`);
-      const all: ThingiModel[] = await resp.json();
+      let all: ThingiModel[] | null = null;
+      let lastErr: unknown = null;
+      for (const url of METADATA_URLS) {
+        try {
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          all = await resp.json();
+          break;
+        } catch (e) { lastErr = e; }
+      }
+      if (!all) throw new Error(`Thingi10K metadata fetch failed: ${lastErr}`);
       const usable = all.filter(m =>
         m.format === 'stl' && m.closed && m.faces >= MIN_FACES && m.faces <= MAX_FACES);
-      manifoldPool = usable.filter(m => m.edge_manifold && m.vertex_manifold);
-      nonManifoldPool = usable.filter(m => !(m.edge_manifold && m.vertex_manifold));
+      // Prefer the weld_result ground truth (computed by manifold-rust
+      // itself): every pooled model is guaranteed to import, and the
+      // non-manifold pool holds models whose topology is genuinely
+      // non-manifold (dataset flags) even though exact welding makes them
+      // halfedge-pairable — plus any true soup imports.
+      if (usable.some(m => m.weld_result)) {
+        const importsOk = usable.filter(m =>
+          m.weld_result === 'manifold' || m.weld_result === 'nonmanifold');
+        manifoldPool = importsOk.filter(m =>
+          m.weld_result === 'manifold' && m.edge_manifold && m.vertex_manifold);
+        nonManifoldPool = importsOk.filter(m =>
+          m.weld_result === 'nonmanifold' || !(m.edge_manifold && m.vertex_manifold));
+      } else {
+        // Stale metadata without the column: fall back to the dataset flags.
+        manifoldPool = usable.filter(m => m.edge_manifold && m.vertex_manifold);
+        nonManifoldPool = usable.filter(m => !(m.edge_manifold && m.vertex_manifold));
+      }
     })().catch(e => { metadataPromise = null; throw e; });
   }
   return metadataPromise;

@@ -256,7 +256,10 @@ export function init(container: HTMLElement): () => void {
   }
 
   function operandLabel(o: ThingiOperand): string {
-    const kind = o.handle.is_soup ? 'non-manifold' : 'manifold';
+    // Topological kind per the dataset flags (what the pools guarantee);
+    // "soup" marks the rare case where even welding could not pair it.
+    let kind = o.model.edge_manifold && o.model.vertex_manifold ? 'manifold' : 'non-manifold';
+    if (o.handle.is_soup) kind += ', soup';
     return `#${o.model.id} &ldquo;${o.model.name}&rdquo; (${o.model.faces} tris, ${kind})`;
   }
 
