@@ -10,6 +10,57 @@
 use crate::linalg::Vec3;
 use crate::types::Box;
 
+/// Precision parameter of a [`MeshGLP`] (`f32` or `f64`). Mirrors the
+/// `Precision` template parameter of the C++ `MeshGLP`: conversions to and
+/// from the kernel's internal `f64` happen through this trait, so the f32
+/// instantiation narrows exactly where the C++ float instantiation does and
+/// the f64 instantiation is lossless end to end.
+pub trait MeshPrecision: Copy + Default {
+    /// True for `f32`. The exported tolerance is floored at
+    /// `f32::EPSILON * bbox.scale()` only for single precision, matching the
+    /// `std::is_same<Precision, float>` checks in the C++ template.
+    const IS_SINGLE: bool;
+    fn to_f64(self) -> f64;
+    fn from_f64(v: f64) -> Self;
+}
+
+impl MeshPrecision for f32 {
+    const IS_SINGLE: bool = true;
+    fn to_f64(self) -> f64 { self as f64 }
+    fn from_f64(v: f64) -> Self { v as f32 }
+}
+
+impl MeshPrecision for f64 {
+    const IS_SINGLE: bool = false;
+    fn to_f64(self) -> f64 { self }
+    fn from_f64(v: f64) -> Self { v }
+}
+
+/// Index parameter of a [`MeshGLP`] (`u32` or `u64`), mirroring the `I`
+/// template parameter of the C++ `MeshGLP`. The kernel itself indexes with
+/// 32 bits for both instantiations (as the C++ does — its import casts every
+/// index to `uint32_t`), so `u64` indices wider than 32 bits truncate on
+/// import exactly like the C++ `static_cast`.
+pub trait MeshIndex: Copy + Default {
+    fn to_u64(self) -> u64;
+    fn from_usize(v: usize) -> Self;
+    /// Conversion from the kernel's `int` indices on export. Matches C++
+    /// integral conversion: bit-pattern for u32, sign-extension for u64.
+    fn from_i32(v: i32) -> Self;
+}
+
+impl MeshIndex for u32 {
+    fn to_u64(self) -> u64 { self as u64 }
+    fn from_usize(v: usize) -> Self { v as u32 }
+    fn from_i32(v: i32) -> Self { v as u32 }
+}
+
+impl MeshIndex for u64 {
+    fn to_u64(self) -> u64 { self }
+    fn from_usize(v: usize) -> Self { v as u64 }
+    fn from_i32(v: i32) -> Self { v as i64 as u64 }
+}
+
 /// GL-style mesh representation. Generic over precision (f32/f64) and index type (u32/u64).
 #[derive(Clone, Debug, Default)]
 pub struct MeshGLP<P: Copy + Default, I: Copy + Default = u32> {
@@ -39,26 +90,30 @@ pub struct MeshGLP<P: Copy + Default, I: Copy + Default = u32> {
     pub tolerance: P,
 }
 
-impl MeshGLP<f32, u32> {
+impl<P: MeshPrecision, I: MeshIndex> MeshGLP<P, I> {
     pub fn num_vert(&self) -> usize {
-        if self.num_prop == 0 { 0 } else { self.vert_properties.len() / self.num_prop as usize }
+        if self.num_prop.to_u64() == 0 {
+            0
+        } else {
+            self.vert_properties.len() / self.num_prop.to_u64() as usize
+        }
     }
 
     pub fn num_tri(&self) -> usize {
         self.tri_verts.len() / 3
     }
 
-    pub fn get_vert_pos(&self, v: usize) -> [f32; 3] {
-        let offset = v * self.num_prop as usize;
+    pub fn get_vert_pos(&self, v: usize) -> [P; 3] {
+        let offset = v * self.num_prop.to_u64() as usize;
         [self.vert_properties[offset], self.vert_properties[offset + 1], self.vert_properties[offset + 2]]
     }
 
-    pub fn get_tri_verts(&self, t: usize) -> [u32; 3] {
+    pub fn get_tri_verts(&self, t: usize) -> [I; 3] {
         let offset = 3 * t;
         [self.tri_verts[offset], self.tri_verts[offset + 1], self.tri_verts[offset + 2]]
     }
 
-    pub fn get_tangent(&self, h: usize) -> [f32; 4] {
+    pub fn get_tangent(&self, h: usize) -> [P; 4] {
         let offset = 4 * h;
         [
             self.halfedge_tangent[offset],
@@ -67,7 +122,9 @@ impl MeshGLP<f32, u32> {
             self.halfedge_tangent[offset + 3],
         ]
     }
+}
 
+impl MeshGLP<f32, u32> {
     /// Merges coincident vertices based on position within tolerance.
     /// Uses BVH collision detection to find open edges, then groups
     /// coincident vertices via union-find. Returns true if new merges
@@ -285,36 +342,6 @@ impl MeshGLP<f32, u32> {
         }
         self.run_transform.clear();
         self.run_flags.clear();
-    }
-}
-
-impl MeshGLP<f64, u64> {
-    pub fn num_vert(&self) -> usize {
-        if self.num_prop == 0 { 0 } else { self.vert_properties.len() / self.num_prop as usize }
-    }
-
-    pub fn num_tri(&self) -> usize {
-        self.tri_verts.len() / 3
-    }
-
-    pub fn get_vert_pos(&self, v: usize) -> [f64; 3] {
-        let offset = v * self.num_prop as usize;
-        [self.vert_properties[offset], self.vert_properties[offset + 1], self.vert_properties[offset + 2]]
-    }
-
-    pub fn get_tri_verts(&self, t: usize) -> [u64; 3] {
-        let offset = 3 * t;
-        [self.tri_verts[offset], self.tri_verts[offset + 1], self.tri_verts[offset + 2]]
-    }
-
-    pub fn get_tangent(&self, h: usize) -> [f64; 4] {
-        let offset = 4 * h;
-        [
-            self.halfedge_tangent[offset],
-            self.halfedge_tangent[offset + 1],
-            self.halfedge_tangent[offset + 2],
-            self.halfedge_tangent[offset + 3],
-        ]
     }
 }
 

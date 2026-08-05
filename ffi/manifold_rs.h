@@ -314,15 +314,18 @@ void manifold_rs_meshgl_destroy(MeshGlRs* g);
  * keeping the signature identical makes the two entry points interchangeable
  * at the call site.
  *
- * NOTE: the kernel currently narrows to single precision and 32 bit indices
- * internally, so this is a wider interface, not more capacity end to end:
- *   - Coordinates round trip through float, losing ~1e-7 of relative
- *     precision. Harmless at any physical tolerance.
- *   - Indices are narrowed to uint32_t. That would WRAP, not saturate, so
- *     manifold_rs_from_mesh64 rejects any tri_verts entry greater than
- *     UINT32_MAX (returns NULL, with the offending index in the last-error
- *     message) rather than silently building wrong geometry that reports
- *     status 0. In practice this caps a mesh at ~4 billion vertices.
+ * Coordinates are lossless end to end: the kernel computes in double
+ * precision, and this path feeds it and reads it back without any narrowing,
+ * including the tolerance (which, unlike the float export, is not floored at
+ * FLT_EPSILON * bounding-box scale).
+ *
+ * Indices are the one exception: the kernel indexes vertices with 32 bits
+ * (as the C++ reference does), so uint64_t indices would be narrowed to
+ * uint32_t internally. That would WRAP, not saturate, so
+ * manifold_rs_from_mesh64 rejects any tri_verts entry greater than
+ * UINT32_MAX (returns NULL, with the offending index in the last-error
+ * message) rather than silently building wrong geometry that reports
+ * status 0. In practice this caps a mesh at ~4 billion vertices.
  *
  * Handles produced by manifold_rs_from_mesh64 are ordinary ManifoldRs handles
  * and may be mixed freely with ones from manifold_rs_from_mesh.

@@ -31,12 +31,11 @@ namespace ManifoldRust
 	/// native resources and needs no disposal.
 	/// </summary>
 	/// <remarks>
-	/// The kernel currently computes in single precision internally, so the extra
-	/// width here is interface fidelity - a caller whose geometry is already
-	/// <c>double</c> does not have to narrow it by hand - and not extra precision
-	/// end to end. Coordinates that went in through
+	/// The kernel computes in double precision, and this path is lossless:
+	/// coordinates that went in through
 	/// <see cref="Manifold.FromMesh64(ReadOnlySpan{double}, ReadOnlySpan{ulong}, uint)"/>
-	/// come back having round-tripped through <c>float</c>.
+	/// and were left untouched by an operation come back bit-identical, with no
+	/// <c>float</c> round-trip anywhere.
 	/// </remarks>
 	public sealed class MeshGL64
 	{

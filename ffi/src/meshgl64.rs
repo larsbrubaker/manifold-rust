@@ -23,11 +23,11 @@
 //! C side, so the accessors below spell each type out rather than sharing the
 //! f32 declarations.
 //!
-//! The core crate currently narrows to `MeshGL` internally on import and widens
-//! again on export (manifold_meshgl.rs:443/464), so this is a wider *interface*,
-//! not extra precision end to end. It exists so a caller whose geometry is
-//! already `double`/`uint64` does not have to narrow it by hand. Coordinates
-//! lose precision in that round trip (~1e-7); indices would *wrap*, which is
+//! The kernel computes in f64 and the core's `from_mesh_gl64`/`get_mesh_gl64`
+//! are lossless, so coordinates and tolerance survive this path at full double
+//! precision — no narrowing anywhere. Indices are the exception: the kernel
+//! indexes vertices with 32 bits (matching the C++ reference, whose import
+//! casts every index to `uint32_t`), and that narrowing would *wrap*, which is
 //! not a precision loss but a correctness one, so `manifold_rs_from_mesh64`
 //! rejects out-of-range indices outright rather than passing them through.
 
@@ -103,12 +103,13 @@ pub unsafe extern "C" fn manifold_rs_from_mesh64(
             )
         };
 
-        // The core's `from_mesh_gl64` narrows every index with `as u32`
-        // (manifold_meshgl.rs:449), which *wraps* rather than saturating: an
-        // index of exactly 2^32 would silently become 0 and produce wrong
-        // geometry reporting status 0 — the worst possible failure mode. Reject
-        // it here instead. This is a real ceiling on the 64-bit path, not a
-        // formality, so it gets its own rung on the ladder.
+        // The core's `from_mesh_gl64` truncates every index to u32 (the
+        // kernel's index width, matching the C++ import's uint32_t casts),
+        // which *wraps* rather than saturating: an index of exactly 2^32
+        // would silently become 0 and produce wrong geometry reporting
+        // status 0 — the worst possible failure mode. Reject it here instead.
+        // This is a real ceiling on the 64-bit path, not a formality, so it
+        // gets its own rung on the ladder.
         if let Some((i, &bad)) = tris
             .iter()
             .enumerate()

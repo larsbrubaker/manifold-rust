@@ -15,7 +15,7 @@ pub use types_bounds::{Box, Rect};
 
 #[path = "types_meshgl.rs"]
 mod types_meshgl;
-pub use types_meshgl::{MeshGLP, MeshGL, MeshGL64};
+pub use types_meshgl::{MeshGLP, MeshGL, MeshGL64, MeshIndex, MeshPrecision};
 
 // ---------------------------------------------------------------------------
 // Constants

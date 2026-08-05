@@ -83,9 +83,9 @@ fn cube_round_trips_through_the_f64_path() {
 
 #[test]
 fn f64_and_f32_paths_describe_the_same_solid() {
-    // The core crate narrows to f32 internally on import, so the two paths must
-    // agree exactly — not merely to some tolerance. If that ever changes this
-    // test is the tripwire.
+    // The cube's coordinates are exactly representable in f32, so even though
+    // the f64 path is lossless (no narrowing anywhere), both paths must
+    // produce bit-identical geometry — not merely to some tolerance.
     let a64 = ffi_cube64([0.0, 0.0, 0.0], 1.0);
     let a32 = ffi_cube([0.0, 0.0, 0.0], 1.0);
 
@@ -110,6 +110,33 @@ fn f64_and_f32_paths_describe_the_same_solid() {
         manifold_rs_destroy(a64);
         manifold_rs_destroy(a32);
     }
+}
+
+#[test]
+fn f64_coordinates_survive_the_ffi_boundary_losslessly() {
+    // A coordinate with more significand bits than f32 holds must come back
+    // bit-identical through from_mesh64 → export. This is the FFI-level
+    // tripwire for any regression back to the old narrow-through-f32 import.
+    let third = 1.0_f64 / 3.0;
+    assert_ne!(third as f32 as f64, third, "premise: 1/3 is not f32-representable");
+
+    let (mut verts, tris) = cube_mesh64([0.0, 0.0, 0.0], 1.0);
+    for v in verts.iter_mut() {
+        *v *= third; // 0 and 1 scale exactly; the far corner becomes 1/3
+    }
+    let cube = unsafe {
+        manifold_rs_from_mesh64(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3)
+    };
+    assert!(!cube.is_null());
+    assert_eq!(unsafe { manifold_rs_status(cube) }, 0);
+
+    let mesh = export64(cube);
+    assert!(
+        mesh.vert_properties.iter().any(|&v| v == third),
+        "1/3 did not survive the f64 round trip bit-exactly"
+    );
+
+    unsafe { manifold_rs_destroy(cube) };
 }
 
 #[test]
@@ -192,8 +219,8 @@ fn invalid_from_mesh64_arguments_return_null() {
 
 #[test]
 fn tri_index_beyond_u32_is_rejected_rather_than_wrapped() {
-    // The kernel indexes with 32 bits and the core's from_mesh_gl64 narrows
-    // with `as u32`, which wraps. 1 << 32 would become 0 — an in-range index
+    // The kernel indexes with 32 bits and the core's from_mesh_gl64 truncates
+    // indices to u32, which wraps. 1 << 32 would become 0 — an in-range index
     // pointing at the wrong vertex, producing wrong geometry that reports
     // status 0. That has to be a NULL plus a message, not a silent success.
     let (verts, mut tris) = cube_mesh64([0.0, 0.0, 0.0], 1.0);
