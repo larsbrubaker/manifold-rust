@@ -146,13 +146,14 @@ same is true of `CancelToken`.
 `double` — most mesh formats, and anything that came out of a CAD kernel — so
 they do not have to narrow it by hand at the boundary.
 
-**They are not more precision end to end.** The kernel currently computes in
-single precision internally, so coordinates handed to `FromMesh64` round-trip
-through `float` and come back out of `GetMeshGL64` having lost about 1e-7 of
-relative precision. This is input fidelity and future-proofing, not a
-double-precision pipeline. At any physical tolerance the difference is
-irrelevant; if you are relying on more than seven significant digits, this API
-does not give it to you today.
+**Coordinates are double precision end to end.** The kernel computes in
+double precision, and this path feeds it and reads it back without narrowing
+anywhere: a coordinate handed to `FromMesh64` that a boolean leaves untouched
+comes back out of `GetMeshGL64` bit-identical, and booleans themselves run at
+full f64 precision. (The `float`-based `FromMesh`/`GetMeshGL` remain the lossy
+pair: their coordinates narrow at the boundary and the exported tolerance is
+floored at `float` epsilon times the bounding-box scale, which the f64 export
+does not do.)
 
 Indices are the case where the narrowing is not merely lossy but *wrong*: the
 kernel indexes vertices with 32 bits, and `as u32` wraps. An index of 2^32 would

@@ -110,11 +110,13 @@ unwinds shortly after the request rather than instantly.
 `manifold_rs_meshgl64_*` accessors mirror the single-precision family with the
 element types of the core crate's `MeshGL64`: `double` vertex properties and
 `uint64_t` indices, but `run_original_id` stays `uint32_t` (a mesh ID is not an
-index). The kernel narrows to single precision internally, so this is a wider
-*interface*, not extra precision end to end — it exists so a caller whose data
-is already `double`/`uint64_t` does not have to narrow it by hand. The
-`ManifoldRs*` it produces is an ordinary handle and mixes freely with ones from
-`manifold_rs_from_mesh`.
+index). The kernel computes in double precision and this path is lossless end
+to end: coordinates and tolerance go in and come out at full f64 precision,
+with none of the f32 narrowing (or the FLT_EPSILON tolerance floor) the
+single-precision export applies. Indices are the one exception — the kernel
+indexes vertices with 32 bits, so `manifold_rs_from_mesh64` rejects indices
+above `UINT32_MAX` rather than wrapping them. The `ManifoldRs*` it produces is
+an ordinary handle and mixes freely with ones from `manifold_rs_from_mesh`.
 
 ## Memory ownership
 

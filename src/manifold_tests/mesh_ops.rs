@@ -279,6 +279,67 @@ fn test_cpp_merge_refine() {
         "MergeRefine: expected volume≈31.21, got {}", refined.volume());
 }
 
+/// MeshGL64 must be lossless end to end: a coordinate that is NOT
+/// representable in f32 has to survive from_mesh_gl64 → boolean →
+/// get_mesh_gl64 bit-for-bit. This is the tripwire for any regression back
+/// to the old narrow-through-MeshGL import path.
+#[test]
+fn test_mesh_gl64_boolean_round_trip_is_lossless() {
+    // Per-axis extents whose f64 values have more significand bits than f32
+    // holds. Prove the premise before relying on it.
+    let ext = [1.0_f64 / 3.0, 2.0_f64 / 3.0, 5.0_f64 / 7.0];
+    for &v in &ext {
+        assert_ne!(v as f32 as f64, v, "test premise: {v} must not be f32-representable");
+    }
+
+    // Unit cube scaled per-axis in f64. 0 * k and 1 * k are exact, so the far
+    // corner of the box carries exactly the ext values into the import.
+    let mut mesh = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false).get_mesh_gl64(-1);
+    let np = mesh.num_prop as usize;
+    for i in 0..mesh.num_vert() {
+        for j in 0..3 {
+            mesh.vert_properties[i * np + j] *= ext[j];
+        }
+    }
+
+    let a = Manifold::from_mesh_gl64(&mesh);
+    assert_eq!(a.status(), crate::types::Error::NoError);
+
+    // Import alone must already be lossless.
+    let direct = a.get_mesh_gl64(-1);
+    for j in 0..3 {
+        let dnp = direct.num_prop as usize;
+        assert!(
+            (0..direct.num_vert())
+                .any(|i| direct.vert_properties[i * dnp + j] == ext[j]),
+            "direct round trip lost axis-{j} coordinate {}", ext[j]
+        );
+    }
+
+    // Union with a small cube strictly inside A: the boolean pipeline runs,
+    // and the result is exactly A's shell, so the precise corner survives.
+    let b = Manifold::cube(Vec3::new(0.05, 0.05, 0.05), false)
+        .translate(Vec3::new(0.1, 0.1, 0.1));
+    let result = a.union(&b);
+    assert_eq!(result.status(), crate::types::Error::NoError);
+
+    let out = result.get_mesh_gl64(-1);
+    let onp = out.num_prop as usize;
+    for j in 0..3 {
+        assert!(
+            (0..out.num_vert()).any(|i| out.vert_properties[i * onp + j] == ext[j]),
+            "boolean round trip lost axis-{j} coordinate {} (bit-exact match required)",
+            ext[j]
+        );
+    }
+
+    // The f64 export must not floor tolerance at f32 epsilon the way the f32
+    // export does (C++ GetMeshGL64 vs GetMeshGL).
+    let out32 = result.get_mesh_gl(-1);
+    assert!(out.tolerance < out32.tolerance as f64,
+        "f64 tolerance {} should be below the f32-floored {}", out.tolerance, out32.tolerance);
+}
+
 /// C++ TEST(Manifold, ObjRoundTrip) — cube → OBJ string → cube, volume preserved.
 #[test]
 fn test_cpp_obj_round_trip() {

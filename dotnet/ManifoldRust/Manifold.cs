@@ -116,14 +116,12 @@ namespace ManifoldRust
 		/// need not stay alive.
 		/// </summary>
 		/// <remarks>
-		/// The kernel computes in single precision and indexes with 32 bits
-		/// internally, so this is a wider <em>interface</em>, not more capacity end to
-		/// end: coordinates round-trip through <c>float</c> (losing about 1e-7 of
-		/// relative precision, harmless at any physical tolerance), and an index above
+		/// The kernel computes in double precision and this path is lossless for
+		/// coordinates: nothing narrows on import or export, so geometry survives at
+		/// full <c>double</c> precision end to end. Indexing is the one limit — the
+		/// kernel indexes vertices with 32 bits, so an index above
 		/// <see cref="uint.MaxValue"/> is rejected outright rather than wrapped into
-		/// wrong geometry that reports <see cref="ManifoldStatus.NoError"/>. It exists
-		/// so a caller whose geometry is already <c>double</c> does not have to narrow
-		/// it by hand.
+		/// wrong geometry that reports <see cref="ManifoldStatus.NoError"/>.
 		/// </remarks>
 		/// <param name="vertProperties">
 		/// <paramref name="numProp"/> doubles per vertex; the first three are x, y, z.
@@ -543,9 +541,9 @@ namespace ManifoldRust
 		/// than failing.
 		/// </summary>
 		/// <remarks>
-		/// See <see cref="MeshGL64"/> for why the extra width is interface fidelity
-		/// rather than extra precision, and why the index arrays still come back as
-		/// <c>uint[]</c>.
+		/// Coordinates come back at full <c>double</c> precision straight from the
+		/// f64 kernel — see <see cref="MeshGL64"/>, which also explains why the
+		/// index arrays still come back as <c>uint[]</c>.
 		/// </remarks>
 		/// <exception cref="ObjectDisposedException">This manifold has been disposed.</exception>
 		/// <exception cref="ManifoldException">

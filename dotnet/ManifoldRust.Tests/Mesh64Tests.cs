@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Tests for the double-precision entry points. The claim being pinned is not
-// "f64 is more accurate" - the kernel narrows internally, so it is not - but
-// that the wide path is a faithful alternative spelling of the narrow one: the
-// same geometry in, the same geometry out, with provenance intact.
+// Tests for the double-precision entry points. Two claims are pinned: the wide
+// path is lossless (the kernel computes in f64 and nothing narrows on the way
+// in or out), and on f32-representable geometry it is a faithful alternative
+// spelling of the narrow path - the same geometry in, the same geometry out,
+// with provenance intact.
 
 using System;
 using System.Linq;
@@ -77,10 +78,39 @@ namespace ManifoldRust.Tests
 			await Assert.That(wide.TriVerts.SequenceEqual(narrow.TriVerts)).IsTrue();
 			await Assert.That(wide.VertexCount).IsEqualTo(narrow.VertexCount);
 
-			// And the coordinates match once the float side is widened - which is the
-			// honest statement of what the f64 path buys today: the same numbers in a
-			// wider container, since the kernel computed them in single precision.
+			// And the coordinates match once the float side is widened: these inputs
+			// are exactly representable as floats, so both paths hand the kernel the
+			// same numbers and get the same numbers back.
 			await Assert.That(wide.VertProperties.SequenceEqual(narrow.VertProperties.Select(v => (double)v))).IsTrue();
+		}
+
+		[Test]
+		public async Task DoubleCoordinatesSurviveABooleanLosslessly()
+		{
+			// The MatterCAD case: a coordinate with more significand bits than a
+			// float holds must survive FromMesh64 -> boolean -> GetMeshGL64
+			// bit-identical. This is the end-to-end tripwire for any regression
+			// back to a float round-trip inside the kernel path.
+			double third = 1.0 / 3.0;
+			await Assert.That((double)(float)third).IsNotEqualTo(third);
+
+			(double[] verts, ulong[] tris) = TestMeshes.Cube64(0, 0, 0, 1);
+			for (int i = 0; i < verts.Length; i++)
+			{
+				verts[i] *= third; // 0 and 1 scale exactly; the far corner becomes 1/3
+			}
+
+			using Manifold a = Manifold.FromMesh64(verts, tris);
+			await Assert.That(a.Status).IsEqualTo(ManifoldStatus.NoError);
+
+			// Union with a small cube strictly inside: the boolean pipeline runs
+			// and the result is exactly the outer shell.
+			using Manifold b = TestMeshes.OriginalCube64(0.1, 0.1, 0.1, 0.05);
+			using Manifold union = Manifold.BatchBoolean(new[] { a, b }, ManifoldOpType.Add);
+			await Assert.That(union.Status).IsEqualTo(ManifoldStatus.NoError);
+
+			MeshGL64 mesh = union.GetMeshGL64();
+			await Assert.That(mesh.VertProperties.Any(v => v == third)).IsTrue();
 		}
 
 		[Test]
