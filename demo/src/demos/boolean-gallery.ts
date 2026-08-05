@@ -200,12 +200,28 @@ export function init(container: HTMLElement): () => void {
     }
   }
 
+  // Booleans run synchronously on the main thread; animating a pair whose
+  // boolean takes seconds per frame would freeze the tab. Auto-pause when a
+  // frame blows this budget — the user can re-enable Animate any time.
+  const ANIMATE_BUDGET_MS = 1500;
+
   function animateStep() {
     if (!animating) return;
     rotX = (rotX + ROT_SPEED_X) % 360;
     rotY = (rotY + ROT_SPEED_Y) % 360;
     rotZ = (rotZ + ROT_SPEED_Z) % 360;
+    const t0 = performance.now();
     update(true);
+    const dt = performance.now() - t0;
+    if (dt > ANIMATE_BUDGET_MS) {
+      toggleAnimate(false);
+      const box = animateBox.querySelector('input') as HTMLInputElement | null;
+      if (box) box.checked = false;
+      errorBox.style.display = 'block';
+      errorBox.innerHTML = `<strong>Animation paused:</strong> this boolean takes ` +
+        `${(dt / 1000).toFixed(1)} s per frame. Re-check Animate to continue anyway.`;
+      return;
+    }
     animId = requestAnimationFrame(animateStep);
   }
 
@@ -361,7 +377,8 @@ export function init(container: HTMLElement): () => void {
   controlsEl.appendChild(createSlider('Offset X ', -1.5, 1.5, offsetX, 0.1, v => { offsetX = v; saveSetting(DEMO, 'offsetX', v); update(); }));
   controlsEl.appendChild(createSlider('Offset Y ', -1.5, 1.5, offsetY, 0.1, v => { offsetY = v; saveSetting(DEMO, 'offsetY', v); update(); }));
   controlsEl.appendChild(createSlider('Offset Z ', -1.5, 1.5, offsetZ, 0.1, v => { offsetZ = v; saveSetting(DEMO, 'offsetZ', v); update(); }));
-  controlsEl.appendChild(createCheckbox('Animate', animate, toggleAnimate));
+  const animateBox = createCheckbox('Animate', animate, toggleAnimate);
+  controlsEl.appendChild(animateBox);
   controlsEl.appendChild(createCheckbox('Wireframe', wireframe, v => { saveSetting(DEMO, 'wireframe', v); viewer.setWireframe(v); }));
   const copyBtn = createButton('Copy Debug Info', () => { copyDebugInfo(); });
   controlsEl.appendChild(copyBtn);
