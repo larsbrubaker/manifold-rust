@@ -75,15 +75,20 @@ function randomFrom(pool: ThingiModel[], exclude?: ThingiModel): ThingiModel {
   return pick;
 }
 
-/** Pick a random model pair for the requested manifoldness combination. */
-export async function pickRandomPair(kind: PairKind): Promise<[ThingiModel, ThingiModel]> {
+/**
+ * Pick one random model of the given manifoldness ('m' = manifold per the
+ * dataset flags, 'n' = non-manifold). Callers retry with a fresh pick when a
+ * model fails import — some dataset "closed" flags disagree with the robust
+ * importer's stricter closed check.
+ */
+export async function pickRandomModel(kind: 'm' | 'n', exclude?: ThingiModel): Promise<ThingiModel> {
   await ensureMetadata();
-  const m = manifoldPool!, n = nonManifoldPool!;
-  switch (kind) {
-    case 'mm': { const a = randomFrom(m); return [a, randomFrom(m, a)]; }
-    case 'mn': return [randomFrom(m), randomFrom(n)];
-    case 'nn': { const a = randomFrom(n); return [a, randomFrom(n, a)]; }
-  }
+  return randomFrom(kind === 'm' ? manifoldPool! : nonManifoldPool!, exclude);
+}
+
+/** Operand manifoldness for each pair combination. */
+export function pairOperandKinds(kind: PairKind): ['m' | 'n', 'm' | 'n'] {
+  return kind === 'mm' ? ['m', 'm'] : kind === 'mn' ? ['m', 'n'] : ['n', 'n'];
 }
 
 async function fetchAndUnzip(url: string): Promise<ArrayBuffer> {

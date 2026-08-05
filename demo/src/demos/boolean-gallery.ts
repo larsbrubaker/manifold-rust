@@ -11,7 +11,7 @@ import {
   type MeshData, type ImportedMesh, type BooleanEngine,
 } from '../wasm.ts';
 import { loadSetting, saveSetting } from '../settings.ts';
-import { pickRandomPair, fetchMesh, meshZipUrl, type ThingiModel, type PairKind } from '../thingi.ts';
+import { pickRandomModel, pairOperandKinds, fetchMesh, meshZipUrl, type ThingiModel, type PairKind } from '../thingi.ts';
 
 const DEMO = 'boolean-gallery';
 
@@ -92,6 +92,7 @@ export function init(container: HTMLElement): () => void {
   let pairKind = loadSetting(DEMO, 'pairKind', 'mn') as PairKind;
   let thingiA: ThingiOperand | null = null;
   let thingiB: ThingiOperand | null = null;
+  let skippedImports: { id: number; status: string }[] = [];
   let loadingPair = false;
   let disposed = false;
 
@@ -138,6 +139,7 @@ export function init(container: HTMLElement): () => void {
       info.pair_kind = pairKind;
       info.model_a = describeOperand(thingiA);
       info.model_b = describeOperand(thingiB);
+      if (skippedImports.length) info.skipped_imports = skippedImports;
     } else {
       info.shape_a = SHAPE_NAMES[shapeA] || shapeA;
       info.shape_b = SHAPE_NAMES[shapeB] || shapeB;
@@ -229,28 +231,47 @@ export function init(container: HTMLElement): () => void {
     return `#${o.model.id} &ldquo;${o.model.name}&rdquo; (${o.model.faces} tris, ${kind})`;
   }
 
+  // Some dataset models flagged "closed" still fail the robust importer's
+  // stricter closed check — skip those and re-roll, keeping a record of the
+  // skips for the debug info.
+  async function loadOperand(kind: 'm' | 'n', exclude?: ThingiModel): Promise<ThingiOperand> {
+    const MAX_ATTEMPTS = 5;
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+      const model = await pickRandomModel(kind, exclude);
+      setThingiInfo(`Fetching #${model.id} &ldquo;${model.name}&rdquo;…`);
+      const parsed = await fetchMesh(model);
+      if (disposed) throw new Error('demo closed');
+      const handle = importTriangleSoup(parsed.positions, parsed.indices);
+      if (handle.ok) {
+        return { model, handle, normalization: { center: parsed.center, scale: parsed.scale } };
+      }
+      skippedImports.push({ id: model.id, status: handle.status });
+      handle.free();
+    }
+    throw new Error(`No importable ${kind === 'm' ? 'manifold' : 'non-manifold'} mesh found in ` +
+      `${MAX_ATTEMPTS} attempts (skipped: ${skippedImports.map(s => `#${s.id} ${s.status}`).join(', ')})`);
+  }
+
   async function loadRandomPair() {
     if (loadingPair) return;
     loadingPair = true;
     loadBtn.disabled = true;
     loadBtn.textContent = 'Loading pair…';
     errorBox.style.display = 'none';
+    skippedImports = [];
     try {
-      const [ma, mb] = await pickRandomPair(pairKind);
-      setThingiInfo(`Fetching #${ma.id} and #${mb.id}…`);
-      const [pa, pb] = await Promise.all([fetchMesh(ma), fetchMesh(mb)]);
-      if (disposed) return;
-      const ha = importTriangleSoup(pa.positions, pa.indices);
-      const hb = importTriangleSoup(pb.positions, pb.indices);
-      if (!ha.ok || !hb.ok) {
-        const bad = !ha.ok ? { m: ma, h: ha } : { m: mb, h: hb };
-        const status = bad.h.status;
-        ha.free(); hb.free();
-        throw new Error(`Import of #${bad.m.id} failed: ${status}`);
+      const [kindA, kindB] = pairOperandKinds(pairKind);
+      const a = await loadOperand(kindA);
+      let b: ThingiOperand;
+      try {
+        b = await loadOperand(kindB, kindA === kindB ? a.model : undefined);
+      } catch (e) {
+        a.handle.free();
+        throw e;
       }
       freeThingiPair();
-      thingiA = { model: ma, handle: ha, normalization: { center: pa.center, scale: pa.scale } };
-      thingiB = { model: mb, handle: hb, normalization: { center: pb.center, scale: pb.scale } };
+      thingiA = a;
+      thingiB = b;
       mode = 'thingi';
       toggleAnimate(false);
       // Random static orientation for B so every pair meets differently.
