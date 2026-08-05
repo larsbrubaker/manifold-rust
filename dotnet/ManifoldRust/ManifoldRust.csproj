@@ -15,16 +15,25 @@
     <IsAotCompatible>true</IsAotCompatible>
   </PropertyGroup>
 
+  <ItemGroup>
+    <!-- The tests cover NativeArrays.NarrowChecked directly: the case it guards
+         against needs a mesh with more than 4 billion vertices, so it cannot be
+         reached through the public API on any machine that exists. -->
+    <InternalsVisibleTo Include="ManifoldRust.Tests" />
+  </ItemGroup>
+
   <!--
-    Only win-x64 is packed today. Every other runtime identifier needs a CI job
-    that builds manifold_rs for that platform and drops the result into
-    runtimes/<rid>/native/, which does not exist here. Until then consumers on
-    other platforms set ManifoldNative.LibraryPath, point MANIFOLD_RS_NATIVE at a
-    locally built library, or copy it next to their application.
+    Natives are built by cargo, per platform, and staged under native-staging/
+    by the release workflow (.github/workflows/release-nuget.yml) before pack.
+    win-x64 is required; the others are packed when present so a local pack still
+    works with only the platform at hand. A consumer on a runtime identifier the
+    package does not carry sets ManifoldNative.LibraryPath, points
+    MANIFOLD_RS_NATIVE at a locally built library, or copies it next to their
+    application.
   -->
   <PropertyGroup>
     <PackageId>ManifoldRust</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>Lars Brubaker</Authors>
     <Company>Lars Brubaker</Company>
     <Copyright>Copyright 2026 Lars Brubaker</Copyright>
@@ -44,32 +53,86 @@
   </ItemGroup>
 
   <PropertyGroup>
-    <!-- The native to pack for win-x64. It defaults to a copy staged under the
-         project rather than to target\release\manifold_rs.dll directly, because
-         a cargo build can relink that file at any moment and packing a half
-         written dll is not something the pack step would notice. Refresh the
-         staged copy from a release build before cutting a package; override this
+    <!-- The native to pack for each runtime identifier. They default to copies
+         staged under the project rather than to target\release directly, because
+         a cargo build can relink those files at any moment and packing a half
+         written library is not something the pack step would notice. Refresh the
+         staged copies from release builds before cutting a package; override a
          property to pack a native from somewhere else. -->
     <ManifoldRustNativeWin64 Condition="'$(ManifoldRustNativeWin64)' == ''">$(MSBuildProjectDirectory)\native-staging\win-x64\manifold_rs.dll</ManifoldRustNativeWin64>
+    <ManifoldRustNativeLinux64 Condition="'$(ManifoldRustNativeLinux64)' == ''">$(MSBuildProjectDirectory)\native-staging\linux-x64\libmanifold_rs.so</ManifoldRustNativeLinux64>
+    <ManifoldRustNativeOsxArm64 Condition="'$(ManifoldRustNativeOsxArm64)' == ''">$(MSBuildProjectDirectory)\native-staging\osx-arm64\libmanifold_rs.dylib</ManifoldRustNativeOsxArm64>
+    <ManifoldRustNativeOsx64 Condition="'$(ManifoldRustNativeOsx64)' == ''">$(MSBuildProjectDirectory)\native-staging\osx-x64\libmanifold_rs.dylib</ManifoldRustNativeOsx64>
+
+    <!-- Set by the release workflow. A published package missing a platform it
+         claims to support is a support burden that surfaces months later as a
+         DllNotFoundException on someone else's machine, so a release refuses to
+         pack a partial set; a developer packing locally still gets warnings. -->
+    <ManifoldRustRequireAllNatives Condition="'$(ManifoldRustRequireAllNatives)' == ''">false</ManifoldRustRequireAllNatives>
   </PropertyGroup>
 
   <ItemGroup>
     <!-- runtimes/<rid>/native is what the runtime's own probing looks at, so a
          consumer gets the native with no configuration at all. Conditional so a
-         plain build still succeeds without a native present; pack is where its
-         absence is fatal - see EnsureNativeIsPacked below. -->
+         plain build still succeeds without a native present, and so a pack on a
+         developer machine produces a win-x64-only package instead of failing;
+         the release workflow is what supplies all four - see EnsureNativeIsPacked
+         below for which are required. -->
     <None Include="$(ManifoldRustNativeWin64)"
           Condition="Exists('$(ManifoldRustNativeWin64)')"
           Pack="true"
           PackagePath="runtimes/win-x64/native"
           Visible="false" />
+    <None Include="$(ManifoldRustNativeLinux64)"
+          Condition="Exists('$(ManifoldRustNativeLinux64)')"
+          Pack="true"
+          PackagePath="runtimes/linux-x64/native"
+          Visible="false" />
+    <None Include="$(ManifoldRustNativeOsxArm64)"
+          Condition="Exists('$(ManifoldRustNativeOsxArm64)')"
+          Pack="true"
+          PackagePath="runtimes/osx-arm64/native"
+          Visible="false" />
+    <None Include="$(ManifoldRustNativeOsx64)"
+          Condition="Exists('$(ManifoldRustNativeOsx64)')"
+          Pack="true"
+          PackagePath="runtimes/osx-x64/native"
+          Visible="false" />
   </ItemGroup>
 
   <!-- Publishing a package without its native is silent and useless: consumers
-       only find out at the first P/Invoke. Fail the pack instead. -->
+       only find out at the first P/Invoke. win-x64 is fatal unconditionally,
+       because it is the one platform this project is always built on, so its
+       absence means the staging step went wrong rather than that the platform
+       was not built. The rest are fatal only under ManifoldRustRequireAllNatives
+       - a local pack is a legitimate reason to be missing them.
+
+       This target only knows about the four runtime identifiers spelled out
+       above. Adding a build for a fifth means adding it here too, which the
+       release workflow enforces by refusing to stage a runtime identifier this
+       file does not mention. -->
   <Target Name="EnsureNativeIsPacked" BeforeTargets="GenerateNuspec">
     <Error Condition="!Exists('$(ManifoldRustNativeWin64)')"
            Text="The win-x64 native is missing, so the package would ship without runtimes/win-x64/native/manifold_rs.dll. Build manifold_rs in release and copy target\release\manifold_rs.dll to '$(ManifoldRustNativeWin64)', or set the ManifoldRustNativeWin64 property to an existing native." />
+
+    <!-- ErrorAndContinue so a release that is missing two platforms says so in
+         one run; a plain Error would abort the target after the first. -->
+    <Error Condition="'$(ManifoldRustRequireAllNatives)' == 'true' AND !Exists('$(ManifoldRustNativeLinux64)')"
+           ContinueOnError="ErrorAndContinue"
+           Text="The linux-x64 native is missing and ManifoldRustRequireAllNatives is set, so this release would ship without runtimes/linux-x64/native/libmanifold_rs.so. Expected at '$(ManifoldRustNativeLinux64)'." />
+    <Error Condition="'$(ManifoldRustRequireAllNatives)' == 'true' AND !Exists('$(ManifoldRustNativeOsxArm64)')"
+           ContinueOnError="ErrorAndContinue"
+           Text="The osx-arm64 native is missing and ManifoldRustRequireAllNatives is set, so this release would ship without runtimes/osx-arm64/native/libmanifold_rs.dylib. Expected at '$(ManifoldRustNativeOsxArm64)'." />
+    <Error Condition="'$(ManifoldRustRequireAllNatives)' == 'true' AND !Exists('$(ManifoldRustNativeOsx64)')"
+           ContinueOnError="ErrorAndContinue"
+           Text="The osx-x64 native is missing and ManifoldRustRequireAllNatives is set, so this release would ship without runtimes/osx-x64/native/libmanifold_rs.dylib. Expected at '$(ManifoldRustNativeOsx64)'." />
+
+    <Warning Condition="'$(ManifoldRustRequireAllNatives)' != 'true' AND !Exists('$(ManifoldRustNativeLinux64)')"
+             Text="The linux-x64 native is missing; the package will not carry runtimes/linux-x64/native/libmanifold_rs.so. Expected at '$(ManifoldRustNativeLinux64)'." />
+    <Warning Condition="'$(ManifoldRustRequireAllNatives)' != 'true' AND !Exists('$(ManifoldRustNativeOsxArm64)')"
+             Text="The osx-arm64 native is missing; the package will not carry runtimes/osx-arm64/native/libmanifold_rs.dylib. Expected at '$(ManifoldRustNativeOsxArm64)'." />
+    <Warning Condition="'$(ManifoldRustRequireAllNatives)' != 'true' AND !Exists('$(ManifoldRustNativeOsx64)')"
+             Text="The osx-x64 native is missing; the package will not carry runtimes/osx-x64/native/libmanifold_rs.dylib. Expected at '$(ManifoldRustNativeOsx64)'." />
   </Target>
 
 </Project>

@@ -37,3 +37,32 @@ jobs:
       # wasm demo member (a wasm32 cdylib with no host tests).
       - name: Run FFI tests
         run: cargo test --release -p manifold-ffi
+
+  # The managed binding is tested on Windows because that is the platform its
+  # native is packed for today, and the tests load the real shared library - there
+  # is no fake, so the cargo build is a prerequisite, not an optimisation. The
+  # cpp-reference submodule is not needed here: nothing in this job reads the C++
+  # test models.
+  dotnet:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the shared library
+        run: cargo build --release -p manifold-ffi
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: dotnet/global.json
+
+      # Run from dotnet/ so global.json applies: it opts dotnet test into
+      # Microsoft.Testing.Platform, which TUnit requires on the .NET 10 SDK.
+      - name: Run binding tests
+        working-directory: dotnet
+        run: dotnet test ManifoldRust.Tests/ManifoldRust.Tests.csproj

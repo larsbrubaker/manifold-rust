@@ -18,7 +18,9 @@
 namespace ManifoldRust
 {
 	/// <summary>
-	/// The boolean operation <see cref="Manifold.BatchBoolean"/> applies.
+	/// The boolean operation
+	/// <see cref="Manifold.BatchBoolean(System.Collections.Generic.IReadOnlyList{Manifold}, ManifoldOpType)"/>
+	/// applies.
 	/// </summary>
 	public enum ManifoldOpType
 	{

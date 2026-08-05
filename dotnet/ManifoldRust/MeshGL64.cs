@@ -12,24 +12,37 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// The managed copy of an exported mesh. Deliberately not a handle wrapper: the
-// native MeshGlRs is created, drained and destroyed inside Manifold.GetMeshGL,
-// so nothing a caller holds has an unmanaged lifetime and there is no way to
-// read through a pointer the FFI has already invalidated.
+// The double-precision counterpart of MeshGL, with the same no-native-lifetime
+// design: the native MeshGl64Rs is created, drained and destroyed inside
+// Manifold.GetMeshGL64.
+//
+// Only the coordinates stay wide. The index-shaped fields the ABI hands back as
+// uint64_t come out of here as uint[], because the kernel that produced them
+// indexes with 32 bits and every consumer of a triangle list wants uint anyway.
+// The narrowing is checked rather than cast - see NativeArrays.NarrowChecked.
 
 using System;
 
 namespace ManifoldRust
 {
 	/// <summary>
-	/// A triangle mesh exported from a <see cref="Manifold"/>. All arrays are
-	/// managed copies; the mesh has no native resources and needs no disposal.
+	/// A triangle mesh exported from a <see cref="Manifold"/> with
+	/// double-precision coordinates. All arrays are managed copies; the mesh has no
+	/// native resources and needs no disposal.
 	/// </summary>
-	public sealed class MeshGL
+	/// <remarks>
+	/// The kernel currently computes in single precision internally, so the extra
+	/// width here is interface fidelity - a caller whose geometry is already
+	/// <c>double</c> does not have to narrow it by hand - and not extra precision
+	/// end to end. Coordinates that went in through
+	/// <see cref="Manifold.FromMesh64(ReadOnlySpan{double}, ReadOnlySpan{ulong}, uint)"/>
+	/// come back having round-tripped through <c>float</c>.
+	/// </remarks>
+	public sealed class MeshGL64
 	{
-		private MeshGL(
+		private MeshGL64(
 			uint numProp,
-			float[] vertProperties,
+			double[] vertProperties,
 			uint[] triVerts,
 			uint[] runIndex,
 			uint[] runOriginalId,
@@ -49,8 +62,8 @@ namespace ManifoldRust
 		/// </summary>
 		public uint NumProp { get; }
 
-		/// <summary>Interleaved vertex properties, <see cref="NumProp"/> floats per vertex.</summary>
-		public float[] VertProperties { get; }
+		/// <summary>Interleaved vertex properties, <see cref="NumProp"/> doubles per vertex.</summary>
+		public double[] VertProperties { get; }
 
 		/// <summary>Three vertex indices per triangle, counter-clockwise seen from outside.</summary>
 		public uint[] TriVerts { get; }
@@ -77,23 +90,25 @@ namespace ManifoldRust
 		/// Copies every array out of a live native mesh handle. The caller still owns
 		/// the handle and must destroy it; nothing in the returned object points at it.
 		/// </summary>
-		internal static unsafe MeshGL CopyFrom(IntPtr mesh)
+		internal static unsafe MeshGL64 CopyFrom(IntPtr mesh)
 		{
-			uint numProp = NativeMethods.manifold_rs_meshgl_num_prop(mesh);
+			uint numProp = NativeMethods.manifold_rs_meshgl64_num_prop(mesh);
 
-			float* vertProperties = NativeMethods.manifold_rs_meshgl_vert_properties(mesh, out nuint vertPropertiesLen);
-			uint* triVerts = NativeMethods.manifold_rs_meshgl_tri_verts(mesh, out nuint triVertsLen);
-			uint* runIndex = NativeMethods.manifold_rs_meshgl_run_index(mesh, out nuint runIndexLen);
-			uint* runOriginalId = NativeMethods.manifold_rs_meshgl_run_original_id(mesh, out nuint runOriginalIdLen);
-			uint* faceId = NativeMethods.manifold_rs_meshgl_face_id(mesh, out nuint faceIdLen);
+			double* vertProperties = NativeMethods.manifold_rs_meshgl64_vert_properties(mesh, out nuint vertPropertiesLen);
+			ulong* triVerts = NativeMethods.manifold_rs_meshgl64_tri_verts(mesh, out nuint triVertsLen);
+			ulong* runIndex = NativeMethods.manifold_rs_meshgl64_run_index(mesh, out nuint runIndexLen);
+			uint* runOriginalId = NativeMethods.manifold_rs_meshgl64_run_original_id(mesh, out nuint runOriginalIdLen);
+			ulong* faceId = NativeMethods.manifold_rs_meshgl64_face_id(mesh, out nuint faceIdLen);
 
-			return new MeshGL(
+			return new MeshGL64(
 				numProp,
 				NativeArrays.Copy(vertProperties, vertPropertiesLen),
-				NativeArrays.Copy(triVerts, triVertsLen),
-				NativeArrays.Copy(runIndex, runIndexLen),
+				NativeArrays.NarrowChecked(triVerts, triVertsLen, "tri_verts"),
+				NativeArrays.NarrowChecked(runIndex, runIndexLen, "run_index"),
+				// run_original_id is uint32_t on both paths: a mesh ID is not an index
+				// into the mesh, so there is nothing to narrow.
 				NativeArrays.Copy(runOriginalId, runOriginalIdLen),
-				NativeArrays.Copy(faceId, faceIdLen));
+				NativeArrays.NarrowChecked(faceId, faceIdLen, "face_id"));
 		}
 	}
 }

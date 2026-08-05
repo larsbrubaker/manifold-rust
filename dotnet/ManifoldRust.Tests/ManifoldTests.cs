@@ -235,6 +235,52 @@ namespace ManifoldRust.Tests
 			await Assert.That(second.TriVerts.SequenceEqual(first.TriVerts)).IsTrue();
 		}
 
+		[Test]
+		public async Task TheNativeLibraryReportsTheVersionThisBindingWasWrittenAgainst()
+		{
+			// The handshake every entry point runs once per process. If this fails,
+			// the native next to the test binaries is not the one cargo just built -
+			// and every other test in this assembly would fail with the same mismatch
+			// message rather than with anything about geometry.
+			string version = Manifold.NativeVersion;
+
+			await Assert.That(version).StartsWith(NativeVersionCheck.ExpectedPrefix);
+			await Assert.That(version).Contains("manifold-rust ");
+
+			// And the check itself agrees, rather than only the string it reads.
+			await Assert.That(NativeVersionCheck.IsCompatible(version)).IsTrue();
+			using Manifold cube = TestMeshes.CubeManifold(0, 0, 0, 1);
+			await Assert.That(cube.Status).IsEqualTo(ManifoldStatus.NoError);
+		}
+
+		[Test]
+		public async Task TheVersionComparisonRejectsEveryAbiButThisOne()
+		{
+			// A prefix match is exactly the kind of check that quietly accepts the
+			// wrong thing: without the trailing dot in the expected prefix, "0.2" also
+			// prefixes "0.20.0". These cases pin that it does not.
+			await Assert.That(NativeVersionCheck.IsCompatible("manifold-ffi 0.2.0 (manifold-rust 0.9.3)")).IsTrue();
+			await Assert.That(NativeVersionCheck.IsCompatible("manifold-ffi 0.2.17 (manifold-rust 0.9.3)")).IsTrue();
+
+			await Assert.That(NativeVersionCheck.IsCompatible("manifold-ffi 0.20.0 (manifold-rust 0.9.3)")).IsFalse();
+			await Assert.That(NativeVersionCheck.IsCompatible("manifold-ffi 0.1.0 (manifold-rust 0.9.3)")).IsFalse();
+			await Assert.That(NativeVersionCheck.IsCompatible("manifold-ffi 1.2.0 (manifold-rust 0.9.3)")).IsFalse();
+			await Assert.That(NativeVersionCheck.IsCompatible(string.Empty)).IsFalse();
+		}
+
+		[Test]
+		public async Task TheVersionMismatchMessageNamesBothVersionsAndTheWayOut()
+		{
+			// Whoever hits this has a stale library somewhere on a probing path. The
+			// message has to say which one loaded, what was wanted, and where to look.
+			string message = NativeVersionCheck.MismatchMessage("manifold-ffi 0.1.0 (manifold-rust 0.9.3)");
+
+			await Assert.That(message).Contains("manifold-ffi 0.1.0");
+			await Assert.That(message).Contains("manifold-ffi 0.2.x");
+			await Assert.That(message).Contains("ManifoldNative.LibraryPath");
+			await Assert.That(message).Contains("MANIFOLD_RS_NATIVE");
+		}
+
 		/// <summary>
 		/// Runs <paramref name="action"/> and hands back the <see cref="ManifoldException"/>
 		/// it threw, so a test can assert on the native message it carries. Failing

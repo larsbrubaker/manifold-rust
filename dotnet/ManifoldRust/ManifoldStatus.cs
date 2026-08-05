@@ -21,7 +21,8 @@ namespace ManifoldRust
 	/// Validation state of a <see cref="Manifold"/>. Anything other than
 	/// <see cref="NoError"/> means the solid is empty: it exports as an empty mesh
 	/// and is silently absorbed as empty geometry by
-	/// <see cref="Manifold.BatchBoolean"/>, so check it after every import.
+	/// <see cref="Manifold.BatchBoolean(System.Collections.Generic.IReadOnlyList{Manifold}, ManifoldOpType)"/>,
+	/// so check it after every import.
 	/// </summary>
 	public enum ManifoldStatus
 	{
@@ -66,5 +67,13 @@ namespace ManifoldRust
 
 		/// <summary>Supplied halfedge tangents were invalid.</summary>
 		InvalidTangents = 13,
+
+		/// <summary>
+		/// The operation was interrupted through a <see cref="CancelToken"/>. Unlike
+		/// every other code here this is not a defect in the input: the result is an
+		/// empty solid because the work was abandoned, not because the geometry was
+		/// bad.
+		/// </summary>
+		Cancelled = 14,
 	}
 }

@@ -1,0 +1,264 @@
+# Publishes the ManifoldRust NuGet package.
+#
+# Triggered by pushing a tag of the form nuget-v<version>, e.g. nuget-v0.2.0.
+#
+# Job order is deliberate, cheapest gate first:
+#
+#   version ─┬─> test-rust   ─┬─> native (4 platforms) ──> pack ──> push
+#            └─> test-dotnet ─┘
+#
+# `version` rejects a tag that disagrees with the csproj before four cargo
+# builds have been paid for. The test jobs then run the whole suite *at the
+# tagged commit*, so a release cannot be published from code that does not pass:
+# the branch having been green earlier is a different claim. Only then are the
+# natives built, staged and packed.
+name: Release NuGet
+
+on:
+  push:
+    tags:
+      - 'nuget-v*'
+
+permissions:
+  contents: read
+
+# Two tags pushed close together would otherwise race to publish, and nuget.org
+# rejects a version that already exists - so the loser fails after doing all the
+# work. Serialise instead, and never cancel a run that may already have pushed.
+concurrency:
+  group: release-nuget
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: check tag version
+    runs-on: ubuntu-latest
+    outputs:
+      package-version: ${{ steps.check.outputs.package-version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # The tag is the release's only input, so it has to agree with the version
+      # the package will actually carry. Nothing else runs until it does: a typo
+      # costs seconds rather than four cargo builds, or worse, a yanked package.
+      - name: Check the tag against the package version
+        id: check
+        run: |
+          tag_version="${GITHUB_REF_NAME#nuget-v}"
+          csproj_version=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' dotnet/ManifoldRust/ManifoldRust.csproj)
+          echo "tag: $tag_version, csproj: $csproj_version"
+          if [ "$tag_version" != "$csproj_version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME implies version $tag_version but ManifoldRust.csproj says $csproj_version. Update one of them."
+            exit 1
+          fi
+          echo "package-version=$tag_version" >> "$GITHUB_OUTPUT"
+
+  # The same runs as test.yml, repeated here rather than reused through
+  # workflow_call: that would couple the release gate to a workflow whose
+  # triggers exist for a different purpose, and these are a handful of lines.
+  test-rust:
+    name: rust tests
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Run tests
+        run: cargo test --release
+
+      - name: Run FFI tests
+        run: cargo test --release -p manifold-ffi
+
+  test-dotnet:
+    name: binding tests
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Build the shared library
+        run: cargo build --release -p manifold-ffi
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: dotnet/global.json
+
+      # Run from dotnet/ so global.json applies: it opts dotnet test into
+      # Microsoft.Testing.Platform, which TUnit requires on the .NET 10 SDK.
+      - name: Run binding tests
+        working-directory: dotnet
+        run: dotnet test ManifoldRust.Tests/ManifoldRust.Tests.csproj -c Release
+
+  native:
+    name: native ${{ matrix.rid }}
+    needs: [test-rust, test-dotnet]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # No fail-fast: seeing every platform's failure in one run beats fixing
+      # them one release attempt at a time.
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            rid: win-x64
+            target: x86_64-pc-windows-msvc
+            library: manifold_rs.dll
+          - os: ubuntu-latest
+            rid: linux-x64
+            target: x86_64-unknown-linux-gnu
+            library: libmanifold_rs.so
+          - os: macos-latest
+            rid: osx-arm64
+            target: aarch64-apple-darwin
+            library: libmanifold_rs.dylib
+          # macOS runners are arm64, so this one is a cross build; the toolchain
+          # action installs the target and Apple's linker handles the rest.
+          - os: macos-latest
+            rid: osx-x64
+            target: x86_64-apple-darwin
+            library: libmanifold_rs.dylib
+          # TODO: linux-arm64. `rustup target add aarch64-unknown-linux-gnu`
+          # plus `sudo apt-get install gcc-aarch64-linux-gnu` and
+          # CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
+          # should be all it takes - the dependency tree is pure Rust - but it
+          # has never been run, and an untested leg here fails the whole
+          # release. Add it in a PR where the build can be seen to work.
+          #
+          # Adding ANY runtime identifier here also means adding it to
+          # ManifoldRust.csproj. The pack job refuses to stage a rid the csproj
+          # does not pack, precisely so a new leg cannot be built, uploaded and
+          # then silently dropped from the package.
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      # --target is passed even for the host, so the output path is the same
+      # target/<triple>/release/ shape on every platform.
+      - name: Build the shared library
+        run: cargo build --release -p manifold-ffi --target ${{ matrix.target }}
+
+      - name: Upload the native
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.rid }}
+          path: target/${{ matrix.target }}/release/${{ matrix.library }}
+          if-no-files-found: error
+
+  pack:
+    name: pack and publish
+    needs: [version, native]
+    runs-on: ubuntu-latest
+    env:
+      PACKAGE_VERSION: ${{ needs.version.outputs.package-version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned from dotnet/global.json rather than left to whatever the runner
+      # image happens to ship, so the SDK that packs a release is the one the
+      # tests ran on. The pack step also runs from dotnet/ so that same
+      # global.json governs the build itself, not just the install.
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          global-json-file: dotnet/global.json
+
+      - name: Download the natives
+        uses: actions/download-artifact@v4
+        with:
+          pattern: native-*
+          path: artifacts
+
+      # download-artifact drops each artifact in artifacts/native-<rid>/, which
+      # is one directory level away from the native-staging/<rid>/ layout the
+      # csproj packs from.
+      - name: Stage the natives
+        run: |
+          set -eu
+          staging=dotnet/ManifoldRust/native-staging
+          mkdir -p "$staging"
+          for directory in artifacts/native-*/; do
+            rid="$(basename "$directory")"
+            rid="${rid#native-}"
+            mkdir -p "$staging/$rid"
+            cp "$directory"* "$staging/$rid/"
+          done
+          find "$staging" -type f -printf '%p (%s bytes)\n'
+
+      # The csproj packs a hard-coded set of runtime identifiers, so a new matrix
+      # leg would build and stage a native that pack silently ignores - a package
+      # claiming a platform it does not carry. Compare the two sets and fail
+      # loudly. The expected set is read out of the csproj rather than repeated
+      # here, so there is still only one list to maintain.
+      - name: Check every staged runtime identifier is one the package packs
+        run: |
+          set -eu
+          csproj=dotnet/ManifoldRust/ManifoldRust.csproj
+          grep -o 'runtimes/[A-Za-z0-9-]*/native' "$csproj" | cut -d/ -f2 | sort -u > packed-rids.txt
+          ls -1 dotnet/ManifoldRust/native-staging | sort -u > staged-rids.txt
+          echo "packed by the csproj:"; cat packed-rids.txt
+          echo "staged by this run:"; cat staged-rids.txt
+          unknown=$(comm -13 packed-rids.txt staged-rids.txt | tr '\n' ' ')
+          if [ -n "$unknown" ]; then
+            echo "::error::Built and staged, but the csproj does not pack them, so they would be dropped from the package silently: $unknown. Add a matching ManifoldRustNative* property, None item and EnsureNativeIsPacked check to $csproj."
+            exit 1
+          fi
+          rm packed-rids.txt staged-rids.txt
+
+      # ManifoldRustRequireAllNatives promotes the csproj's three "missing
+      # platform" warnings to errors: a release ships every platform or none.
+      - name: Pack
+        working-directory: dotnet
+        run: dotnet pack ManifoldRust/ManifoldRust.csproj -c Release -p:ManifoldRustRequireAllNatives=true -o ../nupkgs
+
+      # Kept whether or not the push succeeds: if nuget.org rejects the upload
+      # the artifact is what makes the failure diagnosable.
+      - name: Upload the package
+        uses: actions/upload-artifact@v4
+        with:
+          name: nupkg
+          path: nupkgs/*.nupkg
+          if-no-files-found: error
+
+      # The key goes in as a command-line argument because `dotnet nuget push`
+      # offers no environment-variable equivalent: --api-key is the only input,
+      # and the alternative - writing it into NuGet.Config with an apikey entry -
+      # puts the secret on disk, which is strictly worse. The argument is
+      # therefore briefly visible in this container's /proc, which is acceptable
+      # only because a GitHub-hosted runner is single-tenant and destroyed after
+      # the job. Revisit this before ever running the release on a self-hosted or
+      # shared runner.
+      - name: Publish to nuget.org
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "${NUGET_API_KEY:-}" ]; then
+            echo "::error::The NUGET_API_KEY secret is not set on this repository."
+            exit 1
+          fi
+          dotnet nuget push "nupkgs/ManifoldRust.$PACKAGE_VERSION.nupkg" \
+            --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json

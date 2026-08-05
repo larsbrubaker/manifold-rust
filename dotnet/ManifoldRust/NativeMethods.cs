@@ -195,6 +195,28 @@ namespace ManifoldRust
 		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
 		internal static partial IntPtr manifold_rs_batch_boolean(IntPtr* manifolds, nuint count, int op);
 
+		// token may be IntPtr.Zero, which the ABI reads as "uncancellable" and makes
+		// this call identical to manifold_rs_batch_boolean.
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial IntPtr manifold_rs_batch_boolean_ct(IntPtr* manifolds, nuint count, int op, IntPtr token);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial IntPtr manifold_rs_cancel_token_new();
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial void manifold_rs_cancel_token_cancel(IntPtr t);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial int manifold_rs_cancel_token_is_cancelled(IntPtr t);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial void manifold_rs_cancel_token_destroy(IntPtr t);
+
 		[LibraryImport(LibraryName)]
 		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
 		internal static partial IntPtr manifold_rs_get_meshgl(IntPtr m);
@@ -226,6 +248,51 @@ namespace ManifoldRust
 		[LibraryImport(LibraryName)]
 		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
 		internal static partial void manifold_rs_meshgl_destroy(IntPtr g);
+
+		// The 64-bit mesh family spells every element type out rather than reusing
+		// the declarations above: the widths differ per field (run_original_id stays
+		// uint32_t because a mesh ID is not an index), and getting one wrong would
+		// misread the array instead of failing to compile.
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial IntPtr manifold_rs_from_mesh64(
+			double* vertProperties,
+			nuint vertPropertiesLen,
+			ulong* triVerts,
+			nuint triVertsLen,
+			uint numProp);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial IntPtr manifold_rs_get_meshgl64(IntPtr m);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial uint manifold_rs_meshgl64_num_prop(IntPtr g);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial double* manifold_rs_meshgl64_vert_properties(IntPtr g, out nuint outLen);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial ulong* manifold_rs_meshgl64_tri_verts(IntPtr g, out nuint outLen);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial ulong* manifold_rs_meshgl64_run_index(IntPtr g, out nuint outLen);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial uint* manifold_rs_meshgl64_run_original_id(IntPtr g, out nuint outLen);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial ulong* manifold_rs_meshgl64_face_id(IntPtr g, out nuint outLen);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial void manifold_rs_meshgl64_destroy(IntPtr g);
 
 		[LibraryImport(LibraryName)]
 		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
