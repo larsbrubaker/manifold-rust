@@ -3,3 +3,6 @@ obj/
 TestResults/
 .vs/
 *.user
+
+# Build output staged for packing - copied from target/release, not source.
+native-staging/

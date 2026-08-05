@@ -16,11 +16,11 @@
   </PropertyGroup>
 
   <!--
-    Package metadata only. The native libraries are deliberately not packed yet:
-    that needs a CI job that builds manifold_rs for every runtime identifier and
-    drops the results into runtimes/<rid>/native/, which does not exist here.
-    Until then consumers set ManifoldNative.LibraryPath, point MANIFOLD_RS_NATIVE
-    at a locally built library, or copy it next to their application.
+    Only win-x64 is packed today. Every other runtime identifier needs a CI job
+    that builds manifold_rs for that platform and drops the result into
+    runtimes/<rid>/native/, which does not exist here. Until then consumers on
+    other platforms set ManifoldNative.LibraryPath, point MANIFOLD_RS_NATIVE at a
+    locally built library, or copy it next to their application.
   -->
   <PropertyGroup>
     <PackageId>ManifoldRust</PackageId>
@@ -42,5 +42,34 @@
          packed at the root of the package. -->
     <None Include="..\README.md" Pack="true" PackagePath="\" Visible="false" />
   </ItemGroup>
+
+  <PropertyGroup>
+    <!-- The native to pack for win-x64. It defaults to a copy staged under the
+         project rather than to target\release\manifold_rs.dll directly, because
+         a cargo build can relink that file at any moment and packing a half
+         written dll is not something the pack step would notice. Refresh the
+         staged copy from a release build before cutting a package; override this
+         property to pack a native from somewhere else. -->
+    <ManifoldRustNativeWin64 Condition="'$(ManifoldRustNativeWin64)' == ''">$(MSBuildProjectDirectory)\native-staging\win-x64\manifold_rs.dll</ManifoldRustNativeWin64>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- runtimes/<rid>/native is what the runtime's own probing looks at, so a
+         consumer gets the native with no configuration at all. Conditional so a
+         plain build still succeeds without a native present; pack is where its
+         absence is fatal - see EnsureNativeIsPacked below. -->
+    <None Include="$(ManifoldRustNativeWin64)"
+          Condition="Exists('$(ManifoldRustNativeWin64)')"
+          Pack="true"
+          PackagePath="runtimes/win-x64/native"
+          Visible="false" />
+  </ItemGroup>
+
+  <!-- Publishing a package without its native is silent and useless: consumers
+       only find out at the first P/Invoke. Fail the pack instead. -->
+  <Target Name="EnsureNativeIsPacked" BeforeTargets="GenerateNuspec">
+    <Error Condition="!Exists('$(ManifoldRustNativeWin64)')"
+           Text="The win-x64 native is missing, so the package would ship without runtimes/win-x64/native/manifold_rs.dll. Build manifold_rs in release and copy target\release\manifold_rs.dll to '$(ManifoldRustNativeWin64)', or set the ManifoldRustNativeWin64 property to an existing native." />
+  </Target>
 
 </Project>
