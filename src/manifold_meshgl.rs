@@ -12,9 +12,20 @@ use crate::linalg::{IVec3, Mat3x4, Vec3};
 use crate::types::{MeshGL, MeshGL64, MeshGLP, MeshIndex, MeshPrecision};
 use super::Manifold;
 
+/// How the import treats non-manifold connectivity.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ImportMode {
+    /// Reject with `Error::NotManifold` (existing behavior, byte-identical).
+    Strict,
+    /// Keep geometrically closed + orientable geometry as a triangle soup
+    /// (`ManifoldImpl::is_soup`) for the robust boolean engine; reject only
+    /// with `Error::NotClosed` when even that fails.
+    AllowSoup,
+}
+
 impl Manifold {
     pub fn from_mesh_gl(mesh: &MeshGL) -> Self {
-        Self::from_mesh_impl(mesh)
+        Self::from_mesh_impl(mesh, ImportMode::Strict)
     }
 
     /// Import a double-precision mesh directly into the f64 kernel. Unlike
@@ -24,10 +35,30 @@ impl Manifold {
     /// Indices still truncate to 32 bits exactly as the C++ import's
     /// `uint32_t` casts do — the kernel indexes vertices with 32 bits.
     pub fn from_mesh_gl64(mesh: &MeshGL64) -> Self {
-        Self::from_mesh_impl(mesh)
+        Self::from_mesh_impl(mesh, ImportMode::Strict)
     }
 
-    fn from_mesh_impl<P: MeshPrecision, I: MeshIndex>(mesh: &MeshGLP<P, I>) -> Self {
+    /// Import that accepts non-manifold geometry for the robust boolean
+    /// engine. Manifold input behaves exactly like [`Self::from_mesh_gl`];
+    /// non-manifold input is kept as a triangle soup (`status()` stays
+    /// `NoError`) as long as it is geometrically closed and orientable,
+    /// otherwise the result is empty with `Error::NotClosed`. Soup-backed
+    /// manifolds support booleans via `BooleanEngine::Robust`/`Auto`,
+    /// transforms, and mesh export; pairing-dependent operations return
+    /// empty results with `Error::NotManifold`.
+    pub fn from_mesh_gl_robust(mesh: &MeshGL) -> Self {
+        Self::from_mesh_impl(mesh, ImportMode::AllowSoup)
+    }
+
+    /// Double-precision variant of [`Self::from_mesh_gl_robust`].
+    pub fn from_mesh_gl64_robust(mesh: &MeshGL64) -> Self {
+        Self::from_mesh_impl(mesh, ImportMode::AllowSoup)
+    }
+
+    fn from_mesh_impl<P: MeshPrecision, I: MeshIndex>(
+        mesh: &MeshGLP<P, I>,
+        mode: ImportMode,
+    ) -> Self {
     let num_vert = mesh.num_vert() as u32;
     let num_tri = mesh.num_tri();
 
@@ -36,7 +67,10 @@ impl Manifold {
         return Self::make_empty(crate::types::Error::NoError);
     }
     if num_vert < 4 || num_tri < 4 {
-        return Self::make_empty(crate::types::Error::NotManifold);
+        return Self::make_empty(match mode {
+            ImportMode::Strict => crate::types::Error::NotManifold,
+            ImportMode::AllowSoup => crate::types::Error::NotClosed,
+        });
     }
     if mesh.num_prop.to_u64() < 3 {
         return Self::make_empty(crate::types::Error::MissingPositionProperties);
@@ -246,7 +280,24 @@ impl Manifold {
     }
 
     if !imp.is_manifold() {
-        return Self::make_empty(crate::types::Error::NotManifold);
+        match mode {
+            ImportMode::Strict => {
+                return Self::make_empty(crate::types::Error::NotManifold);
+            }
+            ImportMode::AllowSoup => {
+                // Keep the geometry as a validated triangle soup: unpaired
+                // halfedges allowed, no pairing-dependent pipeline steps.
+                return match crate::robust::soup::soupify(&mut imp, &tri_prop, &tri_vert) {
+                    Ok(()) => {
+                        imp.mesh_relation.original_id = -1;
+                        imp.calculate_bbox();
+                        imp.set_epsilon(mesh.tolerance.to_f64(), false);
+                        Self { imp }
+                    }
+                    Err(e) => Self::make_empty(e),
+                };
+            }
+        }
     }
 
     // A Manifold created from input mesh is never an original

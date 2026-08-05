@@ -17,6 +17,7 @@ impl Manifold {
     /// Fills in vertex properties for normals. Edges sharper than
     /// min_sharp_angle (degrees) get separate normals on each side.
     pub fn calculate_normals(&self, normal_idx: usize, min_sharp_angle: f64) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
         if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         out.set_normals(normal_idx as i32, min_sharp_angle);
@@ -73,6 +74,7 @@ impl Manifold {
     }
 
     pub fn smooth_out(&self, min_sharp_angle: f64, min_smoothness: f64) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
         if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         // Per C++ #1724 (Fix CalculateNormals): SmoothOut is now self-consistent —
@@ -85,6 +87,7 @@ impl Manifold {
     }
 
     pub fn smooth_by_normals(&self, normal_idx: usize) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
         if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         out.create_tangents_from_normals(normal_idx);
@@ -94,6 +97,7 @@ impl Manifold {
     /// Port of C++ Manifold::Refine(int n)
     /// Splits every edge into n pieces, sub-triangulating each face.
     pub fn refine(&self, n: i32) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
         if n <= 1 || self.imp.is_empty() {
             return self.clone();
         }
@@ -123,6 +127,7 @@ impl Manifold {
 
     /// Port of C++ Manifold::RefineToLength(double length)
     pub fn refine_to_length(&self, length: f64) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
         let length = length.abs();
         if length == 0.0 || self.imp.is_empty() {
             return self.clone();
@@ -162,6 +167,7 @@ impl Manifold {
 
     /// Port of C++ Manifold::RefineToTolerance(double tolerance)
     pub fn refine_to_tolerance(&self, tolerance: f64) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
         let tolerance = tolerance.abs();
         if tolerance == 0.0 || self.imp.is_empty() {
             return self.clone();

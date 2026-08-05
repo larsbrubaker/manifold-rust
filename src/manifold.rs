@@ -79,9 +79,23 @@ impl Manifold {
         self.imp.mesh_relation.original_id
     }
 
+    /// Soup impls (non-manifold geometry imported via
+    /// [`Manifold::from_mesh_gl_robust`]) support only robust-engine
+    /// booleans, transforms, bounding-box queries, hulls, and mesh export.
+    /// Pairing-dependent operations call this and return an empty manifold
+    /// with [`Error::NotManifold`] instead of walking incomplete halfedges.
+    pub(crate) fn require_paired(&self) -> Option<Self> {
+        if self.imp.is_soup {
+            Some(Self::make_empty(Error::NotManifold))
+        } else {
+            None
+        }
+    }
+
     /// Port of C++ Manifold::AsOriginal()
     /// Removes all mesh relations and recreates as an original mesh.
     pub fn as_original(&self) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
         if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         out.initialize_original();
@@ -96,6 +110,7 @@ impl Manifold {
 
     /// Port of C++ Manifold::SetTolerance()
     pub fn set_tolerance(&self, tolerance: f64) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
         if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         // Matches C++ SetTolerance: operate on the `tolerance` field (which
@@ -117,6 +132,7 @@ impl Manifold {
 
     /// Port of C++ Manifold::Simplify()
     pub fn simplify(&self, tolerance: f64) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
         if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         // C++ uses tolerance_ (not epsilon_) throughout Simplify()
@@ -137,6 +153,7 @@ impl Manifold {
 
     /// Port of C++ Manifold::WarpBatch()
     pub fn warp_batch<F: Fn(&mut [Vec3])>(&self, warp_fn: F) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
         if self.is_empty() {
             return self.clone();
         }
@@ -221,6 +238,7 @@ impl Manifold {
     /// Warp the mesh by applying a function to each vertex position.
     /// Does not check for self-intersection.
     pub fn warp<F: Fn(&mut Vec3)>(&self, warp_fn: F) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
         if self.is_empty() {
             return self.clone();
         }
@@ -279,7 +297,7 @@ impl Manifold {
     /// Slice this manifold at the given Z height, returning the cross-section
     /// as a CrossSection. Mirrors C++ `Manifold::Slice`.
     pub fn slice(&self, height: f64) -> CrossSection {
-        if self.is_empty() {
+        if self.imp.is_soup || self.is_empty() {
             return CrossSection::new(vec![]);
         }
         let polys = self.imp.slice(height);
@@ -289,7 +307,7 @@ impl Manifold {
     /// Project this manifold onto the XY plane, returning the silhouette
     /// as a CrossSection. Mirrors C++ `Manifold::Project`.
     pub fn project(&self) -> CrossSection {
-        if self.is_empty() {
+        if self.imp.is_soup || self.is_empty() {
             return CrossSection::new(vec![]);
         }
         let polys = self.imp.project();
@@ -357,6 +375,7 @@ impl Manifold {
     }
 
     pub fn calculate_curvature(&self, gaussian_idx: i32, mean_idx: i32) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
         if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         out.calculate_curvature(gaussian_idx, mean_idx);
@@ -371,6 +390,7 @@ impl Manifold {
     where
         F: Fn(&mut [f64], Vec3, &[f64]),
     {
+        if let Some(e) = self.require_paired() { return e; }
         if self.is_empty() { return self.clone(); }
         let mut out = self.imp.clone();
         let old_num_prop = out.num_prop;
@@ -415,6 +435,9 @@ impl Manifold {
     pub fn decompose(&self) -> Vec<Self> {
         use crate::disjoint_sets::DisjointSets;
 
+        if let Some(e) = self.require_paired() {
+            return vec![e];
+        }
         let num_vert = self.imp.num_vert();
         if num_vert == 0 {
             // Propagate error status: errored manifolds decompose to [self]

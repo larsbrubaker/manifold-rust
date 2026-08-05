@@ -22,6 +22,7 @@
 //   classify           — radial rings, Prop 2/3 union/intersection tagging
 //   propagate          — per-mesh tag flood fill between intersection cuts
 //   ray_shoot          — exact winding numbers for untouched components
+//   soup               — triangle-soup import (closed/orientable validation)
 
 pub mod arrangement;
 pub mod cdt;
@@ -30,4 +31,5 @@ pub mod exact;
 pub mod intersection_graph;
 pub mod propagate;
 pub mod ray_shoot;
+pub mod soup;
 pub mod tri_tri;

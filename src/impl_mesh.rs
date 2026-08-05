@@ -74,6 +74,14 @@ pub struct ManifoldImpl {
     /// ray cast, face merging, self-intersection) use this instead of
     /// rebuilding the tree per query.
     pub collider: crate::collider::Collider,
+    /// True when this impl carries geometrically closed but topologically
+    /// non-manifold "triangle soup" imported via `from_mesh_gl_robust`:
+    /// halfedge pairing is incomplete (`paired_halfedge == -1` permitted).
+    /// Only the robust boolean engine, transforms, bbox, and MeshGL export
+    /// accept soup impls; pairing-dependent operations return an empty
+    /// result with `Error::NotManifold`. Always false on the strict import
+    /// path, so existing behavior is unchanged.
+    pub is_soup: bool,
 }
 
 impl Default for ManifoldImpl {
@@ -92,6 +100,7 @@ impl Default for ManifoldImpl {
             halfedge_tangent: Vec::new(),
             mesh_relation: MeshRelationD::new(),
             collider: crate::collider::Collider::default(),
+            is_soup: false,
         }
     }
 }
@@ -147,6 +156,7 @@ impl ManifoldImpl {
         self.mesh_relation = MeshRelationD::new();
         self.collider = crate::collider::Collider::default();
         self.status = status;
+        self.is_soup = false;
     }
 
     // -----------------------------------------------------------------------
@@ -772,6 +782,9 @@ impl ManifoldImpl {
         result.bbox = self.bbox;
         result.halfedge = self.halfedge.clone();
         result.mesh_relation.original_id = -1;
+        // Soup impls stay soups across transforms; every step below already
+        // guards paired_halfedge < 0.
+        result.is_soup = self.is_soup;
 
         // Update mesh transforms
         for (_, rel) in result.mesh_relation.mesh_id_transform.iter_mut() {
@@ -896,6 +909,7 @@ impl ManifoldImpl {
             halfedge_tangent: self.halfedge_tangent.clone(),
             mesh_relation: self.mesh_relation.clone(),
             collider: self.collider.clone(),
+            is_soup: self.is_soup,
         }
     }
 }

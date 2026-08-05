@@ -336,6 +336,15 @@ pub fn boolean_with_token(
     if is_cancelled(token) {
         return cancelled_impl();
     }
+    // The exact engine's kernels assume complete halfedge pairing; soup
+    // impls (robust import of non-manifold geometry) must use the robust
+    // engine instead. Unreachable for all pre-existing callers: is_soup is
+    // false everywhere outside the from_mesh_gl_robust path.
+    if mesh_a.is_soup || mesh_b.is_soup {
+        let mut out = ManifoldImpl::new();
+        out.make_empty(Error::NotManifold);
+        return out;
+    }
     if mesh_a.is_empty() {
         return match op {
             OpType::Add => mesh_b.clone(),

@@ -164,6 +164,11 @@ pub enum Error {
     /// every preceding variant is load-bearing: the FFI maps them to status
     /// codes 0-13 positionally, so new variants only ever go on the end.
     Cancelled,
+    /// The mesh is not geometrically closed and orientable, so even the
+    /// robust (non-manifold) boolean engine cannot interpret it as a solid.
+    /// Produced only by the `from_mesh_gl_robust` import path; the strict
+    /// import keeps reporting `NotManifold`. FFI status code 15.
+    NotClosed,
 }
 
 impl Error {
@@ -184,6 +189,7 @@ impl Error {
             Error::ResultTooLarge => "Result Too Large",
             Error::InvalidTangents => "Invalid Tangents",
             Error::Cancelled => "Cancelled",
+            Error::NotClosed => "Not Closed",
         }
     }
 }

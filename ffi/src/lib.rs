@@ -88,6 +88,7 @@ pub(crate) fn error_code(status: Error) -> i32 {
         Error::ResultTooLarge => 12,
         Error::InvalidTangents => 13,
         Error::Cancelled => 14,
+        Error::NotClosed => 15,
     }
 }
 

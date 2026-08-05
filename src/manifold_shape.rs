@@ -166,6 +166,8 @@ impl Manifold {
     }
 
     pub fn minkowski_sum(&self, other: &Self) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
+        if let Some(e) = other.require_paired() { return e; }
         // Per C++ #1659: propagate errored input status before computing.
         if self.imp.status != Error::NoError { return self.clone(); }
         if other.imp.status != Error::NoError { return other.clone(); }
@@ -173,6 +175,8 @@ impl Manifold {
     }
 
     pub fn minkowski_difference(&self, other: &Self) -> Self {
+        if let Some(e) = self.require_paired() { return e; }
+        if let Some(e) = other.require_paired() { return e; }
         if self.imp.status != Error::NoError { return self.clone(); }
         if other.imp.status != Error::NoError { return other.clone(); }
         Self::from_impl(minkowski::minkowski_difference(&self.imp, &other.imp))
