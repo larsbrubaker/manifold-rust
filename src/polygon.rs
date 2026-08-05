@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 use crate::linalg::{Vec2, IVec3};
-use crate::types::{Halfedge, PolyVert, PolygonsIdx, SimplePolygonIdx, Polygons, Rect, K_PRECISION};
+use crate::types::{Halfedge, PolyVert, PolygonsIdx, SimplePolygonIdx, Polygons, Rect};
 
 #[path = "polygon_earclip.rs"]
 mod polygon_earclip;

@@ -22,7 +22,7 @@
 
 #[path = "subdivision_partition.rs"]
 mod subdivision_partition;
-use subdivision_partition::{BaryIndices, Partition, lerp_vec4, next3};
+use subdivision_partition::{BaryIndices, Partition, next3};
 
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{BVec4, IVec3, IVec4, Mat3, Mat3x4, Vec3, Vec4};

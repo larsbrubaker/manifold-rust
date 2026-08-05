@@ -222,7 +222,9 @@ fn test_cpp_cross_section_hull() {
         circ.translate(Vec2::new(0.0, 30.0)),
         circ.translate(Vec2::new(30.0, 0.0)),
     ];
-    let circ_tri = CrossSection::hull_cross_sections(&circs);
+    // C++ uses circ_tri only for optional OBJ export; keep the call so the
+    // hull path is still exercised.
+    let _circ_tri = CrossSection::hull_cross_sections(&circs);
     let centres = vec![
         Vec2::new(0.0, 0.0), Vec2::new(0.0, 30.0),
         Vec2::new(30.0, 0.0), Vec2::new(15.0, 5.0),

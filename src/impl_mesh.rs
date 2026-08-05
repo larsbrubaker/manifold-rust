@@ -6,7 +6,7 @@
 // Phases 5-9 will fill in SortGeometry, CleanupTopology, SetNormalsAndCoplanar, etc.
 
 use std::sync::atomic::{AtomicU32, Ordering};
-use crate::linalg::{Vec3, Vec4, Mat3x4, IVec3, cross, dot, normalize, length2};
+use crate::linalg::{Vec3, Vec4, Mat3x4, IVec3, normalize};
 use crate::types::{
     Box as BBox, Error, Halfedge, MeshRelationD, Relation, TriRef, K_PRECISION,
 };
@@ -596,7 +596,7 @@ impl ManifoldImpl {
 
         // Use union-find to merge equivalent property vertices
         let num_prop_vert = self.num_prop_vert();
-        let mut ds = crate::disjoint_sets::DisjointSets::new(num_prop_vert as u32);
+        let ds = crate::disjoint_sets::DisjointSets::new(num_prop_vert as u32);
         for &(a, b) in &vert2vert {
             if a >= 0 && b >= 0 {
                 ds.unite(a as u32, b as u32);

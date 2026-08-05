@@ -8,8 +8,8 @@
 
 use std::hash::{Hash, Hasher};
 use std::ops::{
-    Add, AddAssign, BitAnd, BitAndAssign, BitOr, BitOrAssign, BitXor, BitXorAssign, Div, DivAssign,
-    Index, IndexMut, Mul, MulAssign, Neg, Not, Rem, RemAssign, Shl, ShlAssign, Shr, ShrAssign,
+    Add, AddAssign, BitAnd, BitOr, Div, DivAssign,
+    Index, IndexMut, Mul, MulAssign, Neg, Not,
     Sub, SubAssign,
 };
 

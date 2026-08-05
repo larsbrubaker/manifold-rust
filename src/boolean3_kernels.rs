@@ -146,7 +146,7 @@ fn kernel11(
     in_q: &ManifoldImpl,
     expand_p: bool,
 ) -> (i32, Vec4) {
-    let mut xyzz11 = Vec4::splat(f64::NAN);
+    let xyzz11;
     let mut s11: i32 = 0;
 
     let mut k: usize = 0;
@@ -219,7 +219,7 @@ fn kernel02(
     forward: bool,
 ) -> (i32, f64) {
     let mut s02: i32 = 0;
-    let mut z02: f64 = 0.0;
+    let z02: f64;
 
     let mut k: usize = 0;
     let mut yzz_rl = [Vec3::splat(0.0); 2];

@@ -234,6 +234,7 @@ fn test_cpp_boolean_meshgl_round_trip() {
     assert!(result.original_id() < 0);
     assert_eq!(result.num_vert(), 18, "BoolMeshGL: expected 18 verts, got {}", result.num_vert());
     assert_eq!(result.num_tri(), 32, "BoolMeshGL: expected 32 tris, got {}", result.num_tri());
+    super::related_gl(&result, &[&original]);
 
     let in_gl = result.get_mesh_gl(0);
     assert_eq!(in_gl.run_original_id.len(), 2);
@@ -242,6 +243,7 @@ fn test_cpp_boolean_meshgl_round_trip() {
     assert!(result2.original_id() < 0);
     assert_eq!(result2.num_vert(), 18, "BoolMeshGL rt: expected 18 verts, got {}", result2.num_vert());
     assert_eq!(result2.num_tri(), 32, "BoolMeshGL rt: expected 32 tris, got {}", result2.num_tri());
+    super::related_gl(&result2, &[&original]);
 
     let out_gl = result2.get_mesh_gl(0);
     assert_eq!(out_gl.run_original_id.len(), 2);

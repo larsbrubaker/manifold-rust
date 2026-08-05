@@ -5,9 +5,6 @@
     fn approx_eq(a: f64, b: f64) -> bool {
         (a - b).abs() < EPS
     }
-    fn approx_eq2(a: Vec2, b: Vec2) -> bool {
-        approx_eq(a.x, b.x) && approx_eq(a.y, b.y)
-    }
     fn approx_eq3(a: Vec3, b: Vec3) -> bool {
         approx_eq(a.x, b.x) && approx_eq(a.y, b.y) && approx_eq(a.z, b.z)
     }

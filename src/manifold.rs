@@ -14,15 +14,10 @@
 
 use crate::boolean3;
 use crate::cross_section::CrossSection;
-use crate::constructors;
 use crate::math;
 use crate::impl_mesh::ManifoldImpl;
-use crate::linalg::{mat4_to_mat3x4, normalize, scaling_matrix, translation_matrix, IVec3, Mat3, Mat3x4, Vec2, Vec3};
-use crate::minkowski;
-use crate::quickhull;
-use crate::sdf;
-use crate::subdivision;
-use crate::types::{Error, MeshGL, MeshGL64, OpType, Polygons, RayHit, Rect};
+use crate::linalg::{mat4_to_mat3x4, normalize, scaling_matrix, translation_matrix, Mat3, Mat3x4, Vec3};
+use crate::types::{Error, OpType, RayHit};
 
 #[derive(Clone)]
 pub struct Manifold {

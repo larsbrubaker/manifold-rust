@@ -2,7 +2,7 @@
 // Port of C++ ear-clipping algorithm with 2D KD-tree acceleration
 
 use std::collections::HashMap;
-use crate::linalg::{Vec2, IVec3};
+use crate::linalg::Vec2;
 use crate::types::{PolyVert, PolygonsIdx, Rect, K_PRECISION};
 
 use super::{ccw, determinant2x2, safe_normalize_2d, dot2d,
@@ -203,18 +203,8 @@ impl EarClip {
         dot2d(edge, edge) * 4.0 < self.epsilon * self.epsilon
     }
 
-    /// Returns 1 if p is inside the angle at v, -1 outside, 0 within epsilon.
-    fn vert_interior(&self, v: usize, p: Vec2) -> i32 {
-        let left = self.polygon[v].left;
-        let right = self.polygon[v].right;
-        let diff = p - self.polygon[v].pos;
-        if dot2d(diff, diff) < self.epsilon * self.epsilon {
-            return 0;
-        }
-        ccw(self.polygon[v].pos, self.polygon[left].pos, self.polygon[right].pos, self.epsilon)
-            + ccw(self.polygon[v].pos, self.polygon[right].pos, p, self.epsilon)
-            + ccw(self.polygon[v].pos, p, self.polygon[left].pos, self.epsilon)
-    }
+    // NOTE: C++ `Vert::Interior` (polygon.cpp) is not ported: it is defined but
+    // never called in the upstream reference either.
 
     /// Returns true if vert `v` is on the inside of the edge tail -> tail.right.
     /// to_left: walk v's polygon edges to the left (vs right).
@@ -361,7 +351,7 @@ impl EarClip {
         let radius = denom.sqrt() * 0.5;
         let open_side = safe_normalize_2d(open_side_vec);
 
-        let mut total_cost = dot2d(self.polygon[left].right_dir, self.polygon[v].right_dir) - 1.0 - self.epsilon;
+        let total_cost = dot2d(self.polygon[left].right_dir, self.polygon[v].right_dir) - 1.0 - self.epsilon;
 
         // Folded ears: clip first
         if ccw(self.polygon[v].pos, self.polygon[left].pos, self.polygon[right].pos, self.epsilon) == 0 {

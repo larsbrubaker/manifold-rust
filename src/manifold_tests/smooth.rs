@@ -1,6 +1,6 @@
 use super::*;
 use crate::cross_section::CrossSection;
-use crate::linalg::{dot, length, normalize};
+use crate::linalg::{dot, length};
 
 /// C++ TEST(Smooth, Normals) — SmoothOut and SmoothByNormals produce same result
 #[test]

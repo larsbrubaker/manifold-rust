@@ -124,7 +124,7 @@ impl Manifold {
     };
 
     // Set up mesh relations from runOriginalID (matches C++ MeshGL constructor)
-    let mut run_index: Vec<usize> = if mesh.run_index.is_empty() {
+    let run_index: Vec<usize> = if mesh.run_index.is_empty() {
         vec![0, 3 * num_tri]
     } else {
         let mut ri: Vec<usize> = mesh.run_index.iter().map(|&v| v.to_u64() as usize).collect();

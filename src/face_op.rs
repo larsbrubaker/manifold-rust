@@ -8,8 +8,7 @@ use std::collections::BTreeMap;
 
 use crate::linalg::{Vec2, Vec3, cross, dot, normalize, length2};
 use crate::math;
-use crate::polygon::{ccw, triangulate_idx_halfedges, HalfedgeTriangulation};
-use crate::types::{next_halfedge, Halfedge, PolyVert, PolygonsIdx, TriRef};
+use crate::types::{next_halfedge, Halfedge, PolyVert, PolygonsIdx};
 use crate::impl_mesh::ManifoldImpl;
 
 // -----------------------------------------------------------------------
@@ -570,8 +569,6 @@ mod tests {
 // Slice & Project — cross-section operations on ManifoldImpl
 // -----------------------------------------------------------------------
 
-use crate::collider::Collider;
-use crate::sort::get_face_box_morton;
 use crate::types::{Box as BBox, Polygons, SimplePolygon};
 
 impl ManifoldImpl {

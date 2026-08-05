@@ -14,7 +14,7 @@
 
 // Phase 9: SVD — ported from cpp-reference/manifold/src/svd.h
 
-use crate::linalg::{dot, length2, Mat3, Vec3, Vec4};
+use crate::linalg::{dot, Mat3, Vec3, Vec4};
 
 const GAMMA: f64 = 5.82842712474619;
 const C_STAR: f64 = 0.9238795325112867;
@@ -86,7 +86,7 @@ fn dist2(v: Vec3) -> f64 {
 }
 
 fn approximate_givens_quaternion(a: Symmetric3x3) -> Givens {
-    let mut g = Givens {
+    let g = Givens {
         ch: 2.0 * (a.m_00 - a.m_11),
         sh: a.m_10,
     };

@@ -20,7 +20,7 @@
 
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{
-    cross, dot, normalize, qconj, qrot, qxdir, rotation_quat_mat, Mat3, Vec3, Vec4,
+    cross, dot, qconj, qrot, qxdir, rotation_quat_mat, Mat3, Vec3, Vec4,
 };
 use crate::types::Barycentric;
 
@@ -50,10 +50,8 @@ fn hnormalize(v: Vec4) -> Vec3 {
     }
 }
 
-/// Scale a Vec4's xyz by a scalar, keeping w
-fn scale4(v: Vec4, s: f64) -> Vec4 {
-    Vec4::new(s * v.x, s * v.y, s * v.z, v.w)
-}
+// NOTE: C++ `InterpTri::Scale` (smoothing.cpp) is not ported: it is defined but
+// never called in the upstream reference either.
 
 /// Bezier control point from a position and tangent
 fn bezier(point: Vec3, tangent: Vec4) -> Vec4 {

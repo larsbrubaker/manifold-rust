@@ -3,8 +3,8 @@
 // Ports src/edge_op.cpp from the Manifold C++ library.
 // All algorithms are sequential (rayon deferred to later).
 
-use crate::linalg::{Vec2, Vec3, dot, dot2, length2, length2_2};
-use crate::types::{next_halfedge, Halfedge, TriRef};
+use crate::linalg::{Vec2, Vec3, dot, dot2, length2_2};
+use crate::types::{next_halfedge, Halfedge};
 use crate::impl_mesh::ManifoldImpl;
 use crate::face_op::{get_axis_aligned_projection, calculate_vert_normals};
 use crate::polygon::ccw;
@@ -181,7 +181,7 @@ pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usi
         return false;
     }
     let mut start = start_orb as usize;
-    let mut current = tri1edge[2];
+    let mut current;
 
     if !short_edge {
         current = start;
@@ -644,7 +644,7 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
     let pair = mesh.halfedge[edge].paired_halfedge;
     if pair < 0 { return; }
     let pair = pair as usize;
-    let mut cur = mesh.halfedge[next_halfedge(pair as i32) as usize].paired_halfedge;
+    let cur = mesh.halfedge[next_halfedge(pair as i32) as usize].paired_halfedge;
     if cur < 0 { return; }
     let mut cur = cur as usize;
     while cur != pair {
@@ -677,7 +677,7 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
 /// Finds and fixes all duplicate edges (4-manifold conditions).
 pub fn dedupe_edges(mesh: &mut ManifoldImpl) {
     let max_iterations = mesh.halfedge.len(); // safety bound
-    for iteration in 0..max_iterations {
+    for _iteration in 0..max_iterations {
         let n_edges = mesh.halfedge.len();
         let mut processed = vec![false; n_edges];
         let mut duplicates: Vec<usize> = Vec::new();
