@@ -62,6 +62,53 @@ pub unsafe extern "C" fn manifold_rs_from_mesh64(
     tri_verts_len: usize,
     num_prop: u32,
 ) -> *mut ManifoldRs {
+    // SAFETY: same caller contract as from_mesh64_impl.
+    unsafe {
+        from_mesh64_impl(
+            vert_properties,
+            vert_properties_len,
+            tri_verts,
+            tri_verts_len,
+            num_prop,
+            false,
+        )
+    }
+}
+
+/// Double-precision counterpart of `manifold_rs_from_mesh_robust`: the
+/// robust (non-manifold-tolerant) import. See that function for semantics.
+///
+/// # Safety
+/// Same contract as [`manifold_rs_from_mesh64`].
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_from_mesh64_robust(
+    vert_properties: *const f64,
+    vert_properties_len: usize,
+    tri_verts: *const u64,
+    tri_verts_len: usize,
+    num_prop: u32,
+) -> *mut ManifoldRs {
+    // SAFETY: same caller contract as from_mesh64_impl.
+    unsafe {
+        from_mesh64_impl(
+            vert_properties,
+            vert_properties_len,
+            tri_verts,
+            tri_verts_len,
+            num_prop,
+            true,
+        )
+    }
+}
+
+unsafe fn from_mesh64_impl(
+    vert_properties: *const f64,
+    vert_properties_len: usize,
+    tri_verts: *const u64,
+    tri_verts_len: usize,
+    num_prop: u32,
+    robust: bool,
+) -> *mut ManifoldRs {
     guard(ptr::null_mut(), || {
         if num_prop < 3 {
             set_last_error(format!("manifold_rs_from_mesh64: num_prop {num_prop} < 3"));
@@ -132,7 +179,11 @@ pub unsafe extern "C" fn manifold_rs_from_mesh64(
             tri_verts: tris.to_vec(),
             ..Default::default()
         };
-        into_handle(Manifold::from_mesh_gl64(&mesh))
+        into_handle(if robust {
+            Manifold::from_mesh_gl64_robust(&mesh)
+        } else {
+            Manifold::from_mesh_gl64(&mesh)
+        })
     })
 }
 

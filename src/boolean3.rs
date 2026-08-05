@@ -232,6 +232,17 @@ pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
     if meshes.len() == 1 {
         return meshes[0].clone();
     }
+    // Soup inputs (robust non-manifold import) cannot go through
+    // create_halfedges' strict pairing below; concatenate them geometrically
+    // instead. Mesh relations are not preserved on this path — soups carry
+    // none that survive a boolean anyway.
+    if meshes.iter().any(|m| m.is_soup) {
+        let mut tris = Vec::new();
+        for m in meshes {
+            tris.extend(crate::robust::soup::impl_to_tris(m));
+        }
+        return crate::robust::assemble_all(&tris);
+    }
 
     let num_prop = meshes.iter().map(|m| m.num_prop).max().unwrap_or(0);
     let mut vert_pos = Vec::new();
@@ -378,6 +389,37 @@ pub fn boolean_with_token(
     }
 
     crate::boolean_result::boolean_result_with_token(mesh_a, mesh_b, op, &bool3, token)
+}
+
+/// Route a boolean to the requested engine (`types::BooleanEngine`).
+///
+/// `Auto` resolves per pair: `Robust` iff either operand carries soup
+/// geometry, else `Exact`. `Exact` with a soup operand yields an empty
+/// result with `Error::NotManifold` (the guard inside
+/// [`boolean_with_token`]); no panic-catching is involved anywhere —
+/// dispatch is input-based only.
+pub fn boolean_dispatch(
+    mesh_a: &ManifoldImpl,
+    mesh_b: &ManifoldImpl,
+    op: OpType,
+    engine: crate::types::BooleanEngine,
+    token: Option<&CancelToken>,
+) -> ManifoldImpl {
+    use crate::types::BooleanEngine as E;
+    let resolved = match engine {
+        E::Auto => {
+            if mesh_a.is_soup || mesh_b.is_soup {
+                E::Robust
+            } else {
+                E::Exact
+            }
+        }
+        other => other,
+    };
+    match resolved {
+        E::Exact | E::Auto => boolean_with_token(mesh_a, mesh_b, op, token),
+        E::Robust => crate::robust::boolean(mesh_a, mesh_b, op, token),
+    }
 }
 
 /// The observable result of an interrupted operation: an empty mesh carrying

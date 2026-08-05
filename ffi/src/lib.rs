@@ -41,6 +41,8 @@ mod tests;
 mod tests_cancel;
 #[cfg(test)]
 mod tests_mesh64;
+#[cfg(test)]
+mod tests_robust;
 
 use std::os::raw::c_char;
 use std::ptr;
@@ -131,6 +133,56 @@ pub unsafe extern "C" fn manifold_rs_from_mesh(
     tri_verts_len: usize,
     num_prop: u32,
 ) -> *mut ManifoldRs {
+    // SAFETY: same caller contract as from_mesh_impl32.
+    unsafe {
+        from_mesh_impl32(
+            vert_properties,
+            vert_properties_len,
+            tri_verts,
+            tri_verts_len,
+            num_prop,
+            false,
+        )
+    }
+}
+
+/// [`manifold_rs_from_mesh`] via the robust (non-manifold-tolerant) import:
+/// manifold input behaves exactly like `manifold_rs_from_mesh`; closed
+/// orientable but non-manifold input is retained for the robust boolean
+/// engine (status 0) instead of being rejected; geometry that is not even
+/// closed reports status 15 (NotClosed).
+///
+/// # Safety
+/// Same contract as [`manifold_rs_from_mesh`].
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_from_mesh_robust(
+    vert_properties: *const f32,
+    vert_properties_len: usize,
+    tri_verts: *const u32,
+    tri_verts_len: usize,
+    num_prop: u32,
+) -> *mut ManifoldRs {
+    // SAFETY: same caller contract as from_mesh_impl32.
+    unsafe {
+        from_mesh_impl32(
+            vert_properties,
+            vert_properties_len,
+            tri_verts,
+            tri_verts_len,
+            num_prop,
+            true,
+        )
+    }
+}
+
+unsafe fn from_mesh_impl32(
+    vert_properties: *const f32,
+    vert_properties_len: usize,
+    tri_verts: *const u32,
+    tri_verts_len: usize,
+    num_prop: u32,
+    robust: bool,
+) -> *mut ManifoldRs {
     guard(ptr::null_mut(), || {
         if num_prop < 3 {
             set_last_error(format!("manifold_rs_from_mesh: num_prop {num_prop} < 3"));
@@ -178,8 +230,49 @@ pub unsafe extern "C" fn manifold_rs_from_mesh(
             tri_verts: tris.to_vec(),
             ..Default::default()
         };
-        into_handle(Manifold::from_mesh_gl(&mesh))
+        into_handle(if robust {
+            Manifold::from_mesh_gl_robust(&mesh)
+        } else {
+            Manifold::from_mesh_gl(&mesh)
+        })
     })
+}
+
+// ---------------------------------------------------------------------------
+// Boolean engine selection
+// ---------------------------------------------------------------------------
+
+/// Set the process-global default boolean engine: 0 = Exact (default),
+/// 1 = Robust, 2 = Auto (Exact unless an operand carries non-manifold soup
+/// geometry from `manifold_rs_from_mesh_robust`). Applies to every boolean
+/// entry point, including `manifold_rs_batch_boolean`. Returns 0 on success,
+/// -1 for an unknown engine value.
+#[no_mangle]
+pub extern "C" fn manifold_rs_set_boolean_engine(engine: i32) -> i32 {
+    use manifold_rust::types::{BooleanConfig, BooleanEngine};
+    let engine = match engine {
+        0 => BooleanEngine::Exact,
+        1 => BooleanEngine::Robust,
+        2 => BooleanEngine::Auto,
+        other => {
+            set_last_error(format!("manifold_rs_set_boolean_engine: unknown engine {other}"));
+            return -1;
+        }
+    };
+    BooleanConfig::set_default_engine(engine);
+    0
+}
+
+/// The current process-global default boolean engine (see
+/// [`manifold_rs_set_boolean_engine`] for the value mapping).
+#[no_mangle]
+pub extern "C" fn manifold_rs_get_boolean_engine() -> i32 {
+    use manifold_rust::types::{BooleanConfig, BooleanEngine};
+    match BooleanConfig::default_engine() {
+        BooleanEngine::Exact => 0,
+        BooleanEngine::Robust => 1,
+        BooleanEngine::Auto => 2,
+    }
 }
 
 /// Copy of `m` re-tagged as an original mesh (a fresh mesh ID, no boolean

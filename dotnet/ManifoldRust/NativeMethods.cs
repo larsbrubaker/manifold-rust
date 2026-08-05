@@ -177,6 +177,23 @@ namespace ManifoldRust
 
 		[LibraryImport(LibraryName)]
 		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial IntPtr manifold_rs_from_mesh_robust(
+			float* vertProperties,
+			nuint vertPropertiesLen,
+			uint* triVerts,
+			nuint triVertsLen,
+			uint numProp);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial int manifold_rs_set_boolean_engine(int engine);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial int manifold_rs_get_boolean_engine();
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
 		internal static partial IntPtr manifold_rs_as_original(IntPtr m);
 
 		[LibraryImport(LibraryName)]
@@ -256,6 +273,15 @@ namespace ManifoldRust
 		[LibraryImport(LibraryName)]
 		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
 		internal static partial IntPtr manifold_rs_from_mesh64(
+			double* vertProperties,
+			nuint vertPropertiesLen,
+			ulong* triVerts,
+			nuint triVertsLen,
+			uint numProp);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial IntPtr manifold_rs_from_mesh64_robust(
 			double* vertProperties,
 			nuint vertPropertiesLen,
 			ulong* triVerts,

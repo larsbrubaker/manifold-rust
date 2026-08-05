@@ -66,6 +66,24 @@ cargo test --release -p manifold-ffi
 | `manifold_rs_meshgl64_run_original_id` | Borrowed `uint32_t` source mesh ID per run. |
 | `manifold_rs_meshgl64_face_id` | Borrowed `uint64_t` source face ID per triangle. |
 | `manifold_rs_meshgl64_destroy` | Free a 64-bit mesh handle. |
+| `manifold_rs_from_mesh_robust` | Non-manifold-tolerant import: closed orientable soup is retained for the robust engine. |
+| `manifold_rs_from_mesh64_robust` | Double-precision counterpart of `manifold_rs_from_mesh_robust`. |
+| `manifold_rs_set_boolean_engine` | Process-global engine default: 0 Exact, 1 Robust, 2 Auto. |
+| `manifold_rs_get_boolean_engine` | The current engine default. |
+
+## Robust (non-manifold) booleans
+
+The default boolean engine is the exact C++-matching pipeline and requires
+strictly manifold operands. `manifold_rs_from_mesh_robust` additionally
+accepts *closed, orientable* but non-manifold geometry (shared edges or
+vertices, disconnected shells, internal voids); such a handle reports status
+0 and works with booleans once the engine default is `MANIFOLD_RS_ENGINE_AUTO`
+(exact for manifold pairs, robust when a soup operand is involved) or
+`MANIFOLD_RS_ENGINE_ROBUST` (always). Geometry that is not even closed
+reports status 15, and pairing-dependent operations (`as_original`, …) on a
+soup handle return empty results with status 2. The robust engine computes
+with exact rational arithmetic; on manifold inputs it agrees with the exact
+engine to near-f64 precision, but triangulation of results may differ.
 
 ## Cancellation
 

@@ -59,6 +59,8 @@
  *   12  result too large
  *   13  invalid tangents
  *   14  cancelled (the operation was interrupted through a CancelTokenRs)
+ *   15  not closed (robust import: geometry is not a closed orientable
+ *       surface, so not even the robust boolean engine can use it)
  */
 
 #ifndef MANIFOLD_RS_H
@@ -91,6 +93,11 @@ typedef struct CancelTokenRs CancelTokenRs;
 #define MANIFOLD_RS_OP_SUBTRACT 1  /* difference */
 #define MANIFOLD_RS_OP_INTERSECT 2 /* intersection */
 
+/* Boolean engine codes for manifold_rs_set_boolean_engine(). */
+#define MANIFOLD_RS_ENGINE_EXACT 0  /* ported exact pipeline (default) */
+#define MANIFOLD_RS_ENGINE_ROBUST 1 /* robust non-manifold engine */
+#define MANIFOLD_RS_ENGINE_AUTO 2   /* exact unless an operand is soup */
+
 /*
  * Static NUL-terminated version string, e.g.
  * "manifold-ffi 0.1.0 (manifold-rust 0.9.3)". Never NULL, never freed.
@@ -120,6 +127,33 @@ ManifoldRs* manifold_rs_from_mesh(const float* vert_properties,
                                   const uint32_t* tri_verts,
                                   size_t tri_verts_len,
                                   uint32_t num_prop);
+
+/*
+ * manifold_rs_from_mesh via the robust (non-manifold-tolerant) import.
+ * Manifold input behaves exactly like manifold_rs_from_mesh. Non-manifold
+ * but geometrically closed and orientable input is retained (status 0) as
+ * "triangle soup" usable with the robust boolean engine
+ * (MANIFOLD_RS_ENGINE_ROBUST / _AUTO), transforms, hulls, and mesh export;
+ * other operations on such a handle return empty results with status 2.
+ * Input that is not even closed produces status 15.
+ */
+ManifoldRs* manifold_rs_from_mesh_robust(const float* vert_properties,
+                                         size_t vert_properties_len,
+                                         const uint32_t* tri_verts,
+                                         size_t tri_verts_len,
+                                         uint32_t num_prop);
+
+/*
+ * Set the process-global default boolean engine (MANIFOLD_RS_ENGINE_*).
+ * Applies to every boolean entry point in this library, including
+ * manifold_rs_batch_boolean. The default is MANIFOLD_RS_ENGINE_EXACT, which
+ * preserves the exact C++-matching pipeline byte for byte.
+ * Returns 0 on success, -1 for an unknown engine value.
+ */
+int32_t manifold_rs_set_boolean_engine(int32_t engine);
+
+/* The current process-global default boolean engine (MANIFOLD_RS_ENGINE_*). */
+int32_t manifold_rs_get_boolean_engine(void);
 
 /*
  * Copy of m re-tagged as an original mesh: it is given a fresh mesh ID and its
@@ -342,6 +376,18 @@ ManifoldRs* manifold_rs_from_mesh64(const double* vert_properties,
                                     const uint64_t* tri_verts,
                                     size_t tri_verts_len,
                                     uint32_t num_prop);
+
+/*
+ * Double-precision counterpart of manifold_rs_from_mesh_robust (the
+ * non-manifold-tolerant import). Same argument rules as
+ * manifold_rs_from_mesh64; same robust semantics as
+ * manifold_rs_from_mesh_robust.
+ */
+ManifoldRs* manifold_rs_from_mesh64_robust(const double* vert_properties,
+                                           size_t vert_properties_len,
+                                           const uint64_t* tri_verts,
+                                           size_t tri_verts_len,
+                                           uint32_t num_prop);
 
 /*
  * Export m as a double-precision mesh handle. A manifold with a non-zero

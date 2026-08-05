@@ -36,7 +36,7 @@ namespace ManifoldRust
 		/// prefixes "manifold-ffi 0.20.0", which is a different ABI that would then
 		/// be accepted silently - the exact failure this check exists to prevent.
 		/// </remarks>
-		internal const string ExpectedPrefix = "manifold-ffi 0.2.";
+		internal const string ExpectedPrefix = "manifold-ffi 0.3.";
 
 		// Lazy caches the exception from a failing factory and re-throws it on every
 		// later access, so a mismatched native costs exactly one native call for the

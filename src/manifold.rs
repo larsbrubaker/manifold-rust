@@ -54,6 +54,10 @@ impl Manifold {
         &self.imp
     }
 
+    pub fn into_impl(self) -> ManifoldImpl {
+        self.imp
+    }
+
     pub fn num_vert(&self) -> usize { self.imp.num_vert() }
     pub fn num_tri(&self) -> usize { self.imp.num_tri() }
     pub fn num_edge(&self) -> usize { self.imp.num_edge() }
@@ -343,7 +347,59 @@ impl Manifold {
     }
 
     pub fn boolean(&self, other: &Self, op: OpType) -> Self {
-        Self::from_impl(boolean3::boolean(&self.imp, &other.imp, op))
+        self.boolean_with_engine(other, op, crate::types::BooleanConfig::default_engine())
+    }
+
+    /// [`Manifold::boolean`] with an explicit engine choice, overriding the
+    /// process-global default set via
+    /// [`crate::types::BooleanConfig::set_default_engine`].
+    pub fn boolean_with_engine(
+        &self,
+        other: &Self,
+        op: OpType,
+        engine: crate::types::BooleanEngine,
+    ) -> Self {
+        Self::from_impl(boolean3::boolean_dispatch(&self.imp, &other.imp, op, engine, None))
+    }
+
+    /// [`Manifold::boolean_with_engine`] with cooperative cancellation.
+    pub fn boolean_with_engine_and_token(
+        &self,
+        other: &Self,
+        op: OpType,
+        engine: crate::types::BooleanEngine,
+        token: Option<&crate::cancel::CancelToken>,
+    ) -> Self {
+        Self::from_impl(boolean3::boolean_dispatch(&self.imp, &other.imp, op, engine, token))
+    }
+
+    /// [`Manifold::batch_boolean`] with an explicit engine choice (pairwise
+    /// left fold, like `batch_boolean`).
+    pub fn batch_boolean_with_engine(
+        manifolds: &[Self],
+        op: OpType,
+        engine: crate::types::BooleanEngine,
+    ) -> Self {
+        if manifolds.is_empty() {
+            return Self::empty();
+        }
+        let mut result = manifolds[0].clone();
+        for m in &manifolds[1..] {
+            result = result.boolean_with_engine(m, op, engine);
+        }
+        result
+    }
+
+    pub fn union_with_engine(&self, other: &Self, engine: crate::types::BooleanEngine) -> Self {
+        self.boolean_with_engine(other, OpType::Add, engine)
+    }
+
+    pub fn difference_with_engine(&self, other: &Self, engine: crate::types::BooleanEngine) -> Self {
+        self.boolean_with_engine(other, OpType::Subtract, engine)
+    }
+
+    pub fn intersection_with_engine(&self, other: &Self, engine: crate::types::BooleanEngine) -> Self {
+        self.boolean_with_engine(other, OpType::Intersect, engine)
     }
 
     /// [`Manifold::boolean`] with cooperative cancellation.

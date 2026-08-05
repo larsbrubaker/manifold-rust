@@ -111,6 +111,68 @@ namespace ManifoldRust
 		}
 
 		/// <summary>
+		/// <see cref="FromMesh"/> via the robust (non-manifold-tolerant) import.
+		/// Manifold input behaves exactly like <see cref="FromMesh"/>. Closed,
+		/// orientable but non-manifold input is retained (status
+		/// <see cref="ManifoldStatus.NoError"/>) for use with
+		/// <see cref="BooleanEngine.Robust"/> / <see cref="BooleanEngine.Auto"/>
+		/// booleans, transforms, hulls, and mesh export; other operations on
+		/// such a manifold return empty results with
+		/// <see cref="ManifoldStatus.NotManifold"/>. Geometry that is not even
+		/// closed reports <see cref="ManifoldStatus.NotClosed"/>.
+		/// </summary>
+		/// <inheritdoc cref="FromMesh"/>
+		public static unsafe Manifold FromMeshRobust(ReadOnlySpan<float> vertProperties, ReadOnlySpan<uint> triVerts, uint numProp = 3)
+		{
+			NativeVersionCheck.Verify();
+
+			IntPtr result;
+			fixed (float* vertPointer = vertProperties)
+			fixed (uint* triPointer = triVerts)
+			{
+				result = NativeMethods.manifold_rs_from_mesh_robust(
+					vertPointer,
+					(nuint)vertProperties.Length,
+					triPointer,
+					(nuint)triVerts.Length,
+					numProp);
+			}
+
+			if (result == IntPtr.Zero)
+			{
+				throw new ManifoldException("manifold_rs_from_mesh_robust failed", null, NativeMethods.GetLastError());
+			}
+
+			return new Manifold(new ManifoldHandle(result));
+		}
+
+		/// <summary>
+		/// The process-global default boolean engine. Every boolean —
+		/// <see cref="BatchBoolean(System.Collections.Generic.IReadOnlyList{Manifold}, ManifoldOpType)"/>
+		/// and friends — runs on this engine. The default,
+		/// <see cref="BooleanEngine.Exact"/>, preserves the exact
+		/// C++-matching pipeline byte for byte; set
+		/// <see cref="BooleanEngine.Auto"/> to transparently handle
+		/// non-manifold operands imported via <see cref="FromMeshRobust"/>.
+		/// </summary>
+		public static BooleanEngine DefaultBooleanEngine
+		{
+			get
+			{
+				NativeVersionCheck.Verify();
+				return (BooleanEngine)NativeMethods.manifold_rs_get_boolean_engine();
+			}
+			set
+			{
+				NativeVersionCheck.Verify();
+				if (NativeMethods.manifold_rs_set_boolean_engine((int)value) != 0)
+				{
+					throw new ManifoldException("manifold_rs_set_boolean_engine failed", null, NativeMethods.GetLastError());
+				}
+			}
+		}
+
+		/// <summary>
 		/// Builds a manifold from double-precision vertex properties and 64-bit
 		/// triangle indices. Both arrays are copied by the native side, so the spans
 		/// need not stay alive.
@@ -160,6 +222,38 @@ namespace ManifoldRust
 				// Read the message before anything else runs on this thread: the slot
 				// is thread local and belongs to the call that just failed.
 				throw new ManifoldException("manifold_rs_from_mesh64 failed", null, NativeMethods.GetLastError());
+			}
+
+			return new Manifold(new ManifoldHandle(result));
+		}
+
+		/// <summary>
+		/// Double-precision counterpart of <see cref="FromMeshRobust"/> — the
+		/// robust (non-manifold-tolerant) import. See that method for the
+		/// semantics and
+		/// <see cref="FromMesh64(ReadOnlySpan{double}, ReadOnlySpan{ulong}, uint)"/>
+		/// for the precision notes.
+		/// </summary>
+		/// <inheritdoc cref="FromMesh64(ReadOnlySpan{double}, ReadOnlySpan{ulong}, uint)"/>
+		public static unsafe Manifold FromMesh64Robust(ReadOnlySpan<double> vertProperties, ReadOnlySpan<ulong> triVerts, uint numProp = 3)
+		{
+			NativeVersionCheck.Verify();
+
+			IntPtr result;
+			fixed (double* vertPointer = vertProperties)
+			fixed (ulong* triPointer = triVerts)
+			{
+				result = NativeMethods.manifold_rs_from_mesh64_robust(
+					vertPointer,
+					(nuint)vertProperties.Length,
+					triPointer,
+					(nuint)triVerts.Length,
+					numProp);
+			}
+
+			if (result == IntPtr.Zero)
+			{
+				throw new ManifoldException("manifold_rs_from_mesh64_robust failed", null, NativeMethods.GetLastError());
 			}
 
 			return new Manifold(new ManifoldHandle(result));

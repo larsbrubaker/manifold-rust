@@ -88,6 +88,35 @@ only determinism-preserving sites are parallelized):
 manifold-rust = { version = "0.10", features = ["parallel"] }
 ```
 
+### Robust booleans on non-manifold input
+
+Alongside the default exact (C++-matching) pipeline there is a second,
+*robust* boolean engine (Barki, Guennebaud, Foufou 2015) built on exact
+rational arithmetic. It requires inputs only to be **closed and orientable**:
+shared edges/vertices, disconnected shells, and internal voids are all fine.
+On manifold inputs it agrees with the exact engine to near-f64 precision
+(triangulation may differ).
+
+```rust
+use manifold_rust::manifold::Manifold;
+use manifold_rust::types::{BooleanConfig, BooleanEngine};
+
+// Import geometry the strict path would reject as NotManifold:
+let soup = Manifold::from_mesh_gl_robust(&mesh);          // or from_mesh_gl64_robust
+
+// Per-call engine choice…
+let cut = soup.difference_with_engine(&cutter, BooleanEngine::Auto);
+
+// …or a process-global default. Auto = exact for manifold pairs,
+// robust whenever a non-manifold operand is involved.
+BooleanConfig::set_default_engine(BooleanEngine::Auto);
+let cut = soup.difference(&cutter);
+```
+
+Geometry that is not even closed imports as empty with
+`Error::NotClosed`. The default engine remains `Exact`, so existing code is
+byte-identical to previous releases.
+
 ## Demo
 
 An interactive WASM demo is live at <https://larsbrubaker.github.io/manifold-rust/> —

@@ -356,7 +356,17 @@ fn simple_boolean(
     }
     let impl_a = a.get_impl();
     let impl_b = b.get_impl();
-    let result = boolean3::boolean_with_token(&impl_a, &impl_b, op, token);
+    // Engine selection: CSG evaluation honors the process-global default
+    // (types::BooleanConfig). With the default (Exact) this call resolves to
+    // boolean3::boolean_with_token — behavior byte-identical to before the
+    // robust engine existed.
+    let result = boolean3::boolean_dispatch(
+        &impl_a,
+        &impl_b,
+        op,
+        crate::types::BooleanConfig::default_engine(),
+        token,
+    );
     CsgLeafNode::new(result)
 }
 

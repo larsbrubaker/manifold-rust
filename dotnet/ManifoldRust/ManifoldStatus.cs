@@ -75,5 +75,13 @@ namespace ManifoldRust
 		/// bad.
 		/// </summary>
 		Cancelled = 14,
+
+		/// <summary>
+		/// The mesh is not geometrically closed and orientable, so even the
+		/// robust (non-manifold) boolean engine cannot interpret it as a
+		/// solid. Produced only by <see cref="Manifold.FromMeshRobust"/>;
+		/// the strict import keeps reporting <see cref="NotManifold"/>.
+		/// </summary>
+		NotClosed = 15,
 	}
 }

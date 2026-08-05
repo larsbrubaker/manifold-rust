@@ -85,15 +85,91 @@ fn angle_cmp(a: (&BigRational, &BigRational), b: (&BigRational, &BigRational)) -
     }
 }
 
+/// Coincident-piece regularization and binding (paper §7.1 done globally
+/// rather than per ring, so every ring sees one consistent decision):
+/// exactly-equal pieces from the two meshes — the copies coplanar overlap
+/// regions produce on each side, identical thanks to the common-subdivision
+/// guarantees — are paired up. Opposite-winding pairs are infinitely thin
+/// material and get discarded outright; same-winding pairs are the shared
+/// regions both outputs keep once, so the P copy is bound to Union and the
+/// Q copy to Inter. (The paper notes the choice is arbitrary; making it
+/// globally per piece, not per ring, is what keeps it conflict-free.)
+fn bind_coincident(
+    graph: &IntersectionGraph,
+    tags: &mut [Option<Tag>],
+    discarded: &mut [bool],
+    bound: &mut [bool],
+) {
+    // Canonical key: sorted vertex triple; parity bit = winding orientation
+    // relative to the sorted order.
+    let mut by_key: BTreeMap<[R3; 3], Vec<(usize, bool)>> = BTreeMap::new();
+    for (pi, piece) in graph.pieces.iter().enumerate() {
+        let mut sorted = piece.v.clone();
+        sorted.sort();
+        // parity: does the winding cycle (v0,v1,v2), rotated to start at the
+        // smallest vertex, match (sorted0, sorted1, sorted2)?
+        let start = piece.v.iter().position(|v| *v == sorted[0]).unwrap();
+        let same = piece.v[(start + 1) % 3] == sorted[1];
+        by_key.entry(sorted).or_default().push((pi, same));
+    }
+    for owners in by_key.values() {
+        if owners.len() < 2 {
+            continue;
+        }
+        // Cancel opposite-parity cross-mesh pairs first (regularization)...
+        let mut p_side: Vec<(usize, bool)> = Vec::new();
+        let mut q_side: Vec<(usize, bool)> = Vec::new();
+        for &(pi, parity) in owners {
+            if graph.pieces[pi].mesh == 0 {
+                p_side.push((pi, parity));
+            } else {
+                q_side.push((pi, parity));
+            }
+        }
+        let mut used_q = vec![false; q_side.len()];
+        for &(pi, parity) in &p_side {
+            if let Some(k) = (0..q_side.len())
+                .find(|&k| !used_q[k] && q_side[k].1 != parity)
+            {
+                used_q[k] = true;
+                discarded[pi] = true;
+                discarded[q_side[k].0] = true;
+            }
+        }
+        // ...then bind same-parity cross-mesh pairs: P → Union, Q → Inter.
+        for &(pi, parity) in &p_side {
+            if discarded[pi] {
+                continue;
+            }
+            if let Some(k) = (0..q_side.len())
+                .find(|&k| !used_q[k] && q_side[k].1 == parity)
+            {
+                used_q[k] = true;
+                tags[pi] = Some(Tag::Union);
+                tags[q_side[k].0] = Some(Tag::Inter);
+                bound[pi] = true;
+                bound[q_side[k].0] = true;
+            }
+        }
+    }
+}
+
 /// Classify every piece adjacent to an intersection ring.
 pub fn classify_rings(graph: &IntersectionGraph) -> Classification {
     let n = graph.pieces.len();
     let mut tags: Vec<Option<Tag>> = vec![None; n];
     let mut discarded = vec![false; n];
+    let mut bound = vec![false; n];
 
-    // Ring construction: intersection edge key → incident pieces.
+    bind_coincident(graph, &mut tags, &mut discarded, &mut bound);
+
+    // Ring construction: intersection edge key → incident pieces (globally
+    // discarded pieces excluded up front).
     let mut rings: BTreeMap<EdgeKey, Vec<Incident>> = BTreeMap::new();
     for (pi, piece) in graph.pieces.iter().enumerate() {
+        if discarded[pi] {
+            continue;
+        }
         for e in 0..3 {
             let a = &piece.v[e];
             let b = &piece.v[(e + 1) % 3];
@@ -114,7 +190,7 @@ pub fn classify_rings(graph: &IntersectionGraph) -> Classification {
     }
 
     for (key, incidents) in rings.iter_mut() {
-        classify_one_ring(key, incidents, &mut tags, &mut discarded);
+        classify_one_ring(key, incidents, &mut tags, &mut discarded, &bound);
     }
 
     Classification { tags, discarded }
@@ -125,6 +201,7 @@ fn classify_one_ring(
     incidents: &mut [Incident],
     tags: &mut [Option<Tag>],
     discarded: &mut [bool],
+    bound: &[bool],
 ) {
     // Radial basis: w along the edge, u ⊥ w via the axis of w's smallest
     // |component| (never parallel), v = w × u; (u, v, w) is right-handed.
@@ -228,10 +305,24 @@ fn classify_one_ring(
     }
 
     let assign = |pos: usize, tag: Tag, tags: &mut [Option<Tag>]| {
-        let piece = incidents[ring[pos]].piece;
+        let inc = &incidents[ring[pos]];
+        let piece = inc.piece;
+        // Coincident-copy pieces already carry their globally bound tag; the
+        // walk still passes *through* them (its parity flips don't depend on
+        // the binding) but must not overwrite the global choice — which ∪/∩
+        // copy a shared region becomes is arbitrary, so per-ring walks may
+        // legitimately disagree with the binding.
+        if bound[piece] {
+            return;
+        }
         debug_assert!(
             tags[piece].is_none() || tags[piece] == Some(tag),
-            "conflicting ring tags for piece {piece}"
+            "conflicting ring tags for piece {piece}: had {:?}, ring {:?} assigns {tag:?} \
+             (forward {}, apex {:?})",
+            tags[piece],
+            (key.0.to_vec3_rounded(), key.1.to_vec3_rounded()),
+            inc.forward,
+            inc.apex.to_vec3_rounded(),
         );
         tags[piece] = Some(tag);
     };
@@ -254,27 +345,9 @@ fn classify_one_ring(
         }
         None => {
             // Undefined configuration (§7.2.3): only orientable pairs and/or
-            // coincident same-traversal groups. Tag coincident groups one
-            // ∪ / one ∩ (deterministic by radial+id order); leave the rest
-            // for flood fill / ray shooting.
-            let mut s = 0;
-            while s < ring.len() {
-                let mut e = s;
-                while e + 1 < ring.len()
-                    && coincident(&incidents[ring[s]], &incidents[ring[e + 1]])
-                {
-                    e += 1;
-                }
-                if e > s {
-                    debug_assert!(
-                        e - s == 1,
-                        "coincident multiplicity > 2 in undefined configuration"
-                    );
-                    assign(s, Tag::Union, tags);
-                    assign(e, Tag::Inter, tags);
-                }
-                s = e + 1;
-            }
+            // coincident same-traversal groups remain. Coincident copies are
+            // already bound globally; everything else is resolved by flood
+            // fill / ray shooting.
         }
     }
 }

@@ -201,6 +201,60 @@ impl std::fmt::Display for Error {
 }
 
 // ---------------------------------------------------------------------------
+// BooleanEngine (exact vs robust boolean pipeline selection)
+// ---------------------------------------------------------------------------
+
+/// Which 3D boolean implementation to run.
+///
+/// Selection is input-based only: `Auto` never catches panics from the exact
+/// engine — a panic there is a bug to report, not a dispatch signal.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum BooleanEngine {
+    /// The ported exact pipeline (default). Byte-identical results to the
+    /// C++ reference; requires strictly manifold operands.
+    #[default]
+    Exact,
+    /// The robust engine (`src/robust`, Barki et al. 2015): exact rational
+    /// arithmetic, accepts closed orientable triangle soup (non-manifold,
+    /// disconnected, voids). Slower; triangulation may differ from Exact.
+    Robust,
+    /// `Exact` unless either operand carries non-manifold soup geometry
+    /// (imported via `Manifold::from_mesh_gl_robust`), then `Robust`.
+    Auto,
+}
+
+static BOOLEAN_ENGINE_DEFAULT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Process-global default engine, in the style of [`Quality`]: the plain
+/// boolean entry points ([`crate::manifold::Manifold::boolean`], CSG-tree
+/// evaluation, Minkowski) read this; `_with_engine` variants override it
+/// per call.
+pub struct BooleanConfig;
+
+impl BooleanConfig {
+    pub fn set_default_engine(engine: BooleanEngine) {
+        let v = match engine {
+            BooleanEngine::Exact => 0u8,
+            BooleanEngine::Robust => 1,
+            BooleanEngine::Auto => 2,
+        };
+        BOOLEAN_ENGINE_DEFAULT.store(v, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    pub fn default_engine() -> BooleanEngine {
+        match BOOLEAN_ENGINE_DEFAULT.load(std::sync::atomic::Ordering::Relaxed) {
+            1 => BooleanEngine::Robust,
+            2 => BooleanEngine::Auto,
+            _ => BooleanEngine::Exact,
+        }
+    }
+
+    pub fn reset_to_defaults() {
+        Self::set_default_engine(BooleanEngine::Exact);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Quality (static global for circle quantization)
 // ---------------------------------------------------------------------------
 
