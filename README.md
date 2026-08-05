@@ -24,10 +24,12 @@ Pure Rust port of [Manifold](https://github.com/elalish/manifold) — a geometry
 > Part of the [rust-apps](https://github.com/larsbrubaker/rust-apps) suite — a collection of Rust graphics and geometry libraries by Lars Brubaker.
 
 > **Status: Port complete.** All 18 phases of the C++ engine (v3.5.0) are implemented and
-> every C++ test is ported or covered — 520 tests passing, 0 failing (the handful of
+> every C++ test is ported or covered — 624 tests passing, 0 failing (the handful of
 > `#[ignore]`d tests are debug-build-speed only and pass in release). Heavy boolean/CSG
 > workloads run at parity with the sequential C++ build, and the optional `parallel`
 > feature roughly doubles them. See [PORTING_PLAN.md](PORTING_PLAN.md) for the full record.
+> Beyond the port, the library now also includes a **robust boolean engine** that accepts
+> non-manifold input — see [Robust booleans on non-manifold input](#robust-booleans-on-non-manifold-input).
 
 ## What is Manifold?
 
@@ -41,6 +43,12 @@ Manifold is a high-performance C++ library for 3D solid modeling. It supports:
 - Minkowski sum/difference
 
 This Rust port targets **exact numerical match** with the C++ implementation — same algorithms, same floating-point results, same triangle topology. Exactness is validated by instrumented, boolean-by-boolean trace comparison against a locally built C++ reference (see `validate-reference.ps1`), down to the tie-breaking order of symbolic-perturbation predicates.
+
+Beyond the port, it adds one capability the C++ library does not have: a second, *robust*
+boolean engine that accepts closed non-manifold meshes (shared edges/vertices,
+disconnected shells, internal voids) — common in real-world scan and Thingiverse
+geometry that the strict pipeline rejects. See
+[Robust booleans on non-manifold input](#robust-booleans-on-non-manifold-input).
 
 ## Why
 
@@ -122,6 +130,13 @@ byte-identical to previous releases.
 An interactive WASM demo is live at <https://larsbrubaker.github.io/manifold-rust/> —
 booleans, extrude/revolve with twist, convex hull, subdivision, a Menger sponge, and more,
 all running the Rust engine compiled to WebAssembly.
+
+The Boolean Gallery includes an engine selector (Exact / Robust / Auto) and can load
+random mesh pairs from the [Thingi10K](https://github.com/larsbrubaker/Thingi10K)
+dataset — manifold or non-manifold — to exercise the robust engine on real-world
+geometry. Every operation's inputs (model IDs, transform, engine) are captured behind a
+*Copy Debug Info* button so a failing combination can be pasted straight into a bug
+report.
 
 ## Building
 
@@ -225,6 +240,7 @@ The port follows the C++ module structure:
 | `quickhull` | `quickhull.cpp` | Convex hull |
 | `minkowski` | `minkowski.cpp` | Minkowski operations |
 | `cross_section` | `cross_section/` | 2D cross section |
+| `robust` | — (Rust-only) | Robust boolean engine for non-manifold input (Barki et al. 2015) |
 
 ## License
 

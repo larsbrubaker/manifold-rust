@@ -90,7 +90,7 @@ function renderHome(container: HTMLElement) {
         <a href="#/boolean-gallery" class="feature-card">
           <div class="card-thumb" style="background-image:url(public/thumbs/boolean-gallery.jpg)"></div>
           <h3>Boolean Gallery</h3>
-          <p>Mix and match cubes, spheres, and cylinders with union, intersection, and difference in 3D.</p>
+          <p>Booleans on primitives or random Thingi10K meshes — with exact and robust (non-manifold) engines.</p>
         </a>
         <a href="#/menger-sponge" class="feature-card">
           <div class="card-thumb" style="background-image:url(public/thumbs/menger-sponge.jpg)"></div>

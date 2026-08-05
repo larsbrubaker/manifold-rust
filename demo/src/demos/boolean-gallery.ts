@@ -1,9 +1,17 @@
-// Boolean Gallery: sphere-sphere, sphere-cube, cylinder-sphere combinations
+// Boolean Gallery: primitive shape booleans with a choice of boolean engine
+// (Exact / Robust / Auto), plus a Thingi10K mode that pulls random real-world
+// mesh pairs — manifold or non-manifold — from the dataset CDN to stress the
+// robust engine. Every operation's inputs are captured for the Debug Info
+// button so failures can be reproduced from a pasted report.
 
 import { ThreeViewer } from '../three-viewer.ts';
-import { createSlider, createDropdown, createCheckbox, createReadout, updateReadout } from '../controls.ts';
-import { booleanGalleryMesh, booleanGalleryMeshRotated, type MeshData } from '../wasm.ts';
+import { createSlider, createDropdown, createCheckbox, createButton, createReadout, updateReadout } from '../controls.ts';
+import {
+  booleanGalleryMeshEngine, importTriangleSoup, importedBoolean,
+  type MeshData, type ImportedMesh, type BooleanEngine,
+} from '../wasm.ts';
 import { loadSetting, saveSetting } from '../settings.ts';
+import { pickRandomPair, fetchMesh, meshZipUrl, type ThingiModel, type PairKind } from '../thingi.ts';
 
 const DEMO = 'boolean-gallery';
 
@@ -20,14 +28,37 @@ const OPS = [
   { value: '2', text: 'Difference' },
 ];
 
+const ENGINES = [
+  { value: '0', text: 'Exact (C++-matching)' },
+  { value: '1', text: 'Robust (non-manifold)' },
+  { value: '2', text: 'Auto' },
+];
+
+const PAIR_KINDS = [
+  { value: 'mm', text: 'Manifold + Manifold' },
+  { value: 'mn', text: 'Manifold + Non-manifold' },
+  { value: 'nn', text: 'Non-manifold + Non-manifold' },
+];
+
 const OP_COLORS = [0x4488cc, 0x44aa44, 0xcc4444];
+const OP_NAMES = ['union', 'intersection', 'difference'];
+const ENGINE_NAMES = ['exact', 'robust', 'auto'];
+const SHAPE_NAMES = ['cube', 'sphere', 'cylinder', 'spiky-dodecahedron'];
+
+interface ThingiOperand {
+  model: ThingiModel;
+  handle: ImportedMesh;
+  normalization: { center: [number, number, number]; scale: number };
+}
 
 export function init(container: HTMLElement): () => void {
   container.innerHTML = `
     <div class="demo-page">
       <div class="demo-header">
         <h2>Boolean Gallery</h2>
-        <p>Combine cubes, spheres, and cylinders with union, intersection, and difference. Toggle Animate to see Shape B rotate continuously.</p>
+        <p>Combine primitives with union, intersection, and difference — or load a random
+        pair of real-world Thingi10K meshes (including non-manifold ones) and boolean them
+        with the robust engine. Toggle Animate to see Shape B rotate continuously.</p>
       </div>
       <div class="demo-layout">
         <div class="demo-canvas-area" id="viewer-container"></div>
@@ -43,6 +74,7 @@ export function init(container: HTMLElement): () => void {
   let shapeA = loadSetting(DEMO, 'shapeA', 3);
   let shapeB = loadSetting(DEMO, 'shapeB', 3);
   let op = loadSetting(DEMO, 'op', 0);
+  let engine = loadSetting(DEMO, 'engine', 0) as BooleanEngine;
   let offsetX = loadSetting(DEMO, 'offsetX', 0.3);
   let offsetY = loadSetting(DEMO, 'offsetY', 0.0);
   let offsetZ = loadSetting(DEMO, 'offsetZ', 0.0);
@@ -55,10 +87,65 @@ export function init(container: HTMLElement): () => void {
   const ROT_SPEED_Y = 1.5;
   const ROT_SPEED_Z = 0.3;
 
+  // Thingi10K mode state
+  let mode: 'primitives' | 'thingi' = 'primitives';
+  let pairKind = loadSetting(DEMO, 'pairKind', 'mn') as PairKind;
+  let thingiA: ThingiOperand | null = null;
+  let thingiB: ThingiOperand | null = null;
+  let loadingPair = false;
+  let disposed = false;
+
+  let lastDebugInfo: any = null;
+  let frameCount = 0;
+
   const readout = createReadout();
   const errorBox = document.createElement('div');
   errorBox.className = 'demo-note';
   errorBox.style.display = 'none';
+  const thingiInfo = document.createElement('div');
+  thingiInfo.className = 'demo-note';
+  thingiInfo.style.display = 'none';
+
+  function describeOperand(o: ThingiOperand) {
+    return {
+      id: o.model.id,
+      name: o.model.name,
+      url: meshZipUrl(o.model),
+      faces: o.model.faces,
+      edge_manifold: o.model.edge_manifold,
+      vertex_manifold: o.model.vertex_manifold,
+      imported: { num_tri: o.handle.num_tri, is_soup: o.handle.is_soup, status: o.handle.status },
+      normalization: o.normalization,
+    };
+  }
+
+  // Capture the full operation before running it, so even a crash/hang
+  // leaves a reproducible record (also persisted to localStorage).
+  function captureDebugInfo(): any {
+    const info: any = {
+      demo: DEMO,
+      timestamp: new Date().toISOString(),
+      frame: frameCount++,
+      mode,
+      engine: ENGINE_NAMES[engine],
+      op: OP_NAMES[op] || op,
+      offset: [offsetX, offsetY, offsetZ],
+      rotation_degrees: [rotX, rotY, rotZ],
+      result: null,
+      error: null,
+    };
+    if (mode === 'thingi' && thingiA && thingiB) {
+      info.pair_kind = pairKind;
+      info.model_a = describeOperand(thingiA);
+      info.model_b = describeOperand(thingiB);
+    } else {
+      info.shape_a = SHAPE_NAMES[shapeA] || shapeA;
+      info.shape_b = SHAPE_NAMES[shapeB] || shapeB;
+    }
+    lastDebugInfo = info;
+    try { localStorage.setItem('boolean-gallery-debug', JSON.stringify(info)); } catch { /* ignore */ }
+    return info;
+  }
 
   function showReadout(data: MeshData) {
     errorBox.style.display = 'none';
@@ -70,39 +157,30 @@ export function init(container: HTMLElement): () => void {
     ]);
   }
 
-  let frameCount = 0;
-
   function update(silent = false) {
-    // Log operation params BEFORE calling WASM so we can reproduce crashes/hangs.
-    // Written to localStorage so it persists even if the tab crashes.
-    const opNames = ['union', 'intersection', 'difference'];
-    const shapeNames = ['cube', 'sphere', 'cylinder', 'spiky-dodecahedron'];
-    const params = {
-      frame: frameCount++,
-      shapeA: shapeNames[shapeA] || shapeA,
-      shapeB: shapeNames[shapeB] || shapeB,
-      op: opNames[op] || op,
-      offset: [offsetX, offsetY, offsetZ],
-      rotation: [rotX, rotY, rotZ],
-    };
-    localStorage.setItem('boolean-gallery-last-op', JSON.stringify(params));
-
+    if (mode === 'thingi' && (!thingiA || !thingiB)) return;
+    const info = captureDebugInfo();
     try {
       let data: MeshData;
-      if (rotX !== 0 || rotY !== 0 || rotZ !== 0) {
-        data = booleanGalleryMeshRotated(shapeA, shapeB, op, offsetX, offsetY, offsetZ, rotX, rotY, rotZ);
+      if (mode === 'thingi') {
+        data = importedBoolean(thingiA!.handle, thingiB!.handle, op, engine, offsetX, offsetY, offsetZ, rotX, rotY, rotZ);
       } else {
-        data = booleanGalleryMesh(shapeA, shapeB, op, offsetX, offsetY, offsetZ);
+        data = booleanGalleryMeshEngine(shapeA, shapeB, op, offsetX, offsetY, offsetZ, rotX, rotY, rotZ, engine);
       }
+      info.result = { num_tri: data.num_tri, num_vert: data.num_vert, volume: data.volume };
+      try { localStorage.setItem('boolean-gallery-debug', JSON.stringify(info)); } catch { /* ignore */ }
       viewer.setMesh(data);
       viewer.setColor(OP_COLORS[op] || 0x4488cc);
       errorBox.style.display = 'none';
       showReadout(data);
     } catch (e) {
-      console.error('Boolean op failed:', params, e);
+      info.error = String(e);
+      try { localStorage.setItem('boolean-gallery-debug', JSON.stringify(info)); } catch { /* ignore */ }
+      console.error('Boolean op failed:', info, e);
       if (!silent) {
         errorBox.style.display = 'block';
-        errorBox.innerHTML = '<strong>Boolean operation failed.</strong><br>Try adjusting the offset.';
+        errorBox.innerHTML = `<strong>Boolean operation failed:</strong> ${String(e)}<br>` +
+          `Use <em>Copy Debug Info</em> to capture the inputs for a bug report.`;
         updateReadout(readout, []);
       }
     }
@@ -119,7 +197,9 @@ export function init(container: HTMLElement): () => void {
 
   function toggleAnimate(on: boolean) {
     saveSetting(DEMO, 'animate', on);
-    if (on) {
+    // Thingi meshes can take seconds per boolean (robust engine on real
+    // scans) — continuous re-evaluation would freeze the tab.
+    if (on && mode !== 'thingi') {
       animating = true;
       animateStep();
     } else {
@@ -129,14 +209,119 @@ export function init(container: HTMLElement): () => void {
     }
   }
 
-  controlsEl.appendChild(createDropdown('Shape A', SHAPES, String(shapeA), v => { shapeA = parseInt(v); saveSetting(DEMO, 'shapeA', shapeA); update(); }));
-  controlsEl.appendChild(createDropdown('Shape B', SHAPES, String(shapeB), v => { shapeB = parseInt(v); saveSetting(DEMO, 'shapeB', shapeB); update(); }));
+  function freeThingiPair() {
+    thingiA?.handle.free();
+    thingiB?.handle.free();
+    thingiA = thingiB = null;
+  }
+
+  function setThingiInfo(html: string | null) {
+    if (html) {
+      thingiInfo.innerHTML = html;
+      thingiInfo.style.display = 'block';
+    } else {
+      thingiInfo.style.display = 'none';
+    }
+  }
+
+  function operandLabel(o: ThingiOperand): string {
+    const kind = o.handle.is_soup ? 'non-manifold' : 'manifold';
+    return `#${o.model.id} &ldquo;${o.model.name}&rdquo; (${o.model.faces} tris, ${kind})`;
+  }
+
+  async function loadRandomPair() {
+    if (loadingPair) return;
+    loadingPair = true;
+    loadBtn.disabled = true;
+    loadBtn.textContent = 'Loading pair…';
+    errorBox.style.display = 'none';
+    try {
+      const [ma, mb] = await pickRandomPair(pairKind);
+      setThingiInfo(`Fetching #${ma.id} and #${mb.id}…`);
+      const [pa, pb] = await Promise.all([fetchMesh(ma), fetchMesh(mb)]);
+      if (disposed) return;
+      const ha = importTriangleSoup(pa.positions, pa.indices);
+      const hb = importTriangleSoup(pb.positions, pb.indices);
+      if (!ha.ok || !hb.ok) {
+        const bad = !ha.ok ? { m: ma, h: ha } : { m: mb, h: hb };
+        const status = bad.h.status;
+        ha.free(); hb.free();
+        throw new Error(`Import of #${bad.m.id} failed: ${status}`);
+      }
+      freeThingiPair();
+      thingiA = { model: ma, handle: ha, normalization: { center: pa.center, scale: pa.scale } };
+      thingiB = { model: mb, handle: hb, normalization: { center: pb.center, scale: pb.scale } };
+      mode = 'thingi';
+      toggleAnimate(false);
+      // Random static orientation for B so every pair meets differently.
+      rotX = Math.floor(Math.random() * 360);
+      rotY = Math.floor(Math.random() * 360);
+      rotZ = Math.floor(Math.random() * 360);
+      setThingiInfo(`A: ${operandLabel(thingiA)}<br>B: ${operandLabel(thingiB)}<br>` +
+        `Rotation: [${rotX}, ${rotY}, ${rotZ}]&deg;`);
+      update();
+    } catch (e) {
+      console.error('Thingi10K pair load failed:', e);
+      setThingiInfo(null);
+      errorBox.style.display = 'block';
+      errorBox.innerHTML = `<strong>Failed to load Thingi10K pair:</strong> ${String(e)}`;
+    } finally {
+      loadingPair = false;
+      loadBtn.disabled = false;
+      loadBtn.textContent = 'Load Random Thingi10K Pair';
+    }
+  }
+
+  function backToPrimitives() {
+    if (mode !== 'thingi') return;
+    mode = 'primitives';
+    freeThingiPair();
+    setThingiInfo(null);
+    rotX = rotY = rotZ = 0;
+    update();
+    if (animate) toggleAnimate(true);
+  }
+
+  async function copyDebugInfo() {
+    const text = JSON.stringify(lastDebugInfo ?? { note: 'no operation recorded yet' }, null, 2);
+    try {
+      await navigator.clipboard.writeText(text);
+      copyBtn.textContent = 'Copied!';
+    } catch {
+      // Clipboard API can be unavailable (non-secure context); fall back.
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+      copyBtn.textContent = 'Copied!';
+    }
+    setTimeout(() => { copyBtn.textContent = 'Copy Debug Info'; }, 1500);
+  }
+
+  controlsEl.appendChild(createDropdown('Shape A', SHAPES, String(shapeA), v => { shapeA = parseInt(v); saveSetting(DEMO, 'shapeA', shapeA); backToPrimitives(); update(); }));
+  controlsEl.appendChild(createDropdown('Shape B', SHAPES, String(shapeB), v => { shapeB = parseInt(v); saveSetting(DEMO, 'shapeB', shapeB); backToPrimitives(); update(); }));
   controlsEl.appendChild(createDropdown('Operation', OPS, String(op), v => { op = parseInt(v); saveSetting(DEMO, 'op', op); update(); }));
+  controlsEl.appendChild(createDropdown('Engine', ENGINES, String(engine), v => { engine = parseInt(v) as BooleanEngine; saveSetting(DEMO, 'engine', engine); update(); }));
   controlsEl.appendChild(createSlider('Offset X ', -1.5, 1.5, offsetX, 0.1, v => { offsetX = v; saveSetting(DEMO, 'offsetX', v); update(); }));
   controlsEl.appendChild(createSlider('Offset Y ', -1.5, 1.5, offsetY, 0.1, v => { offsetY = v; saveSetting(DEMO, 'offsetY', v); update(); }));
   controlsEl.appendChild(createSlider('Offset Z ', -1.5, 1.5, offsetZ, 0.1, v => { offsetZ = v; saveSetting(DEMO, 'offsetZ', v); update(); }));
   controlsEl.appendChild(createCheckbox('Animate', animate, toggleAnimate));
   controlsEl.appendChild(createCheckbox('Wireframe', wireframe, v => { saveSetting(DEMO, 'wireframe', v); viewer.setWireframe(v); }));
+
+  // Thingi10K section
+  const divider = document.createElement('hr');
+  controlsEl.appendChild(divider);
+  controlsEl.appendChild(createDropdown('Thingi10K Pair', PAIR_KINDS, pairKind, v => { pairKind = v as PairKind; saveSetting(DEMO, 'pairKind', pairKind); }));
+  const loadBtn = createButton('Load Random Thingi10K Pair', () => { loadRandomPair(); });
+  controlsEl.appendChild(loadBtn);
+  const backBtn = createButton('Back to Primitives', backToPrimitives);
+  controlsEl.appendChild(backBtn);
+  const copyBtn = createButton('Copy Debug Info', () => { copyDebugInfo(); });
+  controlsEl.appendChild(copyBtn);
+
+  controlsEl.appendChild(thingiInfo);
   controlsEl.appendChild(errorBox);
   controlsEl.appendChild(readout);
 
@@ -145,8 +330,10 @@ export function init(container: HTMLElement): () => void {
   toggleAnimate(animate);
 
   return () => {
+    disposed = true;
     animating = false;
     cancelAnimationFrame(animId);
+    freeThingiPair();
     viewer.dispose();
   };
 }

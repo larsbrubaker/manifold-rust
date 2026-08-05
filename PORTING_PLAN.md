@@ -5,7 +5,8 @@ This is a **roadmap of remaining work** to finish porting
 not what has already been done (use `git log` for history). Every change must reproduce the
 C++ reference with **exact numerical match** — identical results on identical inputs.
 
-**Status:** 521 passing, 0 failing, 7 ignored. Every C++ test ported or covered.
+**Status:** 624 passing, 0 failing, 8 ignored (2026-08-05, includes the robust-engine
+suite). Every C++ test ported or covered.
 **C++ reference target:** v3.5.0 (parent repo pins commit `541c33bd`; submodule working
 tree currently checked out at `v3.5.2` — delta audited 2026-07-22, nothing to port, see
 "v3.5.0 → v3.5.2 audit" below).

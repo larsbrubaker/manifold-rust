@@ -107,6 +107,39 @@ export function booleanGalleryMeshRotated(shapeA: number, shapeB: number, op: nu
   return toMeshData(getWasm().boolean_gallery_mesh_rotated(shapeA, shapeB, op, ox, oy, oz, rx, ry, rz));
 }
 
+// Engine values match the WASM side: 0 = Exact, 1 = Robust, 2 = Auto.
+export type BooleanEngine = 0 | 1 | 2;
+
+export function booleanGalleryMeshEngine(shapeA: number, shapeB: number, op: number, ox: number, oy: number, oz: number, rx: number, ry: number, rz: number, engine: BooleanEngine): MeshData {
+  return toMeshData(getWasm().boolean_gallery_mesh_engine(shapeA, shapeB, op, ox, oy, oz, rx, ry, rz, engine));
+}
+
+/** Handle to a WASM-side imported mesh (possibly non-manifold triangle soup). */
+export interface ImportedMesh {
+  readonly status: string;
+  readonly ok: boolean;
+  readonly is_soup: boolean;
+  readonly num_vert: number;
+  readonly num_tri: number;
+  mesh(): any;
+  free(): void;
+}
+
+/** Import raw triangle soup; welds vertices and keeps non-manifold geometry. */
+export function importTriangleSoup(positions: Float32Array, indices: Uint32Array): ImportedMesh {
+  return new (getWasm().ImportedMesh)(positions, indices);
+}
+
+/** Boolean between imported meshes; throws the status string on failure. */
+export function importedBoolean(a: ImportedMesh, b: ImportedMesh, op: number, engine: BooleanEngine, ox: number, oy: number, oz: number, rx: number, ry: number, rz: number): MeshData {
+  return toMeshData(getWasm().imported_boolean(a, b, op, engine, ox, oy, oz, rx, ry, rz));
+}
+
+/** Preview an imported mesh on its own (no boolean applied). */
+export function importedMeshData(m: ImportedMesh): MeshData {
+  return toMeshData(m.mesh());
+}
+
 export function refinedShapeMesh(shape: number, refineLevel: number): MeshData {
   return toMeshData(getWasm().refined_shape_mesh(shape, refineLevel));
 }

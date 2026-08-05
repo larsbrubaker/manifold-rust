@@ -8,6 +8,9 @@ use manifold_rust::quickhull;
 use wasm_bindgen::prelude::*;
 use js_sys::{Float32Array, Uint32Array};
 
+mod soup;
+pub use soup::*;
+
 #[wasm_bindgen]
 pub struct MeshSummary {
     num_vert: u32,
@@ -116,7 +119,7 @@ impl MeshData {
     }
 }
 
-fn mesh_data_from(m: &Manifold) -> MeshData {
+pub(crate) fn mesh_data_from(m: &Manifold) -> MeshData {
     let gl = m.get_mesh_gl(0);
     let num_prop = gl.num_prop as usize;
     let vert_count = if num_prop > 0 { gl.vert_properties.len() / num_prop } else { 0 };
@@ -461,19 +464,25 @@ pub fn boolean_gallery_mesh(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, 
 
 #[wasm_bindgen]
 pub fn boolean_gallery_mesh_rotated(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64) -> MeshData {
-    let a = make_shape(shape_a);
-    let b = make_shape(shape_b);
-    // Assign distinct colors: shape A = blue (opaque), shape B = off-red (translucent)
-    let a = color_shape(&a, 0.27, 0.53, 0.80, 1.0);   // #4488cc blue, fully opaque
-    let b = color_shape(&b, 0.85, 0.25, 0.25, 0.6);   // off-red, alpha 0.6
+    boolean_gallery_mesh_engine(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, 0)
+}
+
+/// Boolean Gallery with an explicit engine: 0=Exact, 1=Robust, 2=Auto.
+/// The robust engine outputs positions only, so the per-shape colors are
+/// skipped there and the result renders in the operation's solid color.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn boolean_gallery_mesh_engine(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32) -> MeshData {
+    let mut a = make_shape(shape_a);
+    let mut b = make_shape(shape_b);
+    if engine == 0 {
+        // Distinct colors: shape A = blue (opaque), shape B = off-red (translucent)
+        a = color_shape(&a, 0.27, 0.53, 0.80, 1.0);   // #4488cc blue, fully opaque
+        b = color_shape(&b, 0.85, 0.25, 0.25, 0.6);   // off-red, alpha 0.6
+    }
     // Rotate shape B about its offset center, then translate
     let b = b.rotate(rot_x, rot_y, rot_z).translate(Vec3::new(offset_x, offset_y, offset_z));
-    let result = match op {
-        0 => a.union(&b),
-        1 => a.intersection(&b),
-        2 => a.difference(&b),
-        _ => a.union(&b),
-    };
+    let result = soup::op_with_engine(&a, &b, op, engine);
     mesh_data_from(&result)
 }
 
