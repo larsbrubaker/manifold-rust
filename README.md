@@ -85,7 +85,7 @@ only determinism-preserving sites are parallelized):
 
 ```toml
 [dependencies]
-manifold-rust = { version = "0.9", features = ["parallel"] }
+manifold-rust = { version = "0.10", features = ["parallel"] }
 ```
 
 ## Demo
