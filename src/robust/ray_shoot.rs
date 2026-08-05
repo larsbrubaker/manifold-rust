@@ -47,14 +47,73 @@ fn dir_r3(d: [i32; 3]) -> R3 {
     )
 }
 
+/// Conservative f64 prefilter for one winding query: triangles whose
+/// (inflated) bounding box cannot meet the forward ray are skipped before
+/// any exact arithmetic. Sound because a pruned triangle can contribute
+/// neither a forward crossing nor a forward grazing hazard: the inflation
+/// margin (1e-6, magnitude-scaled) exceeds every f64 rounding error involved
+/// by many orders of magnitude, so only provably-clear triangles are pruned.
+/// False keeps merely cost an exact test.
+struct RayPrefilter {
+    origin: crate::linalg::Vec3,
+    eps: f64,
+}
+
+impl RayPrefilter {
+    fn new(point: &R3) -> Self {
+        let origin = point.to_vec3_rounded();
+        let mag = origin.x.abs().max(origin.y.abs()).max(origin.z.abs());
+        RayPrefilter {
+            origin,
+            eps: 1e-6 * (1.0 + mag),
+        }
+    }
+
+    /// Could the forward ray from `origin` along integer direction `d` pass
+    /// within `eps` of `bbox`? Slab test; conservative on every comparison.
+    fn may_hit(&self, d: [i32; 3], bbox: &crate::types::Box) -> bool {
+        let mut t0 = f64::NEG_INFINITY;
+        let mut t1 = f64::INFINITY;
+        for k in 0..3 {
+            let (lo, hi) = (bbox.min[k] - self.eps, bbox.max[k] + self.eps);
+            let dk = d[k] as f64;
+            let pk = self.origin[k];
+            if dk == 0.0 {
+                if pk < lo || pk > hi {
+                    return false;
+                }
+                continue;
+            }
+            let (mut ta, mut tb) = ((lo - pk) / dk, (hi - pk) / dk);
+            if ta > tb {
+                std::mem::swap(&mut ta, &mut tb);
+            }
+            t0 = t0.max(ta);
+            t1 = t1.min(tb);
+        }
+        t0 <= t1 + self.eps && t1 >= -self.eps
+    }
+}
+
+fn tri_box_f64(t: &[Vec3; 3]) -> crate::types::Box {
+    let mut b = crate::types::Box::from_points(t[0], t[1]);
+    b.union_point(t[2]);
+    b
+}
+
 /// Exact winding number of `point` with respect to the closed oriented
 /// triangle soup `tris`. The point must not lie on the surface.
 pub fn winding_number(point: &R3, tris: &[[Vec3; 3]]) -> i32 {
+    let boxes: Vec<crate::types::Box> = tris.iter().map(tri_box_f64).collect();
+    let prefilter = RayPrefilter::new(point);
     'dirs: for d in DIRS {
         let dir = dir_r3(d);
         let o2 = point.add(&dir);
         let mut winding = 0i32;
-        for t in tris {
+        for (t, bbox) in tris.iter().zip(&boxes) {
+            if !prefilter.may_hit(d, bbox) {
+                continue;
+            }
             let a = R3::from_vec3(t[0]);
             let b = R3::from_vec3(t[1]);
             let c = R3::from_vec3(t[2]);
@@ -90,6 +149,91 @@ pub fn winding_number(point: &R3, tris: &[[Vec3; 3]]) -> i32 {
             }
             winding += match n_dot_dir {
                 Sign::Pos => 1, // exits through a front face
+                _ => -1,
+            };
+        }
+        return winding;
+    }
+    unreachable!("all candidate ray directions degenerate — malformed input");
+}
+
+/// Exact winding number of `point + ε·outward` for an infinitesimal ε > 0:
+/// the winding just off a surface piece through `point`, on the piece's
+/// outward side. Used to detect pieces that are interior walls of their own
+/// mesh (self-overlapping or nested sheets): a piece lies on the boundary of
+/// the solid `{w ≠ 0}` only when this value is 0 (or −1 for an
+/// orientation-flipped complement operand).
+///
+/// `boxes` are per-triangle f64 bounding boxes (rounded vertices are fine —
+/// the prefilter inflation covers the rounding) for conservative pruning.
+///
+/// `tris` may pass through `point` (the piece's own triangle always does).
+/// Triangles whose plane contains `point` are resolved by a second-order
+/// perturbation argument: the query point is x + ε·outward + ε²·dir, so such
+/// a triangle is crossed by the forward ray exactly when the plane's normal
+/// separates `outward` from `dir` (sides differ); when `outward` lies in the
+/// plane, the ε² term decides and the ray always leaves on the `dir` side —
+/// no crossing. Ray directions are restricted to the outward hemisphere so
+/// the piece's own plane never counts.
+pub fn winding_off_surface(
+    point: &R3,
+    outward: &R3,
+    tris: &[[R3; 3]],
+    boxes: &[crate::types::Box],
+) -> i32 {
+    debug_assert_eq!(tris.len(), boxes.len());
+    let prefilter = RayPrefilter::new(point);
+    'dirs: for d in DIRS
+        .iter()
+        .flat_map(|d| [*d, [-d[0], -d[1], -d[2]]])
+    {
+        let dir = dir_r3(d);
+        // Outward hemisphere only: the ε·outward offset must stay on the
+        // near side of the piece's own plane relative to the ray.
+        if Sign::of_rat(&dir.dot(outward)) != Sign::Pos {
+            continue;
+        }
+        let o2 = point.add(&dir);
+        let mut winding = 0i32;
+        for (t, bbox) in tris.iter().zip(boxes) {
+            if !prefilter.may_hit(d, bbox) {
+                continue;
+            }
+            let (a, b, c) = (&t[0], &t[1], &t[2]);
+            let s_ab = orient3d_r(point, &o2, a, b);
+            let s_bc = orient3d_r(point, &o2, b, c);
+            let s_ca = orient3d_r(point, &o2, c, a);
+            if s_ab == Sign::Zero || s_bc == Sign::Zero || s_ca == Sign::Zero {
+                if could_graze(point, &o2, a, b, c) {
+                    continue 'dirs;
+                }
+                continue;
+            }
+            if s_ab != s_bc || s_bc != s_ca {
+                continue; // line misses the triangle
+            }
+            let n_dot_dir = s_ab; // sign(n·dir), n the CCW normal
+            let h = orient3d_r(a, b, c, point);
+            if h == Sign::Zero {
+                // Plane through the query point; the pierce point is `point`
+                // itself (the transversal line meets the plane only there).
+                // Perturbed crossing exists iff outward and dir are on
+                // opposite sides of the plane.
+                let n = super::exact::predicates::tri_normal_r(a, b, c);
+                let s_out = Sign::of_rat(&n.dot(outward));
+                if s_out == n_dot_dir.flip() {
+                    winding += match n_dot_dir {
+                        Sign::Pos => 1,
+                        _ => -1,
+                    };
+                }
+                continue;
+            }
+            if h != n_dot_dir.flip() {
+                continue; // intersection lies behind the ray origin
+            }
+            winding += match n_dot_dir {
+                Sign::Pos => 1,
                 _ => -1,
             };
         }

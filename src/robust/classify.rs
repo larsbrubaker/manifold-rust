@@ -1,19 +1,21 @@
-// robust/classify.rs — Radial sort and local ∪/∩ classification around
-// intersection segments (paper §7.1–7.2).
+// robust/classify.rs — Radial regularization around intersection segments
+// and coincident-piece binding (paper §7.1).
 //
 // For every exact intersection sub-edge (robust/intersection_graph.rs), the
 // incident pieces from both meshes are sorted radially around the edge with
-// pure sign arithmetic (quadrant + 2D cross, no trigonometry). Successive
-// pairs then classify by Propositions 2/3:
-//   - opposite edge-traversal (orientable pair)  → same tag,
-//   - same edge-traversal (non-orientable pair)  → opposite tags, and the
-//     absolute assignment follows from the traversal direction: with the
-//     radial order counterclockwise around w = key.1 - key.0, a pair both
-//     traversing +w has its CCW-later member in the union; both traversing
-//     -w, its CCW-earlier member. (Derivation in the module tests.)
-// Exactly coincident pieces (coplanar overlaps): opposite orientation pairs
-// are discarded outright (regularization, §7.1); same-orientation pairs get
-// one ∪ and one ∩ so each shared region survives exactly once per output.
+// pure sign arithmetic (quadrant + 2D cross, no trigonometry). Within each
+// coincident-direction group, opposite-traversal pairs are infinitely thin
+// material and are discarded (regularization, §7.1). Exactly coincident
+// whole pieces (coplanar overlaps): opposite-orientation pairs are likewise
+// discarded; same-orientation pairs get one ∪ and one ∩ binding so each
+// shared region survives exactly once per output.
+//
+// The absolute ∪/∩ tags for everything else come from exact winding-number
+// queries in robust/mod.rs (one per surface component, per piece for
+// self-intersecting operands). The paper's local Prop 2/3 ring walk was
+// replaced by those queries: it silently misclassifies pieces where an
+// operand's winding exceeds 1 (self-overlapping sheets make a 1↔2 crossing
+// locally indistinguishable from the 0↔1 crossing the walk assumes).
 
 use std::cmp::Ordering;
 use std::collections::BTreeMap;
@@ -32,17 +34,9 @@ pub enum Tag {
     Inter,
 }
 
-impl Tag {
-    fn flip(self) -> Tag {
-        match self {
-            Tag::Union => Tag::Inter,
-            Tag::Inter => Tag::Union,
-        }
-    }
-}
-
-/// Per-piece classification result. `None` tag = not adjacent to any ring
-/// (resolved later by flood fill + ray shooting).
+/// Per-piece classification result. Tags are set only for coincident-bound
+/// pieces; everything else is `None`, resolved by flood fill + winding
+/// queries in robust/mod.rs.
 pub struct Classification {
     pub tags: Vec<Option<Tag>>,
     pub discarded: Vec<bool>,
@@ -98,7 +92,6 @@ fn bind_coincident(
     graph: &IntersectionGraph,
     tags: &mut [Option<Tag>],
     discarded: &mut [bool],
-    bound: &mut [bool],
 ) {
     // Canonical key: sorted vertex triple; parity bit = winding orientation
     // relative to the sorted order.
@@ -147,21 +140,19 @@ fn bind_coincident(
                 used_q[k] = true;
                 tags[pi] = Some(Tag::Union);
                 tags[q_side[k].0] = Some(Tag::Inter);
-                bound[pi] = true;
-                bound[q_side[k].0] = true;
             }
         }
     }
 }
 
-/// Classify every piece adjacent to an intersection ring.
+/// Regularize every intersection ring (cancel coincident opposite-traversal
+/// pieces) and bind exactly-coincident cross-mesh piece pairs.
 pub fn classify_rings(graph: &IntersectionGraph) -> Classification {
     let n = graph.pieces.len();
     let mut tags: Vec<Option<Tag>> = vec![None; n];
     let mut discarded = vec![false; n];
-    let mut bound = vec![false; n];
 
-    bind_coincident(graph, &mut tags, &mut discarded, &mut bound);
+    bind_coincident(graph, &mut tags, &mut discarded);
 
     // Ring construction: intersection edge key → incident pieces (globally
     // discarded pieces excluded up front).
@@ -190,19 +181,13 @@ pub fn classify_rings(graph: &IntersectionGraph) -> Classification {
     }
 
     for (key, incidents) in rings.iter_mut() {
-        classify_one_ring(key, incidents, &mut tags, &mut discarded, &bound);
+        regularize_one_ring(key, incidents, &mut discarded);
     }
 
     Classification { tags, discarded }
 }
 
-fn classify_one_ring(
-    key: &EdgeKey,
-    incidents: &mut [Incident],
-    tags: &mut [Option<Tag>],
-    discarded: &mut [bool],
-    bound: &[bool],
-) {
+fn regularize_one_ring(key: &EdgeKey, incidents: &mut [Incident], discarded: &mut [bool]) {
     // Radial basis: w along the edge, u ⊥ w via the axis of w's smallest
     // |component| (never parallel), v = w × u; (u, v, w) is right-handed.
     let w = key.1.sub(&key.0);
@@ -275,84 +260,6 @@ fn classify_one_ring(
         i = j + 1;
     }
 
-    // Survivors in CCW order.
-    let ring: Vec<usize> = (0..m).filter(|&x| !cancelled[x]).collect();
-    if ring.len() < 2 {
-        return; // nothing to classify locally
-    }
-
-    // Successive-pair relation: coincident → non-orientable iff same
-    // traversal (after cancellation, coincident survivors share traversal);
-    // distinct angles → non-orientable iff same traversal. So the relation
-    // is uniformly "same traversal = non-orientable".
-    let coincident = |a: &Incident, b: &Incident| {
-        angle_cmp((&a.du, &a.dv), (&b.du, &b.dv)) == Ordering::Equal
-    };
-
-    // Seed: first non-coincident successive pair with same traversal
-    // (Prop 2). Both forward → CCW-later is Union; both backward →
-    // CCW-earlier is Union.
-    let mut seed: Option<(usize, Tag)> = None; // (ring position, its tag)
-    for s in 0..ring.len() {
-        let a = &incidents[ring[s]];
-        let b = &incidents[ring[(s + 1) % ring.len()]];
-        if a.forward == b.forward && !coincident(a, b) {
-            let (pos, tag) = if a.forward {
-                ((s + 1) % ring.len(), Tag::Union)
-            } else {
-                (s, Tag::Union)
-            };
-            seed = Some((pos, tag));
-            break;
-        }
-    }
-
-    let assign = |pos: usize, tag: Tag, tags: &mut [Option<Tag>]| {
-        let inc = &incidents[ring[pos]];
-        let piece = inc.piece;
-        // Coincident-copy pieces already carry their globally bound tag; the
-        // walk still passes *through* them (its parity flips don't depend on
-        // the binding) but must not overwrite the global choice — which ∪/∩
-        // copy a shared region becomes is arbitrary, so per-ring walks may
-        // legitimately disagree with the binding.
-        if bound[piece] {
-            return;
-        }
-        debug_assert!(
-            tags[piece].is_none() || tags[piece] == Some(tag),
-            "conflicting ring tags for piece {piece}: had {:?}, ring {:?} assigns {tag:?} \
-             (forward {}, apex {:?})",
-            tags[piece],
-            (key.0.to_vec3_rounded(), key.1.to_vec3_rounded()),
-            inc.forward,
-            inc.apex.to_vec3_rounded(),
-        );
-        tags[piece] = Some(tag);
-    };
-
-    match seed {
-        Some((start, start_tag)) => {
-            // Walk the full cycle propagating Prop 2/3.
-            assign(start, start_tag, tags);
-            let mut tag = start_tag;
-            for step in 1..ring.len() {
-                let prev = &incidents[ring[(start + step - 1) % ring.len()]];
-                let cur = &incidents[ring[(start + step) % ring.len()]];
-                tag = if prev.forward == cur.forward {
-                    tag.flip() // non-orientable successive pair
-                } else {
-                    tag // orientable pair continues the same solid
-                };
-                assign((start + step) % ring.len(), tag, tags);
-            }
-        }
-        None => {
-            // Undefined configuration (§7.2.3): only orientable pairs and/or
-            // coincident same-traversal groups remain. Coincident copies are
-            // already bound globally; everything else is resolved by flood
-            // fill / ray shooting.
-        }
-    }
 }
 
 #[cfg(test)]

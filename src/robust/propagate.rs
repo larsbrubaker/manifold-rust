@@ -1,12 +1,13 @@
-// robust/propagate.rs — Tag propagation across each mesh's surface
+// robust/propagate.rs — Component flood fill across each mesh's surface
 // (paper §7.3, "union/intersection mesh browse").
 //
-// Pieces of the same mesh that share a non-intersection edge belong to the
+// Pieces of the same mesh that share a non-constraint edge belong to the
 // same boolean output: the surface is only ever "cut" along intersection
-// segments. Union-find (crate::disjoint_sets) groups pieces into components
-// bounded by intersection edges; each component takes the tag of its
-// ring-classified members. Components that never touch a ring (nested or
-// disjoint shells) stay untagged for robust/ray_shoot.rs.
+// segments (cross-mesh and self-intersection alike). Union-find
+// (crate::disjoint_sets) groups pieces into components bounded by those
+// cuts; a component takes the tag of any coincident-bound member
+// (robust/classify.rs), and every other component is reported untagged for
+// the per-component winding classification in robust/mod.rs.
 //
 // Edge identity is exact geometry (canonical R3 pairs) — soups have no
 // trustworthy connectivity, and the common-subdivision guarantees from

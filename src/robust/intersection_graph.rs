@@ -237,6 +237,64 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
     }
 
     crate::timing::print("robust: pair narrow phase", t_all);
+    let t_self = crate::timing::start();
+
+    // 2b. Self-intersections: cut each mesh along its own P×P / Q×Q contact
+    // segments (beyond ordinary adjacency). Without these cuts a piece could
+    // straddle a fold of a self-overlapping operand, making "is this piece
+    // an interior wall of its own solid" ill-defined; with them, both
+    // winding numbers the classification needs are constant per flood-fill
+    // component (robust/propagate.rs never crosses constraint edges).
+    // Broad phase: per-mesh BVH, same approach as the cross-mesh loop above
+    // (candidates re-sorted so provenance ids stay deterministic).
+    for m in 0..2 {
+        let (tris, boxes) = if m == 0 {
+            (p, &p_boxes)
+        } else {
+            (q, &q_boxes)
+        };
+        let self_scene = boxes
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| live[m][*i])
+            .fold(Box::new(), |acc, (_, b)| acc.union_box(b));
+        let mut order: Vec<usize> = (0..tris.len()).filter(|&i| live[m][i]).collect();
+        order.sort_by_key(|&i| crate::sort::morton_code(boxes[i].center(), &self_scene));
+        let self_collider = crate::collider::Collider::new(
+            order.iter().map(|&i| boxes[i]).collect(),
+            order
+                .iter()
+                .map(|&i| crate::sort::morton_code(boxes[i].center(), &self_scene))
+                .collect(),
+        );
+        let mut cands: Vec<usize> = Vec::new();
+        for i in 0..tris.len() {
+            if !live[m][i] {
+                continue;
+            }
+            cands.clear();
+            self_collider.collisions_one(&boxes[i], i, |_, leaf| {
+                cands.push(order[leaf]);
+            });
+            cands.sort_unstable();
+            for &j in &cands {
+                if j <= i || !boxes[i].does_overlap_box(&boxes[j]) {
+                    continue;
+                }
+                let Some(segs) = real_self_contact(tris[i], tris[j]) else {
+                    continue;
+                };
+                for (x, y) in segs {
+                    let pair = pair_count;
+                    prims[m][i].segments.push((x.clone(), y.clone(), pair));
+                    prims[m][j].segments.push((x, y, pair));
+                    pair_count += 1;
+                }
+            }
+        }
+    }
+
+    crate::timing::print("robust: self-intersection cuts", t_self);
     let t_cross = crate::timing::start();
 
     // 3. Cross-copy primitives through coplanar overlap regions so both
@@ -425,6 +483,77 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
         pieces,
         isect_edges,
         any_intersections,
+    }
+}
+
+/// Real self-intersection of one triangle pair from the same mesh: the
+/// contact of `t1` and `t2` reduced by ordinary mesh adjacency. Shared-vertex
+/// point contacts and (sub-)segments of a shared edge are the normal way
+/// neighboring triangles of a closed mesh touch and yield `None`; anything
+/// else is a genuine self-intersection whose segments must cut the surface,
+/// so that every emitted piece lies on a single sheet level of its own mesh
+/// (robust/mod.rs classifies own-mesh winding per component).
+fn real_self_contact(t1: [Vec3; 3], t2: [Vec3; 3]) -> Option<Vec<(R3, R3)>> {
+    use super::exact::filtered::orient3d;
+    use super::exact::Sign;
+
+    // Shared vertex positions (exact identity) between the pair.
+    let shared: Vec<R3> = t1
+        .iter()
+        .filter(|v| t2.contains(v))
+        .map(|v| R3::from_vec3(*v))
+        .collect();
+
+    // Adjacency fast paths — the overwhelming bulk of same-mesh box-overlap
+    // pairs are edge- or vertex-neighbors whose only contact is that shared
+    // simplex, which never needs a cut. Both shortcuts are exact (filtered
+    // predicates escalate to rationals when uncertain).
+    if shared.len() == 2 {
+        // Edge-adjacent: a non-coplanar neighbor can only meet along the
+        // shared edge itself (benign). Coplanar pairs fall through.
+        if let Some(&opp) = t2.iter().find(|v| !t1.contains(v)) {
+            if orient3d(t1[0], t1[1], t1[2], opp) != Sign::Zero {
+                return None;
+            }
+        }
+    } else if shared.len() == 1 {
+        // Vertex-adjacent: if t2's two non-shared corners lie strictly on
+        // one side of t1's plane, the contact is exactly the shared vertex —
+        // an isolated point, no cut.
+        let others: Vec<Sign> = t2
+            .iter()
+            .filter(|v| !t1.contains(v))
+            .map(|&v| orient3d(t1[0], t1[1], t1[2], v))
+            .collect();
+        if others.len() == 2 && others[0] != Sign::Zero && others[0] == others[1] {
+            return None;
+        }
+    }
+
+    match tri_tri_intersect(t1, t2) {
+        TriTriIsect::None => None,
+        // Isolated point contacts (vertex-on-face, edge-through-edge) have
+        // zero area on both sides: they never change which sheet a region
+        // is on, so they need no cut.
+        TriTriIsect::Point(_) => None,
+        TriTriIsect::Segment(x, y) => {
+            let benign = shared.len() >= 2
+                && point_on_segment(&x, &shared[0], &shared[1])
+                && point_on_segment(&y, &shared[0], &shared[1]);
+            (!benign).then(|| vec![(x, y)])
+        }
+        // Positive-area coplanar overlap (a fold or doubled patch): cut both
+        // triangles along the overlap region's boundary.
+        TriTriIsect::Coplanar { polygon, .. } => Some(
+            (0..polygon.len())
+                .map(|i| {
+                    (
+                        polygon[i].clone(),
+                        polygon[(i + 1) % polygon.len()].clone(),
+                    )
+                })
+                .collect(),
+        ),
     }
 }
 
