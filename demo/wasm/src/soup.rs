@@ -112,11 +112,22 @@ pub fn imported_boolean(
     rot_y: f64,
     rot_z: f64,
 ) -> Result<MeshData, JsValue> {
-    let b = b
-        .manifold
+    // Color the operands (A opaque blue, B translucent red) whenever the
+    // exact engine will actually run: the robust pipeline outputs positions
+    // only, and soup geometry cannot carry properties at all.
+    let colorize = engine != 1 && !a.is_soup() && !b.is_soup();
+    let (a_m, b_m) = if colorize {
+        (
+            crate::color_shape(&a.manifold, 0.27, 0.53, 0.80, 1.0),
+            crate::color_shape(&b.manifold, 0.85, 0.25, 0.25, 0.6),
+        )
+    } else {
+        (a.manifold.clone(), b.manifold.clone())
+    };
+    let b_m = b_m
         .rotate(rot_x, rot_y, rot_z)
         .translate(Vec3::new(off_x, off_y, off_z));
-    let result = op_with_engine(&a.manifold, &b, op, engine);
+    let result = op_with_engine(&a_m, &b_m, op, engine);
     if result.status() != Error::NoError {
         return Err(JsValue::from_str(result.status().to_str()));
     }

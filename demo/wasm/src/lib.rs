@@ -445,7 +445,7 @@ fn make_shape(id: i32) -> Manifold {
     }
 }
 
-fn color_shape(m: &Manifold, r: f64, g: f64, b: f64, a: f64) -> Manifold {
+pub(crate) fn color_shape(m: &Manifold, r: f64, g: f64, b: f64, a: f64) -> Manifold {
     // Internal num_prop is extra properties beyond xyz.
     // 4 extra = RGBA color channels, stored at property indices 0,1,2,3.
     // get_mesh_gl prepends xyz, so output has 7 props: xyz + rgba.

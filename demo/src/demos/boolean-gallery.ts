@@ -1,8 +1,10 @@
-// Boolean Gallery: primitive shape booleans with a choice of boolean engine
-// (Exact / Robust / Auto), plus a Thingi10K mode that pulls random real-world
-// mesh pairs — manifold or non-manifold — from the dataset CDN to stress the
-// robust engine. Every operation's inputs are captured for the Debug Info
-// button so failures can be reproduced from a pasted report.
+// Boolean Gallery: booleans on either built-in primitives or random
+// Thingi10K mesh pairs, with a choice of boolean engine (Exact / Robust /
+// Auto). A Source dropdown switches between the two mesh sources; every
+// other control — operation, engine, offsets, animate, wireframe — applies
+// to whichever source is active. Every operation's inputs are captured for
+// the Copy Debug Info button so failures can be reproduced from a pasted
+// report.
 
 import { ThreeViewer } from '../three-viewer.ts';
 import { createSlider, createDropdown, createCheckbox, createButton, createReadout, updateReadout } from '../controls.ts';
@@ -14,6 +16,11 @@ import { loadSetting, saveSetting } from '../settings.ts';
 import { pickRandomModel, pairOperandKinds, fetchMesh, meshZipUrl, type ThingiModel, type PairKind } from '../thingi.ts';
 
 const DEMO = 'boolean-gallery';
+
+const SOURCES = [
+  { value: 'builtin', text: 'Built In' },
+  { value: 'thingi', text: 'Thingi10K' },
+];
 
 const SHAPES = [
   { value: '0', text: 'Cube' },
@@ -56,9 +63,10 @@ export function init(container: HTMLElement): () => void {
     <div class="demo-page">
       <div class="demo-header">
         <h2>Boolean Gallery</h2>
-        <p>Combine primitives with union, intersection, and difference — or load a random
-        pair of real-world Thingi10K meshes (including non-manifold ones) and boolean them
-        with the robust engine. Toggle Animate to see Shape B rotate continuously.</p>
+        <p>Combine meshes with union, intersection, and difference. Pick the source —
+        built-in primitives or random real-world Thingi10K pairs (including non-manifold
+        ones) — and the engine: the exact C++-matching pipeline or the robust engine that
+        accepts non-manifold input.</p>
       </div>
       <div class="demo-layout">
         <div class="demo-canvas-area" id="viewer-container"></div>
@@ -71,6 +79,7 @@ export function init(container: HTMLElement): () => void {
   const controlsEl = document.getElementById('controls')!;
   const viewer = new ThreeViewer(viewerEl);
 
+  let source = loadSetting(DEMO, 'source', 'builtin') as 'builtin' | 'thingi';
   let shapeA = loadSetting(DEMO, 'shapeA', 3);
   let shapeB = loadSetting(DEMO, 'shapeB', 3);
   let op = loadSetting(DEMO, 'op', 0);
@@ -87,8 +96,7 @@ export function init(container: HTMLElement): () => void {
   const ROT_SPEED_Y = 1.5;
   const ROT_SPEED_Z = 0.3;
 
-  // Thingi10K mode state
-  let mode: 'primitives' | 'thingi' = 'primitives';
+  // Thingi10K state
   let pairKind = loadSetting(DEMO, 'pairKind', 'mn') as PairKind;
   let thingiA: ThingiOperand | null = null;
   let thingiB: ThingiOperand | null = null;
@@ -98,6 +106,10 @@ export function init(container: HTMLElement): () => void {
 
   let lastDebugInfo: any = null;
   let frameCount = 0;
+
+  // Thingi mode is active only once a pair is actually loaded; while a pair
+  // is in flight the built-in shapes stay on screen.
+  const inThingi = () => source === 'thingi' && !!(thingiA && thingiB);
 
   const readout = createReadout();
   const errorBox = document.createElement('div');
@@ -127,7 +139,7 @@ export function init(container: HTMLElement): () => void {
       demo: DEMO,
       timestamp: new Date().toISOString(),
       frame: frameCount++,
-      mode,
+      source,
       engine: ENGINE_NAMES[engine],
       op: OP_NAMES[op] || op,
       offset: [offsetX, offsetY, offsetZ],
@@ -135,10 +147,10 @@ export function init(container: HTMLElement): () => void {
       result: null,
       error: null,
     };
-    if (mode === 'thingi' && thingiA && thingiB) {
+    if (inThingi()) {
       info.pair_kind = pairKind;
-      info.model_a = describeOperand(thingiA);
-      info.model_b = describeOperand(thingiB);
+      info.model_a = describeOperand(thingiA!);
+      info.model_b = describeOperand(thingiB!);
       if (skippedImports.length) info.skipped_imports = skippedImports;
     } else {
       info.shape_a = SHAPE_NAMES[shapeA] || shapeA;
@@ -160,11 +172,11 @@ export function init(container: HTMLElement): () => void {
   }
 
   function update(silent = false) {
-    if (mode === 'thingi' && (!thingiA || !thingiB)) return;
+    if (source === 'thingi' && !inThingi()) return; // pair still loading
     const info = captureDebugInfo();
     try {
       let data: MeshData;
-      if (mode === 'thingi') {
+      if (inThingi()) {
         data = importedBoolean(thingiA!.handle, thingiB!.handle, op, engine, offsetX, offsetY, offsetZ, rotX, rotY, rotZ);
       } else {
         data = booleanGalleryMeshEngine(shapeA, shapeB, op, offsetX, offsetY, offsetZ, rotX, rotY, rotZ, engine);
@@ -199,11 +211,12 @@ export function init(container: HTMLElement): () => void {
 
   function toggleAnimate(on: boolean) {
     saveSetting(DEMO, 'animate', on);
-    // Thingi meshes can take seconds per boolean (robust engine on real
-    // scans) — continuous re-evaluation would freeze the tab.
-    if (on && mode !== 'thingi') {
-      animating = true;
-      animateStep();
+    animate = on;
+    if (on) {
+      if (!animating) {
+        animating = true;
+        animateStep();
+      }
     } else {
       animating = false;
       cancelAnimationFrame(animId);
@@ -272,14 +285,13 @@ export function init(container: HTMLElement): () => void {
       freeThingiPair();
       thingiA = a;
       thingiB = b;
-      mode = 'thingi';
-      toggleAnimate(false);
-      // Random static orientation for B so every pair meets differently.
+      // Random static orientation for B so every pair meets differently;
+      // if Animate is on, rotation keeps advancing from here.
       rotX = Math.floor(Math.random() * 360);
       rotY = Math.floor(Math.random() * 360);
       rotZ = Math.floor(Math.random() * 360);
       setThingiInfo(`A: ${operandLabel(thingiA)}<br>B: ${operandLabel(thingiB)}<br>` +
-        `Rotation: [${rotX}, ${rotY}, ${rotZ}]&deg;`);
+        `Loaded rotation: [${rotX}, ${rotY}, ${rotZ}]&deg;`);
       update();
     } catch (e) {
       console.error('Thingi10K pair load failed:', e);
@@ -289,18 +301,8 @@ export function init(container: HTMLElement): () => void {
     } finally {
       loadingPair = false;
       loadBtn.disabled = false;
-      loadBtn.textContent = 'Load Random Thingi10K Pair';
+      loadBtn.textContent = 'Load Random Pair';
     }
-  }
-
-  function backToPrimitives() {
-    if (mode !== 'thingi') return;
-    mode = 'primitives';
-    freeThingiPair();
-    setThingiInfo(null);
-    rotX = rotY = rotZ = 0;
-    update();
-    if (animate) toggleAnimate(true);
   }
 
   async function copyDebugInfo() {
@@ -321,8 +323,39 @@ export function init(container: HTMLElement): () => void {
     setTimeout(() => { copyBtn.textContent = 'Copy Debug Info'; }, 1500);
   }
 
-  controlsEl.appendChild(createDropdown('Shape A', SHAPES, String(shapeA), v => { shapeA = parseInt(v); saveSetting(DEMO, 'shapeA', shapeA); backToPrimitives(); update(); }));
-  controlsEl.appendChild(createDropdown('Shape B', SHAPES, String(shapeB), v => { shapeB = parseInt(v); saveSetting(DEMO, 'shapeB', shapeB); backToPrimitives(); update(); }));
+  // ---- Controls layout: Source → source-specific selectors → shared ----
+
+  function setSource(s: 'builtin' | 'thingi') {
+    source = s;
+    saveSetting(DEMO, 'source', s);
+    builtinSection.style.display = s === 'builtin' ? '' : 'none';
+    thingiSection.style.display = s === 'thingi' ? '' : 'none';
+    if (s === 'thingi') {
+      if (inThingi()) {
+        setThingiInfo(`A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}`);
+        update();
+      } else {
+        loadRandomPair();
+      }
+    } else {
+      update();
+    }
+  }
+
+  controlsEl.appendChild(createDropdown('Source', SOURCES, source, v => setSource(v as 'builtin' | 'thingi')));
+
+  const builtinSection = document.createElement('div');
+  builtinSection.appendChild(createDropdown('Shape A', SHAPES, String(shapeA), v => { shapeA = parseInt(v); saveSetting(DEMO, 'shapeA', shapeA); update(); }));
+  builtinSection.appendChild(createDropdown('Shape B', SHAPES, String(shapeB), v => { shapeB = parseInt(v); saveSetting(DEMO, 'shapeB', shapeB); update(); }));
+  controlsEl.appendChild(builtinSection);
+
+  const thingiSection = document.createElement('div');
+  thingiSection.appendChild(createDropdown('Pair Type', PAIR_KINDS, pairKind, v => { pairKind = v as PairKind; saveSetting(DEMO, 'pairKind', pairKind); }));
+  const loadBtn = createButton('Load Random Pair', () => { loadRandomPair(); });
+  thingiSection.appendChild(loadBtn);
+  thingiSection.appendChild(thingiInfo);
+  controlsEl.appendChild(thingiSection);
+
   controlsEl.appendChild(createDropdown('Operation', OPS, String(op), v => { op = parseInt(v); saveSetting(DEMO, 'op', op); update(); }));
   controlsEl.appendChild(createDropdown('Engine', ENGINES, String(engine), v => { engine = parseInt(v) as BooleanEngine; saveSetting(DEMO, 'engine', engine); update(); }));
   controlsEl.appendChild(createSlider('Offset X ', -1.5, 1.5, offsetX, 0.1, v => { offsetX = v; saveSetting(DEMO, 'offsetX', v); update(); }));
@@ -330,23 +363,19 @@ export function init(container: HTMLElement): () => void {
   controlsEl.appendChild(createSlider('Offset Z ', -1.5, 1.5, offsetZ, 0.1, v => { offsetZ = v; saveSetting(DEMO, 'offsetZ', v); update(); }));
   controlsEl.appendChild(createCheckbox('Animate', animate, toggleAnimate));
   controlsEl.appendChild(createCheckbox('Wireframe', wireframe, v => { saveSetting(DEMO, 'wireframe', v); viewer.setWireframe(v); }));
-
-  // Thingi10K section
-  const divider = document.createElement('hr');
-  controlsEl.appendChild(divider);
-  controlsEl.appendChild(createDropdown('Thingi10K Pair', PAIR_KINDS, pairKind, v => { pairKind = v as PairKind; saveSetting(DEMO, 'pairKind', pairKind); }));
-  const loadBtn = createButton('Load Random Thingi10K Pair', () => { loadRandomPair(); });
-  controlsEl.appendChild(loadBtn);
-  const backBtn = createButton('Back to Primitives', backToPrimitives);
-  controlsEl.appendChild(backBtn);
   const copyBtn = createButton('Copy Debug Info', () => { copyDebugInfo(); });
   controlsEl.appendChild(copyBtn);
-
-  controlsEl.appendChild(thingiInfo);
   controlsEl.appendChild(errorBox);
   controlsEl.appendChild(readout);
 
-  update();
+  builtinSection.style.display = source === 'builtin' ? '' : 'none';
+  thingiSection.style.display = source === 'thingi' ? '' : 'none';
+
+  if (source === 'thingi') {
+    loadRandomPair();
+  } else {
+    update();
+  }
   if (wireframe) viewer.setWireframe(true);
   toggleAnimate(animate);
 
