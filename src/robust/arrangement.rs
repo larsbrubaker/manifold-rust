@@ -1,0 +1,253 @@
+// robust/arrangement.rs — Per-triangle 2D arrangement (paper §6.3–6.4).
+//
+// Each input triangle that intersects triangles of the other operand gets an
+// arrangement: the exact intersection primitives that landed on it (points,
+// segments, coplanar-overlap polygon boundaries) are projected into the
+// triangle's dominant-axis plane, split at their mutual crossings, and handed
+// to robust/cdt.rs as constraints. The result subdivides the triangle into
+// sub-triangles whose edges preserve every intersection segment, with a
+// provenance map from constraint edges back to the primitives that created
+// them — the edge→triangles incidence the classification stage
+// (robust/classify.rs) walks.
+//
+// Everything here is exact: projection is coordinate dropping (bijective on
+// the triangle's plane), crossings are rational constructions, and identity
+// is rational equality — no tolerances anywhere.
+
+use std::collections::{BTreeMap, BTreeSet};
+
+use num_rational::BigRational;
+use num_traits::Zero;
+
+use crate::linalg::Vec3;
+
+use super::cdt;
+use super::exact::predicates::{line_line_intersect_2d, orient2d_r, point_in_tri_2d, tri_normal_r, TriLoc};
+use super::exact::rational::{R2, R3};
+use super::exact::Sign;
+use super::tri_tri::{dominant_axis, lift_to_plane};
+
+/// Intersection primitives to arrange on one triangle, each tagged with a
+/// caller-defined provenance id (the robust pipeline uses the index of the
+/// opposing triangle pair that produced it).
+#[derive(Clone, Debug, Default)]
+pub struct ArrangementInput {
+    /// Isolated contact points (vertex touches, edge-through-edge points).
+    pub points: Vec<(R3, usize)>,
+    /// Intersection segments, including coplanar-overlap polygon edges.
+    /// Endpoints must be distinct and lie inside or on the triangle.
+    pub segments: Vec<(R3, R3, usize)>,
+}
+
+/// The subdivided triangle.
+#[derive(Clone, Debug)]
+pub struct Arrangement {
+    /// Dropped coordinate of the projection (0=x, 1=y, 2=z).
+    pub axis: usize,
+    /// Exact 3D points; indices 0..3 are the triangle corners in input order.
+    pub points3: Vec<R3>,
+    /// Their exact 2D projections (same indexing).
+    pub points2: Vec<R2>,
+    /// Sub-triangles (indices into points*), CCW in projection space.
+    pub tris: Vec<[usize; 3]>,
+    /// Constraint edges as (min,max) index pairs → provenance ids of every
+    /// primitive that generated the edge.
+    pub constraints: BTreeMap<(usize, usize), Vec<usize>>,
+    /// True when the 2D projection mirrors the triangle's 3D winding (the
+    /// dropped normal component is negative): consumers must swap two
+    /// indices of each sub-triangle to recover outward orientation.
+    pub flipped: bool,
+}
+
+/// Build the arrangement of `input` on triangle `tri`. Primitives must
+/// already be clipped to the triangle (tri_tri output is), with rational
+/// coordinates on its plane.
+pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
+    let corners: [R3; 3] = [
+        R3::from_vec3(tri[0]),
+        R3::from_vec3(tri[1]),
+        R3::from_vec3(tri[2]),
+    ];
+    let normal = tri_normal_r(&corners[0], &corners[1], &corners[2]);
+    debug_assert!(!normal.is_zero(), "degenerate triangle in arrangement");
+    let axis = dominant_axis(&normal);
+
+    let mut points3: Vec<R3> = Vec::new();
+    let mut points2: Vec<R2> = Vec::new();
+    let mut index: BTreeMap<R2, usize> = BTreeMap::new();
+    let mut add_point = |p3: R3, points3: &mut Vec<R3>, points2: &mut Vec<R2>| -> usize {
+        let p2 = p3.project_drop(axis);
+        if let Some(&i) = index.get(&p2) {
+            return i;
+        }
+        let i = points3.len();
+        index.insert(p2.clone(), i);
+        points3.push(p3);
+        points2.push(p2);
+        i
+    };
+
+    for c in &corners {
+        add_point(c.clone(), &mut points3, &mut points2);
+    }
+    debug_assert_eq!(points3.len(), 3, "corner points must be distinct");
+
+    // Register primitive endpoints / isolated points.
+    struct Seg {
+        a: usize,
+        b: usize,
+        prov: usize,
+    }
+    let mut segs: Vec<Seg> = Vec::with_capacity(input.segments.len());
+    for (a3, b3, prov) in &input.segments {
+        debug_assert_ne!(a3, b3, "zero-length segment primitive");
+        let a = add_point(a3.clone(), &mut points3, &mut points2);
+        let b = add_point(b3.clone(), &mut points3, &mut points2);
+        debug_assert_ne!(a, b);
+        segs.push(Seg {
+            a,
+            b,
+            prov: *prov,
+        });
+    }
+    for (p3, _prov) in &input.points {
+        add_point(p3.clone(), &mut points3, &mut points2);
+    }
+
+    // Mutual proper crossings between segments become new points.
+    for i in 0..segs.len() {
+        for j in (i + 1)..segs.len() {
+            let (a, b) = (&points2[segs[i].a], &points2[segs[i].b]);
+            let (c, d) = (&points2[segs[j].a], &points2[segs[j].b]);
+            let sc = orient2d_r(a, b, c);
+            let sd = orient2d_r(a, b, d);
+            let sa = orient2d_r(c, d, a);
+            let sb = orient2d_r(c, d, b);
+            // Strict crossing only — endpoint contacts and collinear overlap
+            // are handled by the point-on-segment sweep below.
+            if sc != Sign::Zero && sd != Sign::Zero && sc != sd
+                && sa != Sign::Zero && sb != Sign::Zero && sa != sb
+            {
+                let x2 = line_line_intersect_2d(a, b, c, d)
+                    .expect("properly crossing segments are not parallel");
+                let x3 = lift_to_plane(&x2, axis, &corners[0], &normal);
+                add_point(x3, &mut points3, &mut points2);
+            }
+        }
+    }
+
+    debug_assert!(points2.iter().all(|p| {
+        point_in_tri_2d(p, &points2[0], &points2[1], &points2[2]) != TriLoc::Outside
+    }), "arrangement primitive escapes its triangle");
+
+    // Subdivide each segment at every registered point lying exactly on it;
+    // consecutive point pairs become constraint edges carrying provenance.
+    let mut constraints: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
+    for seg in &segs {
+        let pa = &points2[seg.a];
+        let pb = &points2[seg.b];
+        let dir = pb.sub(pa);
+        let len2 = dir.dot(&dir);
+        let mut on_seg: Vec<(BigRational, usize)> = Vec::new();
+        for (idx, p) in points2.iter().enumerate() {
+            if orient2d_r(pa, pb, p) != Sign::Zero {
+                continue;
+            }
+            let t = p.sub(pa).dot(&dir);
+            if t >= BigRational::zero() && t <= len2 {
+                on_seg.push((t, idx));
+            }
+        }
+        on_seg.sort();
+        debug_assert!(on_seg.len() >= 2, "segment lost its own endpoints");
+        for w in on_seg.windows(2) {
+            let (u, v) = (w[0].1, w[1].1);
+            debug_assert_ne!(u, v, "duplicate points on segment");
+            let key = (u.min(v), u.max(v));
+            let provs = constraints.entry(key).or_default();
+            if !provs.contains(&seg.prov) {
+                provs.push(seg.prov);
+            }
+        }
+    }
+
+    let constraint_pairs: Vec<(usize, usize)> = constraints.keys().copied().collect();
+    let tris = cdt::triangulate(&points2, &constraint_pairs);
+
+    let axis_comp = match axis {
+        0 => &normal.x,
+        1 => &normal.y,
+        _ => &normal.z,
+    };
+    let flipped = Sign::of_rat(axis_comp) == Sign::Neg;
+
+    Arrangement {
+        axis,
+        points3,
+        points2,
+        tris,
+        constraints,
+        flipped,
+    }
+}
+
+/// The exact points this input would register on `tri`, without running the
+/// CDT: primitive endpoints, isolated points, and pairwise proper segment
+/// crossings. robust/intersection_graph.rs uses this to build the global
+/// registries that force a common subdivision on both sides of every shared
+/// intersection segment and mesh edge before the real arrangements run.
+pub fn candidate_points(tri: [Vec3; 3], input: &ArrangementInput) -> Vec<R3> {
+    let corners: [R3; 3] = [
+        R3::from_vec3(tri[0]),
+        R3::from_vec3(tri[1]),
+        R3::from_vec3(tri[2]),
+    ];
+    let normal = tri_normal_r(&corners[0], &corners[1], &corners[2]);
+    let axis = dominant_axis(&normal);
+
+    let mut out: Vec<R3> = Vec::new();
+    let mut seen: BTreeSet<R2> = BTreeSet::new();
+    let add = |p3: R3, out: &mut Vec<R3>, seen: &mut BTreeSet<R2>| {
+        if seen.insert(p3.project_drop(axis)) {
+            out.push(p3);
+        }
+    };
+    for (p, _) in &input.points {
+        add(p.clone(), &mut out, &mut seen);
+    }
+    for (a, b, _) in &input.segments {
+        add(a.clone(), &mut out, &mut seen);
+        add(b.clone(), &mut out, &mut seen);
+    }
+    let segs2: Vec<(R2, R2)> = input
+        .segments
+        .iter()
+        .map(|(a, b, _)| (a.project_drop(axis), b.project_drop(axis)))
+        .collect();
+    for i in 0..segs2.len() {
+        for j in (i + 1)..segs2.len() {
+            let (a, b) = (&segs2[i].0, &segs2[i].1);
+            let (c, d) = (&segs2[j].0, &segs2[j].1);
+            let sc = orient2d_r(a, b, c);
+            let sd = orient2d_r(a, b, d);
+            let sa = orient2d_r(c, d, a);
+            let sb = orient2d_r(c, d, b);
+            if sc != Sign::Zero && sd != Sign::Zero && sc != sd
+                && sa != Sign::Zero && sb != Sign::Zero && sa != sb
+            {
+                let x2 = line_line_intersect_2d(a, b, c, d)
+                    .expect("properly crossing segments are not parallel");
+                add(
+                    lift_to_plane(&x2, axis, &corners[0], &normal),
+                    &mut out,
+                    &mut seen,
+                );
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+#[path = "arrangement_tests.rs"]
+mod tests;

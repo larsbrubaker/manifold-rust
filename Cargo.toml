@@ -24,6 +24,11 @@ path = "src/lib.rs"
 
 [dependencies]
 num-traits = "0.2"
+# Exact rational arithmetic for the robust (non-manifold) boolean engine.
+# Only touched when the f64 interval filters cannot decide a predicate sign,
+# and for constructed intersection points; the exact engine never uses them.
+num-bigint = "0.4"
+num-rational = "0.4"
 clipper2-rust = "1.0.3"
 rayon = { version = "1.10", optional = true }
 
