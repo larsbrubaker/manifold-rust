@@ -611,5 +611,5 @@ pub(super) fn append_whole_edges(
 // Sub-module: update_reference, create_properties, boolean_result entry point
 #[path = "boolean_result_assemble.rs"]
 mod boolean_result_assemble;
-pub use boolean_result_assemble::boolean_result;
+pub use boolean_result_assemble::{boolean_result, boolean_result_with_token};
 

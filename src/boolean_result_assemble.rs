@@ -4,8 +4,9 @@
 use std::collections::BTreeMap;
 
 use crate::boolean3::Boolean3;
+use crate::cancel::{is_cancelled, CancelToken};
 use crate::edge_op::simplify_topology;
-use crate::face_op::{face2tri, get_barycentric, reorder_halfedges};
+use crate::face_op::{face2tri_ct, get_barycentric, reorder_halfedges};
 use crate::impl_mesh::{reserve_ids, ManifoldImpl};
 use crate::linalg::Vec3;
 use crate::types::{OpType, TriRef};
@@ -240,6 +241,23 @@ pub fn boolean_result(
     op: OpType,
     bool3: &Boolean3,
 ) -> ManifoldImpl {
+    boolean_result_with_token(in_p, in_q, op, bool3, None)
+}
+
+/// [`boolean_result`] with cooperative cancellation, returning an empty mesh
+/// with `Error::Cancelled` if `token` fires.
+///
+/// Check placement mirrors the `phase()` sites of C++ `Boolean3::Result`
+/// (boolean_result.cpp:758-963): one at every boundary between the assembly
+/// stages, each of which does `MakeEmpty(Cancelled); return`. Partial output is
+/// intentionally discarded rather than published.
+pub fn boolean_result_with_token(
+    in_p: &ManifoldImpl,
+    in_q: &ManifoldImpl,
+    op: OpType,
+    bool3: &Boolean3,
+    token: Option<&CancelToken>,
+) -> ManifoldImpl {
     debug_assert!(
         bool3.expand_p == (op == OpType::Add),
         "Result op type not compatible with constructor op type."
@@ -268,6 +286,13 @@ pub fn boolean_result(
     }
 
     let invert_q = op == OpType::Subtract;
+
+    // Phase 1 (C++ boolean_result.cpp:776): the trivial early returns above run
+    // first, exactly as in C++, where the IsEmpty fast-paths precede the first
+    // phase() site.
+    if is_cancelled(token) {
+        return crate::boolean3::cancelled_impl();
+    }
 
     // Timing boundaries mirror the C++ MANIFOLD_TIMING stages (Assembly /
     // Triangulation / Simplification / Sorting) for side-by-side comparison.
@@ -361,6 +386,11 @@ pub fn boolean_result(
         }
     }
 
+    // Phase 2 (C++ boolean_result.cpp:847): after DuplicateVerts.
+    if is_cancelled(token) {
+        return crate::boolean3::cancelled_impl();
+    }
+
     // Build edge maps
     let mut edges_p: BTreeMap<i32, Vec<EdgePos>> = BTreeMap::new();
     let mut edges_q: BTreeMap<i32, Vec<EdgePos>> = BTreeMap::new();
@@ -392,6 +422,11 @@ pub fn boolean_result(
     drop(v12r);
     drop(v21r);
 
+    // Phase 3 (C++ boolean_result.cpp:869): after AddNewEdgeVerts.
+    if is_cancelled(token) {
+        return crate::boolean3::cancelled_impl();
+    }
+
     // Size output
     let (face_edge, face_pq2r) = size_output(
         &mut out_r,
@@ -409,6 +444,11 @@ pub fn boolean_result(
     // C++ clears i12/i21 after SizeOutput.
     drop(i12);
     drop(i21);
+
+    // Phase 4 (C++ boolean_result.cpp:880): after SizeOutput.
+    if is_cancelled(token) {
+        return crate::boolean3::cancelled_impl();
+    }
 
     // Assemble edges
     let mut face_ptr_r = face_edge.clone();
@@ -452,6 +492,11 @@ pub fn boolean_result(
     drop(edges_p);
     drop(edges_q);
 
+    // Phase 5 (C++ boolean_result.cpp:905): after AppendPartialEdges.
+    if is_cancelled(token) {
+        return crate::boolean3::cancelled_impl();
+    }
+
     append_new_edges(
         &mut out_r,
         &mut face_ptr_r,
@@ -462,6 +507,11 @@ pub fn boolean_result(
     );
     // C++ clears edgesNew after AppendNewEdges.
     drop(edges_new);
+
+    // Phase 6 (C++ boolean_result.cpp:912): after AppendNewEdges.
+    if is_cancelled(token) {
+        return crate::boolean3::cancelled_impl();
+    }
 
     append_whole_edges(
         &mut out_r,
@@ -499,21 +549,43 @@ pub fn boolean_result(
 
     crate::timing::print("Assembly", t_assembly);
 
+    // Phase 7 (C++ boolean_result.cpp:922): after AppendWholeEdges.
+    if is_cancelled(token) {
+        return crate::boolean3::cancelled_impl();
+    }
+
     // Triangulate polygonal faces (allowConvex=false per C++ boolean_result.cpp)
     let t = crate::timing::start();
-    face2tri(&mut out_r, &face_edge, &halfedge_ref, false);
+    if !face2tri_ct(&mut out_r, &face_edge, &halfedge_ref, false, token) {
+        return crate::boolean3::cancelled_impl();
+    }
     reorder_halfedges(&mut out_r);
     // C++ clears faceEdge after Face2Tri; halfedgeRef is likewise done.
     drop(face_edge);
     drop(halfedge_ref);
     crate::timing::print("Triangulation", t);
 
+    // Phase 8 (C++ boolean_result.cpp:941): after Face2Tri + ReorderHalfedges.
+    if is_cancelled(token) {
+        return crate::boolean3::cancelled_impl();
+    }
+
     let t = crate::timing::start();
     // Create properties via barycentric interpolation
     create_properties(&mut out_r, in_p, in_q, invert_q);
 
+    // Phase 9 (C++ boolean_result.cpp:948): after CreateProperties.
+    if is_cancelled(token) {
+        return crate::boolean3::cancelled_impl();
+    }
+
     // Update references
     update_reference(&mut out_r, in_p, in_q, invert_q);
+
+    // Phase 10 (C++ boolean_result.cpp:951): after UpdateReference.
+    if is_cancelled(token) {
+        return crate::boolean3::cancelled_impl();
+    }
 
     // Simplify topology
     simplify_topology(&mut out_r, (n_pv + n_qv) as i32);
@@ -526,6 +598,22 @@ pub fn boolean_result(
     out_r.sort_geometry();
     out_r.increment_mesh_ids();
     crate::timing::print("Sorting", t);
+
+    // Phase 11 (C++ boolean_result.cpp:963): after SortGeometry. Without this
+    // the whole trailing block above would be a hole in the contract — a cancel
+    // landing in SimplifyTopology or SortGeometry would return a *complete*
+    // mesh with status NoError, which is worse than a latency cost: the caller
+    // would be told the operation it cancelled had succeeded. It matters most
+    // on the shortest path through the kernel, a two-operand batch_boolean,
+    // where `simple_boolean` runs once with no enclosing per-round re-check to
+    // catch the cancel afterwards.
+    //
+    // C++ additionally threads ctx *into* SortGeometry; we only bracket it, so
+    // the residual cost here is latency (one run of simplify + sort), not a
+    // wrong status.
+    if is_cancelled(token) {
+        return crate::boolean3::cancelled_impl();
+    }
 
     out_r
 }

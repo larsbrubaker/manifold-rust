@@ -411,6 +411,14 @@ pub enum Error {
     InvalidConstruction,
     ResultTooLarge,
     InvalidTangents,
+    /// The operation was interrupted through a [`crate::cancel::CancelToken`]
+    /// and returned an empty result.
+    ///
+    /// Appended last, matching C++ `Manifold::Error::Cancelled`
+    /// (cpp-reference/manifold/include/manifold/manifold.h:139). The order of
+    /// every preceding variant is load-bearing: the FFI maps them to status
+    /// codes 0-13 positionally, so new variants only ever go on the end.
+    Cancelled,
 }
 
 impl Error {
@@ -430,6 +438,7 @@ impl Error {
             Error::InvalidConstruction => "Invalid Construction",
             Error::ResultTooLarge => "Result Too Large",
             Error::InvalidTangents => "Invalid Tangents",
+            Error::Cancelled => "Cancelled",
         }
     }
 }

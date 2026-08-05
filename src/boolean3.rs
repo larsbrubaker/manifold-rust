@@ -30,12 +30,13 @@
 
 use std::collections::HashSet;
 
+use crate::cancel::{is_cancelled, CancelToken};
 use crate::collider::Collider;
 use crate::disjoint_sets::DisjointSets;
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{dot, IVec3, Vec2, Vec3, Vec4};
 use crate::sort::get_face_box_morton;
-use crate::types::{Box as BBox, Halfedge, OpType, RayHit, TriRef};
+use crate::types::{Box as BBox, Error, Halfedge, OpType, RayHit, TriRef};
 
 // ---------------------------------------------------------------------------
 // Intersections — sparse intersection data between two meshes
@@ -402,12 +403,16 @@ fn kernel12(
 // Intersect12 — find all edge-face intersections using collider broadphase
 // ---------------------------------------------------------------------------
 
+/// `None` means `token` was cancelled part-way through; the partial results are
+/// discarded, mirroring C++ `Intersect12` returning `Intersections{}` after its
+/// post-`for_each` `IsCancelled` check (boolean3.cpp:380-381).
 fn intersect12(
     in_p: &ManifoldImpl,
     in_q: &ManifoldImpl,
     expand_p: bool,
     forward: bool,
-) -> Intersections {
+    token: Option<&CancelToken>,
+) -> Option<Intersections> {
     // a: edge mesh, b: face mesh
     let (a, b) = if forward { (in_p, in_q) } else { (in_q, in_p) };
 
@@ -423,7 +428,7 @@ fn intersect12(
     // the parallel path is bit-identical to the sequential one.
     let n = a.halfedge.len();
     let per_edge: Vec<Vec<([i32; 2], i32, Vec3)>> =
-        crate::par::maybe_par_map(n, 10_000, |query_idx| {
+        crate::par::maybe_par_map_ct(n, 10_000, token, |query_idx| {
             let mut local: Vec<([i32; 2], i32, Vec3)> = Vec::new();
             if !a.halfedge[query_idx].is_forward() {
                 return local;
@@ -445,13 +450,21 @@ fn intersect12(
                 }
             });
             local
-        });
+        })?;
     for local in per_edge {
         for (pair, x, v) in local {
             result.p1q2.push(pair);
             result.x12.push(x);
             result.v12.push(v);
         }
+    }
+
+    // C++'s stated invariant is "every ctx-passing parallel op is followed by
+    // IsCancelled to discard partial results" (boolean3.cpp:364). Honouring it
+    // here also skips the sort below, which is the longest uninterruptible
+    // stretch in this function.
+    if is_cancelled(token) {
+        return None;
     }
 
     // Sort by edge index for deterministic results
@@ -474,7 +487,7 @@ fn intersect12(
         result.v12[new_i] = old_v12[old_i];
     }
 
-    result
+    Some(result)
 }
 
 // ---------------------------------------------------------------------------
@@ -486,19 +499,35 @@ fn intersect12(
 // of the other mesh. Then flood-fills that winding number to all vertices in
 // the component.
 
+/// `None` means `token` was cancelled part-way through; the partial winding
+/// numbers are discarded, mirroring C++ `Winding03` returning `Vec<int>{}` at
+/// each of its `IsCancelled` checks (boolean3.cpp:437, 456, 472, 480).
 fn winding03(
     in_p: &ManifoldImpl,
     in_q: &ManifoldImpl,
     p1q2: &[[i32; 2]],
     expand_p: bool,
     forward: bool,
-) -> Vec<i32> {
+    token: Option<&CancelToken>,
+) -> Option<Vec<i32>> {
     let (a, b) = if forward { (in_p, in_q) } else { (in_q, in_p) };
     let sort_idx = if forward { 0 } else { 1 };
 
-    // Build union-find: unite vertices along unbroken edges
+    // Build union-find: unite vertices along unbroken edges. This loop is the
+    // Rust counterpart of the ctx-passing `for_each` at boolean3.cpp:425, so it
+    // gets the same bounded-latency check — but on a chunk boundary rather than
+    // per element, because the body is a cheap binary search and `unite`.
     let u_a = DisjointSets::new(a.vert_pos.len() as u32);
+    // Hoisted so the uncancellable path pays one predictable branch per edge
+    // instead of a modulo: C++ gets the same effect from `ctx == nullptr`
+    // folding the check out of the loop entirely (parallel.h:427-430).
+    let cancellable = token.is_some();
     for edge in 0..a.halfedge.len() {
+        // C++ `for_each` checks every kSeqCancelChunk (= 1024) elements on the
+        // sequential branch (parallel.h:424); same constant, same reason.
+        if cancellable && edge % 1024 == 0 && is_cancelled(token) {
+            return None;
+        }
         let he = &a.halfedge[edge];
         if !he.is_forward() {
             continue;
@@ -512,12 +541,22 @@ fn winding03(
         }
     }
 
+    // Post-loop check, matching C++ boolean3.cpp:437.
+    if is_cancelled(token) {
+        return None;
+    }
+
     // Find unique component representatives
     let mut components = HashSet::new();
     for v in 0..a.vert_pos.len() {
         components.insert(u_a.find(v as u32));
     }
     let verts: Vec<usize> = components.into_iter().map(|v| v as usize).collect();
+
+    // Post-scan check, matching C++ boolean3.cpp:456.
+    if is_cancelled(token) {
+        return None;
+    }
 
     // Query b's cached face BVH (built in sort_geometry), as C++ queries
     // b.collider_.
@@ -542,7 +581,7 @@ fn winding03(
     // contributions. The sums are integers, so accumulation order is
     // irrelevant and the per-vert work can run in parallel bit-exactly.
     let sums: Vec<(usize, i32)> =
-        crate::par::maybe_par_map(query_boxes.len(), 1_000, |qi| {
+        crate::par::maybe_par_map_ct(query_boxes.len(), 1_000, token, |qi| {
             let (vi, ref qbox) = query_boxes[qi];
             let mut sum = 0i32;
             collider.collisions_one(qbox, 0, |_qi, face_idx| {
@@ -552,7 +591,7 @@ fn winding03(
                 }
             });
             (vi, sum)
-        });
+        })?;
     for (vi, sum) in sums {
         w03[vi] += sum;
     }
@@ -565,7 +604,7 @@ fn winding03(
         }
     }
 
-    w03
+    Some(w03)
 }
 
 // ---------------------------------------------------------------------------
@@ -575,56 +614,108 @@ fn winding03(
 impl Boolean3 {
     /// Compute all intersections between meshes inP and inQ for the given op.
     pub fn new(in_p: &ManifoldImpl, in_q: &ManifoldImpl, op: OpType) -> Self {
+        match Self::new_with_token(in_p, in_q, op, None) {
+            Some(b3) => b3,
+            // Unreachable: `is_cancelled(None)` is always false, so none of the
+            // cancellation arms below can be taken. The debug assert makes a
+            // future refactor that breaks that reasoning fail loudly in tests,
+            // while release stays total — degrading to an invalid
+            // (empty-result) Boolean3 rather than panicking in production.
+            None => {
+                debug_assert!(
+                    false,
+                    "Boolean3::new_with_token returned None for a None token; \
+                     only a cancelled token can produce None"
+                );
+                Boolean3 {
+                    xv12: Intersections::default(),
+                    xv21: Intersections::default(),
+                    w03: Vec::new(),
+                    w30: Vec::new(),
+                    expand_p: op == OpType::Add,
+                    valid: false,
+                }
+            }
+        }
+    }
+
+    /// [`Boolean3::new`] with cooperative cancellation. `None` means `token`
+    /// was cancelled; no usable intersection data was produced.
+    ///
+    /// The check placement mirrors C++ `Boolean3::Boolean3`
+    /// (boolean3.cpp:497-560): one phase-boundary check before launching each
+    /// of the four heavy stages, plus the intra-stage checks that
+    /// [`intersect12`] and [`winding03`] carry.
+    pub fn new_with_token(
+        in_p: &ManifoldImpl,
+        in_q: &ManifoldImpl,
+        op: OpType,
+        token: Option<&CancelToken>,
+    ) -> Option<Self> {
         let expand_p = op == OpType::Add;
 
         if in_p.is_empty() || in_q.is_empty() || !in_p.bbox.does_overlap_box(&in_q.bbox) {
-            return Boolean3 {
+            return Some(Boolean3 {
                 xv12: Intersections::default(),
                 xv21: Intersections::default(),
                 w03: vec![0; in_p.num_vert()],
                 w30: vec![0; in_q.num_vert()],
                 expand_p,
                 valid: true,
-            };
+            });
         }
 
         // Level 3: find all edge-face intersections in both directions
         let t_total = crate::timing::start();
         let t = crate::timing::start();
-        let xv12 = intersect12(in_p, in_q, expand_p, true);
+        // Phase-boundary fast-path: skip launching the next stage if cancel
+        // fired between stages (C++ boolean3.cpp:530/536/552/558).
+        if is_cancelled(token) {
+            return None;
+        }
+        let xv12 = intersect12(in_p, in_q, expand_p, true, token)?;
         crate::timing::print("  Intersect12 P->Q", t);
         let t = crate::timing::start();
-        let xv21 = intersect12(in_p, in_q, expand_p, false);
+        if is_cancelled(token) {
+            return None;
+        }
+        let xv21 = intersect12(in_p, in_q, expand_p, false, token)?;
         crate::timing::print("  Intersect12 Q->P", t);
 
         if xv12.x12.len() > i32::MAX as usize || xv21.x12.len() > i32::MAX as usize {
-            return Boolean3 {
+            return Some(Boolean3 {
                 xv12: Intersections::default(),
                 xv21: Intersections::default(),
                 w03: Vec::new(),
                 w30: Vec::new(),
                 expand_p,
                 valid: false,
-            };
+            });
         }
 
         // Compute winding numbers via flood fill
         let t = crate::timing::start();
-        let w03 = winding03(in_p, in_q, &xv12.p1q2, expand_p, true);
+        if is_cancelled(token) {
+            return None;
+        }
+        let w03 = winding03(in_p, in_q, &xv12.p1q2, expand_p, true, token)?;
         crate::timing::print("  Winding03 P", t);
         let t = crate::timing::start();
-        let w30 = winding03(in_p, in_q, &xv21.p1q2, expand_p, false);
+        if is_cancelled(token) {
+            return None;
+        }
+        let w30 = winding03(in_p, in_q, &xv21.p1q2, expand_p, false, token)?;
         crate::timing::print("  Winding03 Q", t);
         crate::timing::print("Intersections (total)", t_total);
 
-        Boolean3 {
+        Some(Boolean3 {
             xv12,
             xv21,
             w03,
             w30,
             expand_p,
             valid: true,
-        }
+        })
     }
 }
 
@@ -760,6 +851,27 @@ pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
 /// For overlapping meshes, uses the full Boolean3 intersection algorithm.
 /// For disjoint meshes, uses fast-path shortcuts.
 pub fn boolean(mesh_a: &ManifoldImpl, mesh_b: &ManifoldImpl, op: OpType) -> ManifoldImpl {
+    boolean_with_token(mesh_a, mesh_b, op, None)
+}
+
+/// [`boolean`] with cooperative cancellation.
+///
+/// A cancelled operation yields an empty mesh whose `status` is
+/// [`Error::Cancelled`], matching what C++ produces via `MakeEmpty(Cancelled)`
+/// at every checkpoint (execution_impl.h:150-160, boolean_result.cpp:758-770).
+pub fn boolean_with_token(
+    mesh_a: &ManifoldImpl,
+    mesh_b: &ManifoldImpl,
+    op: OpType,
+    token: Option<&CancelToken>,
+) -> ManifoldImpl {
+    // Entry gate: a token cancelled before the call wins over every fast path
+    // below, including the empty-input ones. C++ does the same at its outermost
+    // gates (csg_tree.cpp:172, execution_impl.cpp's static factories), so an
+    // already-cancelled context never reports NoError.
+    if is_cancelled(token) {
+        return cancelled_impl();
+    }
     if mesh_a.is_empty() {
         return match op {
             OpType::Add => mesh_b.clone(),
@@ -785,13 +897,22 @@ pub fn boolean(mesh_a: &ManifoldImpl, mesh_b: &ManifoldImpl, op: OpType) -> Mani
     }
 
     // Full boolean — compute intersections
-    let bool3 = Boolean3::new(mesh_a, mesh_b, op);
+    let Some(bool3) = Boolean3::new_with_token(mesh_a, mesh_b, op, token) else {
+        return cancelled_impl();
+    };
     if !bool3.valid {
         return ManifoldImpl::new();
     }
 
-    let result = crate::boolean_result::boolean_result(mesh_a, mesh_b, op, &bool3);
-    result
+    crate::boolean_result::boolean_result_with_token(mesh_a, mesh_b, op, &bool3, token)
+}
+
+/// The observable result of an interrupted operation: an empty mesh carrying
+/// [`Error::Cancelled`]. Mirrors C++ `MakeEmpty(Manifold::Error::Cancelled)`.
+pub(crate) fn cancelled_impl() -> ManifoldImpl {
+    let mut out = ManifoldImpl::new();
+    out.make_empty(Error::Cancelled);
+    out
 }
 
 /// Cast a ray segment from `origin` to `endpoint` against `mesh`, returning

@@ -52,14 +52,79 @@ cargo test --release -p manifold-ffi
 | `manifold_rs_meshgl_face_id` | Borrowed source face ID per triangle. |
 | `manifold_rs_meshgl_destroy` | Free a mesh handle. |
 | `manifold_rs_last_error` | Thread-local message for the most recent failure. |
+| `manifold_rs_batch_boolean_ct` | As above, plus an optional cancellation token. |
+| `manifold_rs_cancel_token_new` | Create a cancellation token. |
+| `manifold_rs_cancel_token_cancel` | Request cancellation (callable from any thread). |
+| `manifold_rs_cancel_token_is_cancelled` | Whether cancellation was requested. |
+| `manifold_rs_cancel_token_destroy` | Free a token handle. |
+| `manifold_rs_from_mesh64` | Build a manifold from `double` / `uint64_t` arrays. |
+| `manifold_rs_get_meshgl64` | Export a manifold as a double-precision mesh handle. |
+| `manifold_rs_meshgl64_num_prop` | Properties per vertex (>= 3). |
+| `manifold_rs_meshgl64_vert_properties` | Borrowed `double` array, `num_prop` per vertex. |
+| `manifold_rs_meshgl64_tri_verts` | Borrowed `uint64_t` index array, 3 per triangle. |
+| `manifold_rs_meshgl64_run_index` | Borrowed `uint64_t` run start offsets plus end sentinel. |
+| `manifold_rs_meshgl64_run_original_id` | Borrowed `uint32_t` source mesh ID per run. |
+| `manifold_rs_meshgl64_face_id` | Borrowed `uint64_t` source face ID per triangle. |
+| `manifold_rs_meshgl64_destroy` | Free a 64-bit mesh handle. |
+
+## Cancellation
+
+`manifold_rs_batch_boolean_ct` takes an optional `CancelTokenRs*`. Pass NULL to
+get the uncancellable behaviour of `manifold_rs_batch_boolean` at zero cost —
+the kernel does not read any flag on that path.
+
+```c
+CancelTokenRs* t = manifold_rs_cancel_token_new();
+/* worker thread */ ManifoldRs* r = manifold_rs_batch_boolean_ct(parts, n, op, t);
+/* UI thread    */ manifold_rs_cancel_token_cancel(t);
+/* after the worker returns */
+if (manifold_rs_status(r) == 14) { /* cancelled */ }
+manifold_rs_cancel_token_destroy(t);
+```
+
+Three things to know:
+
+- **Cancelling from another thread is the supported use**, not a hazard. The
+  flag is atomic, and any number of threads may hold and cancel the same token.
+  This is the one exception to the "don't use a handle concurrently" rule below.
+- **A cancelled call returns a valid handle with status 14, not NULL.** NULL
+  stays reserved for argument errors and caught panics, so a caller can tell
+  "the user cancelled" from "something broke". The handle still needs
+  destroying.
+- **Destroying the token early is safe, but useless.** An operation clones the
+  shared flag when it starts, so `manifold_rs_cancel_token_destroy` during a
+  running call is memory-safe — no use-after-free, no leak. It just leaves
+  nothing to cancel through, and the operation runs to completion. From C# that
+  still means keeping the handle rooted for the lifetime of the operation
+  (including across awaits) if you want a later cancel to land. The one hard
+  rule is not to race destroy against `..._cancel` / `..._is_cancelled`, which
+  read the handle itself.
+
+Cancellation is cooperative: the kernel checks the flag at phase boundaries in
+the CSG tree, the boolean stages and the triangulation, so a cancelled call
+unwinds shortly after the request rather than instantly.
+
+## Double-precision mesh path
+
+`manifold_rs_from_mesh64` / `manifold_rs_get_meshgl64` and the
+`manifold_rs_meshgl64_*` accessors mirror the single-precision family with the
+element types of the core crate's `MeshGL64`: `double` vertex properties and
+`uint64_t` indices, but `run_original_id` stays `uint32_t` (a mesh ID is not an
+index). The kernel narrows to single precision internally, so this is a wider
+*interface*, not extra precision end to end — it exists so a caller whose data
+is already `double`/`uint64_t` does not have to narrow it by hand. The
+`ManifoldRs*` it produces is an ordinary handle and mixes freely with ones from
+`manifold_rs_from_mesh`.
 
 ## Memory ownership
 
-- `ManifoldRs*` and `MeshGlRs*` are opaque, caller-owned handles. Every
-  non-NULL handle must be released with `manifold_rs_destroy` /
-  `manifold_rs_meshgl_destroy`. Both destroys ignore NULL.
-- `manifold_rs_from_mesh` **copies** its input arrays; the caller may free them
-  as soon as the call returns.
+- `ManifoldRs*`, `MeshGlRs*`, `MeshGl64Rs*` and `CancelTokenRs*` are opaque,
+  caller-owned handles. Every non-NULL handle must be released with its
+  matching destroy (`manifold_rs_destroy`, `manifold_rs_meshgl_destroy`,
+  `manifold_rs_meshgl64_destroy`, `manifold_rs_cancel_token_destroy`). Every
+  destroy ignores NULL.
+- `manifold_rs_from_mesh` / `manifold_rs_from_mesh64` **copy** their input
+  arrays; the caller may free them as soon as the call returns.
 - `manifold_rs_batch_boolean` does **not** consume its operands — the caller
   still owns and must destroy each of them.
 - The `meshgl` array accessors return **borrowed** pointers into the mesh
@@ -121,9 +186,15 @@ read together in whatever you hand to `Task.Run`.
 | 11 | Invalid construction |
 | 12 | Result too large |
 | 13 | Invalid tangents |
+| 14 | Cancelled (interrupted through a `CancelTokenRs`) |
 
 ## Threading
 
 Distinct handles may be used concurrently from different threads. A single
 handle must not be used concurrently with a call that frees it. The last-error
 slot is thread-local, so read it on the thread that saw the failure.
+
+`CancelTokenRs` is the deliberate exception: cancelling (or querying) a token
+while another thread is inside an operation holding it is exactly what the type
+is for. Only `manifold_rs_cancel_token_destroy` must be ordered after every
+call that used the token.

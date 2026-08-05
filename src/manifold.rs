@@ -432,6 +432,22 @@ impl Manifold {
         Self::from_impl(boolean3::boolean(&self.imp, &other.imp, op))
     }
 
+    /// [`Manifold::boolean`] with cooperative cancellation.
+    ///
+    /// Pass `None` for the uncancellable behaviour of [`Manifold::boolean`] —
+    /// that path is unchanged and touches no atomics. With `Some(token)`, a
+    /// cancel requested from any thread (before or during the call) makes this
+    /// return an empty manifold whose [`Manifold::status`] is
+    /// [`Error::Cancelled`], mirroring the C++ `ExecutionContext` contract.
+    pub fn boolean_with_token(
+        &self,
+        other: &Self,
+        op: OpType,
+        token: Option<&crate::cancel::CancelToken>,
+    ) -> Self {
+        Self::from_impl(boolean3::boolean_with_token(&self.imp, &other.imp, op, token))
+    }
+
     pub fn union(&self, other: &Self) -> Self {
         self.boolean(other, OpType::Add)
     }

@@ -27,9 +27,10 @@ use std::collections::BinaryHeap;
 use std::cmp::Ordering;
 
 use crate::boolean3;
+use crate::cancel::{is_cancelled, CancelToken};
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{Mat3x4, Vec3, mat3x4_to_mat4, mat4_to_mat3x4};
-use crate::types::{Box as BBox, OpType};
+use crate::types::{Box as BBox, Error, OpType};
 
 // ---------------------------------------------------------------------------
 // CsgLeafNode — wraps an immutable mesh plus a lazy transform
@@ -62,6 +63,18 @@ impl CsgLeafNode {
     pub fn empty() -> Self {
         Self {
             p_impl: Arc::new(ManifoldImpl::new()),
+            transform: Mat3x4::identity(),
+        }
+    }
+
+    /// Empty leaf carrying [`Error::Cancelled`], the value every cancelled
+    /// branch of the tree evaluates to. Port of C++
+    /// `ErrorLeaf(Manifold::Error::Cancelled)` (csg_tree.cpp:172, 460, 511, 759).
+    fn cancelled() -> Self {
+        let mut imp = ManifoldImpl::new();
+        imp.make_empty(Error::Cancelled);
+        Self {
+            p_impl: Arc::new(imp),
             transform: Mat3x4::identity(),
         }
     }
@@ -173,12 +186,28 @@ impl CsgNode {
     /// Uses explicit-stack DFS to avoid recursion stack overflow.
     /// Port of C++ CsgOpNode::ToLeafNode()
     pub fn evaluate(&self) -> ManifoldImpl {
-        let leaf = self.to_leaf_node(Mat3x4::identity());
+        self.evaluate_with_token(None)
+    }
+
+    /// [`CsgNode::evaluate`] with cooperative cancellation.
+    ///
+    /// A cancelled evaluation yields an empty mesh whose status is
+    /// [`Error::Cancelled`]. Mirrors C++ `CsgOpNode::ToLeafNode(ctx)`
+    /// (csg_tree.cpp:644-800), which checks the flag once per stack step and
+    /// substitutes an `ErrorLeaf(Cancelled)` for the pending work.
+    pub fn evaluate_with_token(&self, token: Option<&CancelToken>) -> ManifoldImpl {
+        let leaf = self.to_leaf_node(Mat3x4::identity(), token);
         leaf.get_impl()
     }
 
     /// Internal: convert this node to a CsgLeafNode, applying the given parent transform.
-    fn to_leaf_node(&self, parent_transform: Mat3x4) -> CsgLeafNode {
+    fn to_leaf_node(&self, parent_transform: Mat3x4, token: Option<&CancelToken>) -> CsgLeafNode {
+        // One check per stack step, as C++ does at csg_tree.cpp:752. Cancel is
+        // sticky, so every enclosing step short-circuits here too and the
+        // Cancelled leaf propagates to the root without further work.
+        if is_cancelled(token) {
+            return CsgLeafNode::cancelled();
+        }
         match self {
             CsgNode::Leaf(leaf) => leaf.apply_transform(parent_transform),
             CsgNode::Op { op, children, transform } => {
@@ -191,29 +220,36 @@ impl CsgNode {
                 let mut positive: Vec<CsgLeafNode> = Vec::new();
                 let mut negative: Vec<CsgLeafNode> = Vec::new();
 
-                self.collect_children(*op, combined, children, &mut positive, &mut negative);
+                self.collect_children(*op, combined, children, &mut positive, &mut negative, token);
 
                 // Perform the operation
                 match op {
                     OpType::Add => {
                         // Union of all positive children
-                        batch_union(&mut positive)
+                        batch_union(&mut positive, token)
                     }
                     OpType::Intersect => {
                         // Intersection of all positive children
-                        batch_boolean(OpType::Intersect, &mut positive)
+                        batch_boolean(OpType::Intersect, &mut positive, token)
                     }
                     OpType::Subtract => {
                         // Subtract: first child is positive, rest are negative
                         if positive.is_empty() {
-                            return CsgLeafNode::empty();
+                            // `collect_children` may have produced a Cancelled
+                            // leaf and no positive one; returning the plain
+                            // empty leaf here would launder that into NoError.
+                            return if is_cancelled(token) {
+                                CsgLeafNode::cancelled()
+                            } else {
+                                CsgLeafNode::empty()
+                            };
                         }
-                        let pos_result = batch_union(&mut positive);
+                        let pos_result = batch_union(&mut positive, token);
                         if negative.is_empty() {
                             return pos_result;
                         }
-                        let neg_result = batch_union(&mut negative);
-                        simple_boolean(&pos_result, &neg_result, OpType::Subtract)
+                        let neg_result = batch_union(&mut negative, token);
+                        simple_boolean(&pos_result, &neg_result, OpType::Subtract, token)
                     }
                 }
             }
@@ -229,6 +265,7 @@ impl CsgNode {
         children: &[CsgNode],
         positive: &mut Vec<CsgLeafNode>,
         negative: &mut Vec<CsgLeafNode>,
+        token: Option<&CancelToken>,
     ) {
         for (i, child) in children.iter().enumerate() {
             match child {
@@ -261,7 +298,7 @@ impl CsgNode {
                         if parent_op == OpType::Subtract && *child_op == OpType::Subtract && i == 0 {
                             // (A - B) is first child of Subtract: A goes to positive, B goes to negative
                             for (gi, gc) in grandchildren.iter().enumerate() {
-                                let leaf = gc.to_leaf_node_inner(combined);
+                                let leaf = gc.to_leaf_node_inner(combined, token);
                                 if gi == 0 {
                                     positive.push(leaf);
                                 } else {
@@ -270,7 +307,7 @@ impl CsgNode {
                             }
                         } else {
                             for gc in grandchildren {
-                                let leaf = gc.to_leaf_node_inner(combined);
+                                let leaf = gc.to_leaf_node_inner(combined, token);
                                 if parent_op == OpType::Subtract && i > 0 {
                                     negative.push(leaf);
                                 } else {
@@ -280,7 +317,7 @@ impl CsgNode {
                         }
                     } else {
                         // Cannot collapse: evaluate child subtree fully
-                        let result = child.to_leaf_node(combined);
+                        let result = child.to_leaf_node(combined, token);
                         if parent_op == OpType::Subtract && i > 0 {
                             negative.push(result);
                         } else {
@@ -293,10 +330,10 @@ impl CsgNode {
     }
 
     /// Helper: convert a single node to leaf with given transform (non-flattening).
-    fn to_leaf_node_inner(&self, transform: Mat3x4) -> CsgLeafNode {
+    fn to_leaf_node_inner(&self, transform: Mat3x4, token: Option<&CancelToken>) -> CsgLeafNode {
         match self {
             CsgNode::Leaf(leaf) => leaf.apply_transform(transform),
-            CsgNode::Op { .. } => self.to_leaf_node(transform),
+            CsgNode::Op { .. } => self.to_leaf_node(transform, token),
         }
     }
 }
@@ -306,10 +343,20 @@ impl CsgNode {
 // Port of C++ SimpleBoolean() (lines 142-184)
 // ---------------------------------------------------------------------------
 
-fn simple_boolean(a: &CsgLeafNode, b: &CsgLeafNode, op: OpType) -> CsgLeafNode {
+fn simple_boolean(
+    a: &CsgLeafNode,
+    b: &CsgLeafNode,
+    op: OpType,
+    token: Option<&CancelToken>,
+) -> CsgLeafNode {
+    // Entry gate before the (expensive) transform materialisation, matching
+    // C++ SimpleBoolean's first line (csg_tree.cpp:172).
+    if is_cancelled(token) {
+        return CsgLeafNode::cancelled();
+    }
     let impl_a = a.get_impl();
     let impl_b = b.get_impl();
-    let result = boolean3::boolean(&impl_a, &impl_b, op);
+    let result = boolean3::boolean_with_token(&impl_a, &impl_b, op, token);
     CsgLeafNode::new(result)
 }
 
@@ -348,7 +395,11 @@ impl Ord for MeshEntry {
     }
 }
 
-fn batch_boolean(op: OpType, children: &mut Vec<CsgLeafNode>) -> CsgLeafNode {
+fn batch_boolean(
+    op: OpType,
+    children: &mut Vec<CsgLeafNode>,
+    token: Option<&CancelToken>,
+) -> CsgLeafNode {
     if children.is_empty() {
         return CsgLeafNode::empty();
     }
@@ -358,7 +409,7 @@ fn batch_boolean(op: OpType, children: &mut Vec<CsgLeafNode>) -> CsgLeafNode {
     if children.len() == 2 {
         let b = children.pop().unwrap();
         let a = children.pop().unwrap();
-        return simple_boolean(&a, &b, op);
+        return simple_boolean(&a, &b, op, token);
     }
 
     let mut heap: BinaryHeap<MeshEntry> = BinaryHeap::new();
@@ -372,13 +423,18 @@ fn batch_boolean(op: OpType, children: &mut Vec<CsgLeafNode>) -> CsgLeafNode {
     // builds. The round structure changes which meshes pair up, so mirror it.
     let mut tmp: Vec<MeshEntry> = Vec::new();
     while heap.len() > 1 {
+        // Once-per-round check, matching C++ BatchBoolean's per-iteration gate
+        // (csg_tree.cpp:460).
+        if is_cancelled(token) {
+            return CsgLeafNode::cancelled();
+        }
         for _ in 0..4 {
             if heap.len() <= 1 {
                 break;
             }
             let a = heap.pop().unwrap();
             let b = heap.pop().unwrap();
-            let result = simple_boolean(&a.0, &b.0, op);
+            let result = simple_boolean(&a.0, &b.0, op, token);
             tmp.push(MeshEntry(result, next_serial));
             next_serial += 1;
         }
@@ -397,7 +453,7 @@ fn batch_boolean(op: OpType, children: &mut Vec<CsgLeafNode>) -> CsgLeafNode {
 
 const K_MAX_UNION_SIZE: usize = 1000;
 
-fn batch_union(children: &mut Vec<CsgLeafNode>) -> CsgLeafNode {
+fn batch_union(children: &mut Vec<CsgLeafNode>, token: Option<&CancelToken>) -> CsgLeafNode {
     if children.is_empty() {
         return CsgLeafNode::empty();
     }
@@ -407,6 +463,10 @@ fn batch_union(children: &mut Vec<CsgLeafNode>) -> CsgLeafNode {
 
     // Process in chunks to avoid O(n^2) overlap checks
     while children.len() > 1 {
+        // Once-per-chunk check, matching C++ BatchUnion (csg_tree.cpp:511).
+        if is_cancelled(token) {
+            return CsgLeafNode::cancelled();
+        }
         let chunk_size = children.len().min(K_MAX_UNION_SIZE);
         let chunk_start = children.len() - chunk_size;
 
@@ -453,7 +513,7 @@ fn batch_union(children: &mut Vec<CsgLeafNode>) -> CsgLeafNode {
         // BatchBoolean the composed results, then move the (complicated) new
         // child to the front: C++ push_backs and swaps front↔back, which also
         // moves the old front to the back when chunking (>kMaxUnionSize).
-        let result = batch_boolean(OpType::Add, &mut results);
+        let result = batch_boolean(OpType::Add, &mut results, token);
         children.push(result);
         let last = children.len() - 1;
         children.swap(0, last);
@@ -513,7 +573,7 @@ mod tests {
         let b = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(0.5, 0.0, 0.0)))));
         let c = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(1.0, 0.0, 0.0)))));
         let mut children = vec![a, b, c];
-        let result = batch_boolean(OpType::Add, &mut children);
+        let result = batch_boolean(OpType::Add, &mut children, None);
         let mesh = result.get_impl();
         assert!(mesh.num_tri() > 0, "BatchBoolean of 3 overlapping cubes should produce non-empty mesh");
     }
@@ -524,7 +584,7 @@ mod tests {
         let b = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(3.0, 0.0, 0.0)))));
         let c = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(6.0, 0.0, 0.0)))));
         let mut children = vec![a, b, c];
-        let result = batch_union(&mut children);
+        let result = batch_union(&mut children, None);
         let mesh = result.get_impl();
         // Three disjoint cubes should compose without boolean, giving 36 tris
         assert_eq!(mesh.num_tri(), 36, "BatchUnion of 3 disjoint cubes should have 36 tris");

@@ -29,6 +29,7 @@
 //! source layout and are public primarily for testing and advanced use — their
 //! APIs may change before 1.0.
 
+pub mod cancel;
 pub mod linalg;
 pub mod types;
 pub mod polygon;

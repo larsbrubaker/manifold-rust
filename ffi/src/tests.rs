@@ -21,7 +21,7 @@ use super::*;
 /// Axis-aligned cube as interleaved positions plus CCW-outward triangles.
 /// Written out by hand so the tests do not depend on the core crate's own
 /// cube constructor for their input.
-fn cube_mesh(origin: [f32; 3], size: f32) -> (Vec<f32>, Vec<u32>) {
+pub(crate) fn cube_mesh(origin: [f32; 3], size: f32) -> (Vec<f32>, Vec<u32>) {
     let [x, y, z] = origin;
     let s = size;
     let verts = vec![
@@ -47,7 +47,7 @@ fn cube_mesh(origin: [f32; 3], size: f32) -> (Vec<f32>, Vec<u32>) {
 
 /// Build a cube through the FFI entry point. Panics on failure so a broken
 /// import shows up as a test failure at the point of construction.
-fn ffi_cube(origin: [f32; 3], size: f32) -> *mut ManifoldRs {
+pub(crate) fn ffi_cube(origin: [f32; 3], size: f32) -> *mut ManifoldRs {
     let (verts, tris) = cube_mesh(origin, size);
     let handle = unsafe {
         manifold_rs_from_mesh(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3)
@@ -58,45 +58,50 @@ fn ffi_cube(origin: [f32; 3], size: f32) -> *mut ManifoldRs {
 
 /// Copy an exported mesh's arrays out of the FFI so assertions can compare
 /// them without juggling raw pointers.
-struct ExportedMesh {
-    num_prop: u32,
-    vert_properties: Vec<f32>,
-    tri_verts: Vec<u32>,
-    run_index: Vec<u32>,
-    run_original_id: Vec<u32>,
-    face_id: Vec<u32>,
+pub(crate) struct ExportedMesh {
+    pub num_prop: u32,
+    pub vert_properties: Vec<f32>,
+    pub tri_verts: Vec<u32>,
+    pub run_index: Vec<u32>,
+    pub run_original_id: Vec<u32>,
+    pub face_id: Vec<u32>,
 }
 
-fn export(m: *const ManifoldRs) -> ExportedMesh {
+/// Copy one array accessor's data out. Generic over the handle type so the
+/// f32 and f64 mesh test suites share it.
+///
+/// # Safety
+/// `g` must be a live handle of the type `accessor` expects.
+pub(crate) unsafe fn read_array<H, T: Copy>(
+    accessor: unsafe extern "C" fn(*const H, *mut usize) -> *const T,
+    g: *const H,
+) -> Vec<T> {
+    let mut len = usize::MAX;
+    // SAFETY: caller guarantees g is live, and len is writable.
+    let ptr = unsafe { accessor(g, &mut len) };
+    assert!(!ptr.is_null(), "accessor returned NULL for a live handle");
+    assert_ne!(len, usize::MAX, "accessor did not write out_len");
+    if len == 0 {
+        Vec::new()
+    } else {
+        // SAFETY: the accessor just reported len elements at ptr, and the data
+        // outlives the copy because g is still alive.
+        unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec()
+    }
+}
+
+pub(crate) fn export(m: *const ManifoldRs) -> ExportedMesh {
     let g = unsafe { manifold_rs_get_meshgl(m) };
     assert!(!g.is_null(), "get_meshgl returned NULL");
-
-    unsafe fn read<T: Copy>(
-        accessor: unsafe extern "C" fn(*const MeshGlRs, *mut usize) -> *const T,
-        g: *const MeshGlRs,
-    ) -> Vec<T> {
-        let mut len = usize::MAX;
-        // SAFETY: g is a live handle from get_meshgl and len is writable.
-        let ptr = unsafe { accessor(g, &mut len) };
-        assert!(!ptr.is_null(), "accessor returned NULL for a live handle");
-        assert_ne!(len, usize::MAX, "accessor did not write out_len");
-        if len == 0 {
-            Vec::new()
-        } else {
-            // SAFETY: the accessor just reported len elements at ptr, and the
-            // data outlives the copy because g is still alive.
-            unsafe { std::slice::from_raw_parts(ptr, len) }.to_vec()
-        }
-    }
 
     let exported = unsafe {
         ExportedMesh {
             num_prop: manifold_rs_meshgl_num_prop(g),
-            vert_properties: read(manifold_rs_meshgl_vert_properties, g),
-            tri_verts: read(manifold_rs_meshgl_tri_verts, g),
-            run_index: read(manifold_rs_meshgl_run_index, g),
-            run_original_id: read(manifold_rs_meshgl_run_original_id, g),
-            face_id: read(manifold_rs_meshgl_face_id, g),
+            vert_properties: read_array(manifold_rs_meshgl_vert_properties, g),
+            tri_verts: read_array(manifold_rs_meshgl_tri_verts, g),
+            run_index: read_array(manifold_rs_meshgl_run_index, g),
+            run_original_id: read_array(manifold_rs_meshgl_run_original_id, g),
+            face_id: read_array(manifold_rs_meshgl_face_id, g),
         }
     };
     unsafe { manifold_rs_meshgl_destroy(g) };

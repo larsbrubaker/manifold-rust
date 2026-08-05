@@ -543,6 +543,25 @@ pub fn face2tri(
     halfedge_ref: &[TriRef],
     allow_convex: bool,
 ) {
+    face2tri_ct(mesh, face_edge, halfedge_ref, allow_convex, None);
+}
+
+/// [`face2tri`] with cooperative cancellation, returning `false` if `token`
+/// fired before the triangulation completed. On `false`, `mesh` is left in a
+/// half-built state and must be discarded — the same contract as C++
+/// `Face2Tri(..., ctx)`, whose cancel arms `return` mid-way and rely on the
+/// caller's `MakeEmpty(Cancelled)` (face_op.cpp:190-366).
+pub fn face2tri_ct(
+    mesh: &mut ManifoldImpl,
+    face_edge: &[i32],
+    halfedge_ref: &[TriRef],
+    allow_convex: bool,
+    token: Option<&crate::cancel::CancelToken>,
+) -> bool {
+    // C++ gates the whole function on entry (face_op.cpp:192).
+    if crate::cancel::is_cancelled(token) {
+        return false;
+    }
     // C++ passes faceHalfedge as a separate view and writes halfedge_ fresh;
     // the Rust assembly built the polygonal faces in mesh.halfedge, so take it.
     let face_halfedge = std::mem::take(&mut mesh.halfedge);
@@ -557,7 +576,7 @@ pub fn face2tri(
     let vert_pos_ref = &mesh.vert_pos;
     let epsilon = mesh.epsilon;
     let general: Vec<Option<HalfedgeTriangulation>> =
-        crate::par::maybe_par_map(num_faces, 512, |face| {
+        match crate::par::maybe_par_map_ct(num_faces, 512, token, |face| {
             let num_edge = (face_edge[face + 1] - face_edge[face]) as usize;
             if num_edge <= 4 {
                 return None;
@@ -569,7 +588,10 @@ pub fn face2tri(
                 assemble_halfedges(&face_halfedge[first_edge..last_edge], first_edge as i32);
             let polys = project_polygons(&polys_loops, &face_halfedge, vert_pos_ref, &projection);
             Some(triangulate_idx_halfedges(&polys, epsilon, allow_convex))
-        });
+        }) {
+            Some(general) => general,
+            None => return false,
+        };
 
     let mut tri_offset = vec![0usize; face_edge.len()];
     let mut results: std::collections::HashMap<usize, HalfedgeTriangulation> =
@@ -737,6 +759,7 @@ pub fn face2tri(
     mesh.halfedge = new_halfedge;
     mesh.face_normal = tri_normal;
     mesh.mesh_relation.tri_ref = tri_ref;
+    true
 }
 
 // -----------------------------------------------------------------------

@@ -32,17 +32,25 @@
 // as functions are added.
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod cancel;
 mod error;
+mod meshgl64;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_cancel;
+#[cfg(test)]
+mod tests_mesh64;
 
 use std::os::raw::c_char;
 use std::ptr;
 
+use manifold_rust::cancel::CancelToken;
 use manifold_rust::csg_tree::CsgNode;
 use manifold_rust::manifold::Manifold;
 use manifold_rust::types::{Error, MeshGL, OpType};
 
+use crate::cancel::CancelTokenRs;
 use crate::error::{guard, last_error_message, set_last_error};
 
 /// Opaque handle wrapping a [`Manifold`]. Created by the constructor and
@@ -57,13 +65,13 @@ pub struct MeshGlRs {
     inner: MeshGL,
 }
 
-fn into_handle(manifold: Manifold) -> *mut ManifoldRs {
+pub(crate) fn into_handle(manifold: Manifold) -> *mut ManifoldRs {
     Box::into_raw(Box::new(ManifoldRs { inner: manifold }))
 }
 
 /// Stable numeric codes for [`Error`], matching the declaration order of the
 /// enum in the core crate (which in turn matches C++ `ManifoldError`).
-fn error_code(status: Error) -> i32 {
+pub(crate) fn error_code(status: Error) -> i32 {
     match status {
         Error::NoError => 0,
         Error::NonFiniteVertex => 1,
@@ -79,6 +87,7 @@ fn error_code(status: Error) -> i32 {
         Error::InvalidConstruction => 11,
         Error::ResultTooLarge => 12,
         Error::InvalidTangents => 13,
+        Error::Cancelled => 14,
     }
 }
 
@@ -265,6 +274,34 @@ pub unsafe extern "C" fn manifold_rs_batch_boolean(
     count: usize,
     op: i32,
 ) -> *mut ManifoldRs {
+    // SAFETY: the caller contract of this function is exactly the one
+    // `manifold_rs_batch_boolean_ct` documents; a NULL token means
+    // "uncancellable", which is this function's behaviour.
+    unsafe { manifold_rs_batch_boolean_ct(manifolds, count, op, ptr::null()) }
+}
+
+/// [`manifold_rs_batch_boolean`] with an optional cancellation token.
+///
+/// A NULL `token` is the uncancellable path and behaves identically to
+/// [`manifold_rs_batch_boolean`]. When the token is cancelled the call returns a
+/// *valid* handle whose status is the cancelled code, never NULL — so the caller
+/// can tell cancellation apart from an argument error or a caught panic.
+///
+/// The token's shared flag is cloned out on entry, so the operation keeps the
+/// flag alive by itself: destroying the handle mid-call leaks nothing and
+/// corrupts nothing, it just means later cancels have nowhere to land. (Still
+/// poor hygiene — see the header.)
+///
+/// # Safety
+/// `manifolds` must point to `count` live handles. `token` must be NULL or a
+/// live handle at the moment of the call.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_batch_boolean_ct(
+    manifolds: *const *const ManifoldRs,
+    count: usize,
+    op: i32,
+    token: *const CancelTokenRs,
+) -> *mut ManifoldRs {
     guard(ptr::null_mut(), || {
         let op = match op {
             0 => OpType::Add,
@@ -284,6 +321,15 @@ pub unsafe extern "C" fn manifold_rs_batch_boolean(
             return ptr::null_mut();
         }
 
+        // Clone (an Arc bump) rather than borrow: the operation then owns a
+        // share of the flag and no longer depends on the *handle* outliving the
+        // call. A C# caller that drops the token while an await is in flight
+        // gets a harmless no-op instead of a use-after-free. Only the tokened
+        // path pays the refcount bump; the NULL path allocates nothing.
+        // SAFETY: caller contract; as_ref() handles the NULL case.
+        let token: Option<CancelToken> = unsafe { token.as_ref() }.map(|t| t.inner.clone());
+        let token: Option<&CancelToken> = token.as_ref();
+
         // SAFETY: non-null with a count that is > 0 and within the isize::MAX
         // byte limit (both checked above); the caller guarantees the array
         // really holds that many handles.
@@ -298,16 +344,21 @@ pub unsafe extern "C" fn manifold_rs_batch_boolean(
             inputs.push(&handle.inner);
         }
 
-        // A single operand has nothing to combine with; every op is identity.
+        // A single operand has nothing to combine with; every op is identity —
+        // but an already-cancelled token still wins, so a caller polling only
+        // the status never sees a one-operand call report success after cancel.
         if let [only] = inputs[..] {
-            return into_handle(only.clone());
+            return match token {
+                Some(t) if t.is_cancelled() => into_handle(Manifold::make_empty(Error::Cancelled)),
+                _ => into_handle(only.clone()),
+            };
         }
 
         let leaves = inputs
             .into_iter()
             .map(|m| CsgNode::leaf(m.as_impl().clone()))
             .collect();
-        let result = CsgNode::op_n(op, leaves).evaluate();
+        let result = CsgNode::op_n(op, leaves).evaluate_with_token(token);
         into_handle(Manifold::from_impl(result))
     })
 }
@@ -355,15 +406,16 @@ pub unsafe extern "C" fn manifold_rs_meshgl_num_prop(g: *const MeshGlRs) -> u32 
     })
 }
 
-/// Defines a borrowing array accessor over one `MeshGlRs` field. All five share
-/// the same contract, and writing them out by hand five times would only add
-/// places for the null/length handling to drift apart.
+/// Defines a borrowing array accessor over one field of a mesh handle
+/// (`MeshGlRs` or `MeshGl64Rs`). All ten share the same contract, and writing
+/// them out by hand ten times would only add places for the null/length
+/// handling to drift apart.
 ///
 /// `merge_from_vert` / `merge_to_vert` are deliberately not exposed: the export
 /// path already resolves merges, so a caller reconstructing geometry from these
 /// arrays does not need them.
-macro_rules! meshgl_array_accessor {
-    ($name:ident, $field:ident, $elem:ty) => {
+macro_rules! mesh_array_accessor {
+    ($name:ident, $handle:ty, $field:ident, $elem:ty) => {
         /// Borrowed pointer to the field's data, valid until the mesh handle is
         /// destroyed. Writes the element count to `out_len` when it is non-NULL.
         /// NULL (with `*out_len` = 0) for a NULL handle; for an empty field the
@@ -373,32 +425,36 @@ macro_rules! meshgl_array_accessor {
         /// `g` must be NULL or a live handle; `out_len` must be NULL or
         /// writable.
         #[no_mangle]
-        pub unsafe extern "C" fn $name(g: *const MeshGlRs, out_len: *mut usize) -> *const $elem {
+        pub unsafe extern "C" fn $name(g: *const $handle, out_len: *mut usize) -> *const $elem {
             // Zero the length up front, outside the guard: if the body panics
             // the caller gets NULL and a length of 0 rather than whatever was
             // in their variable before the call.
             // SAFETY: out_len is null-checked inside write_len.
-            unsafe { write_len(out_len, 0) };
-            guard(ptr::null(), || {
+            unsafe { $crate::write_len(out_len, 0) };
+            $crate::error::guard(ptr::null(), || {
                 // SAFETY: caller contract; as_ref() handles the NULL case.
                 let Some(handle) = (unsafe { g.as_ref() }) else {
-                    set_last_error(concat!(stringify!($name), ": null mesh"));
+                    $crate::error::set_last_error(concat!(stringify!($name), ": null mesh"));
                     return ptr::null();
                 };
                 let data = &handle.inner.$field;
                 // SAFETY: out_len is null-checked inside write_len.
-                unsafe { write_len(out_len, data.len()) };
+                unsafe { $crate::write_len(out_len, data.len()) };
                 data.as_ptr()
             })
         }
     };
 }
 
-meshgl_array_accessor!(manifold_rs_meshgl_vert_properties, vert_properties, f32);
-meshgl_array_accessor!(manifold_rs_meshgl_tri_verts, tri_verts, u32);
-meshgl_array_accessor!(manifold_rs_meshgl_run_index, run_index, u32);
-meshgl_array_accessor!(manifold_rs_meshgl_run_original_id, run_original_id, u32);
-meshgl_array_accessor!(manifold_rs_meshgl_face_id, face_id, u32);
+// `macro_rules` items are textually scoped, so re-export the macro for the
+// sibling module that also needs it (`meshgl64`).
+pub(crate) use mesh_array_accessor;
+
+mesh_array_accessor!(manifold_rs_meshgl_vert_properties, MeshGlRs, vert_properties, f32);
+mesh_array_accessor!(manifold_rs_meshgl_tri_verts, MeshGlRs, tri_verts, u32);
+mesh_array_accessor!(manifold_rs_meshgl_run_index, MeshGlRs, run_index, u32);
+mesh_array_accessor!(manifold_rs_meshgl_run_original_id, MeshGlRs, run_original_id, u32);
+mesh_array_accessor!(manifold_rs_meshgl_face_id, MeshGlRs, face_id, u32);
 
 /// Release a mesh handle, invalidating every pointer previously returned by the
 /// array accessors. NULL is ignored.
@@ -449,7 +505,7 @@ pub unsafe extern "C" fn manifold_rs_last_error(buf: *mut u8, buf_len: usize) ->
 /// requires the total size to fit in `isize::MAX` bytes, and violating that is
 /// immediate UB. A caller that widens a negative int to `usize` — an easy
 /// mistake in a P/Invoke signature — lands here instead of in the kernel.
-fn length_fits<T>(len: usize) -> bool {
+pub(crate) fn length_fits<T>(len: usize) -> bool {
     match std::mem::size_of::<T>() {
         0 => true,
         size => len <= (isize::MAX as usize) / size,
@@ -462,7 +518,7 @@ fn length_fits<T>(len: usize) -> bool {
 /// # Safety
 /// When `len > 0`, `ptr` must be valid for `len` elements and `len` must have
 /// passed [`length_fits`].
-unsafe fn slice_or_empty<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
+pub(crate) unsafe fn slice_or_empty<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
     if len == 0 {
         &[]
     } else {
@@ -473,7 +529,7 @@ unsafe fn slice_or_empty<'a, T>(ptr: *const T, len: usize) -> &'a [T] {
 
 /// # Safety
 /// `out_len` must be NULL or writable.
-unsafe fn write_len(out_len: *mut usize, len: usize) {
+pub(crate) unsafe fn write_len(out_len: *mut usize, len: usize) {
     if !out_len.is_null() {
         // SAFETY: non-null and caller guarantees it is writable.
         unsafe { *out_len = len };

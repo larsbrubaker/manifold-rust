@@ -36,6 +36,8 @@
  *   threads. A single handle must not be used concurrently with any call that
  *   mutates or frees it (in particular its destroy function). The last-error
  *   slot is per thread.
+ *   The one deliberate exception is CancelTokenRs: see the cancellation
+ *   section below, where concurrent use from two threads is the entire point.
  * - Strings and arrays returned by this library are never freed by the caller;
  *   they are either static or owned by a handle.
  *
@@ -56,6 +58,7 @@
  *   11  invalid construction
  *   12  result too large
  *   13  invalid tangents
+ *   14  cancelled (the operation was interrupted through a CancelTokenRs)
  */
 
 #ifndef MANIFOLD_RS_H
@@ -74,6 +77,14 @@ typedef struct ManifoldRs ManifoldRs;
 /* Opaque handle to an exported GL-style mesh. Free with
  * manifold_rs_meshgl_destroy(). */
 typedef struct MeshGlRs MeshGlRs;
+
+/* Opaque handle to an exported double-precision / 64-bit-index mesh. Free with
+ * manifold_rs_meshgl64_destroy(). */
+typedef struct MeshGl64Rs MeshGl64Rs;
+
+/* Opaque handle to a cancellation token. Free with
+ * manifold_rs_cancel_token_destroy(). */
+typedef struct CancelTokenRs CancelTokenRs;
 
 /* Boolean op codes; the ordering matches C++ ManifoldOpType. */
 #define MANIFOLD_RS_OP_ADD 0       /* union */
@@ -163,6 +174,82 @@ ManifoldRs* manifold_rs_batch_boolean(const ManifoldRs* const* manifolds,
                                       int32_t op);
 
 /*
+ * Cancellation
+ * ------------
+ *
+ * A CancelTokenRs is a shared flag that lets one thread interrupt a long
+ * running operation running on another. Usage:
+ *
+ *   CancelTokenRs* t = manifold_rs_cancel_token_new();
+ *   // thread A:  r = manifold_rs_batch_boolean_ct(parts, n, op, t);
+ *   // thread B:  manifold_rs_cancel_token_cancel(t);   // user hit Cancel
+ *   // thread A, after the call returns:
+ *   //   manifold_rs_status(r) == 14  ->  cancelled
+ *   manifold_rs_cancel_token_destroy(t);   // see LIFETIME below
+ *
+ * THREAD SAFETY (the exception to the general rule above): calling
+ * manifold_rs_cancel_token_cancel() / manifold_rs_cancel_token_is_cancelled()
+ * concurrently with an operation that was handed the same token, from any
+ * thread, is explicitly supported - that is what the type is for. The flag is
+ * atomic. Any number of threads may hold and cancel the same token.
+ *
+ * LIFETIME: an operation clones the token's shared flag when it starts, so the
+ * flag outlives the handle. Calling manifold_rs_cancel_token_destroy() while an
+ * operation that was given the token is still running is therefore MEMORY SAFE
+ * - not a use after free, and it leaks nothing. It is still a bug: after the
+ * destroy there is no handle left to cancel through, so the operation runs to
+ * completion. Keep the handle alive (a GC-rooted field, a `using` scope that
+ * outlives the await, etc.) for as long as you might want to cancel.
+ *
+ * The one ordering the caller must still honour is destroy vs.
+ * manifold_rs_cancel_token_cancel() / manifold_rs_cancel_token_is_cancelled():
+ * those read the handle itself, so they must not race with its destruction.
+ *
+ * Cancellation is STICKY: once cancelled a token stays cancelled, and every
+ * later operation given that token returns immediately as cancelled. Create a
+ * new token for work that should be allowed to run.
+ */
+
+/* A fresh, uncancelled token. NULL only if the allocation panics. */
+CancelTokenRs* manifold_rs_cancel_token_new(void);
+
+/* Request cancellation. Callable from any thread at any time; NULL is
+ * ignored. */
+void manifold_rs_cancel_token_cancel(const CancelTokenRs* t);
+
+/* 1 if cancellation has been requested, else 0. A NULL token reports 0, which
+ * is also its behaviour: NULL means uncancellable. */
+int32_t manifold_rs_cancel_token_is_cancelled(const CancelTokenRs* t);
+
+/* Free a token handle. NULL is ignored. Safe against a running operation that
+ * holds the token, but see the LIFETIME note above: doing so loses the ability
+ * to cancel that operation. */
+void manifold_rs_cancel_token_destroy(CancelTokenRs* t);
+
+/*
+ * manifold_rs_batch_boolean with an optional cancellation token.
+ *
+ * token may be NULL, which means "uncancellable" and makes this call exactly
+ * equivalent to manifold_rs_batch_boolean (which is implemented by delegating
+ * here with a NULL token). Passing NULL costs nothing: the geometry kernel
+ * never reads a flag on that path.
+ *
+ * On cancellation this returns a VALID handle whose manifold_rs_status() is 14
+ * (cancelled) and whose geometry is empty - it does NOT return NULL. NULL is
+ * reserved for argument errors and caught panics, so a caller can distinguish
+ * "the user cancelled" from "something went wrong". The returned handle must
+ * still be destroyed.
+ *
+ * Cancellation is cooperative and checked at phase boundaries inside the
+ * kernel, so the call returns shortly after cancel is requested rather than
+ * instantly.
+ */
+ManifoldRs* manifold_rs_batch_boolean_ct(const ManifoldRs* const* manifolds,
+                                         size_t count,
+                                         int32_t op,
+                                         const CancelTokenRs* token);
+
+/*
  * Export m as a mesh handle. A manifold with a non-zero status exports as an
  * empty mesh rather than failing. Returns NULL if m is NULL or the export
  * panics.
@@ -207,6 +294,78 @@ const uint32_t* manifold_rs_meshgl_face_id(const MeshGlRs* g, size_t* out_len);
 /* Free a mesh handle, invalidating every pointer the accessors returned for
  * it. NULL is ignored. */
 void manifold_rs_meshgl_destroy(MeshGlRs* g);
+
+/*
+ * Double-precision mesh path
+ * --------------------------
+ *
+ * The MeshGl64Rs family mirrors the MeshGlRs family with wider element types,
+ * for callers whose geometry is already double / uint64 and who would
+ * otherwise have to narrow it by hand. Element types follow the core crate's
+ * MeshGL64 exactly:
+ *
+ *   vert_properties  double
+ *   tri_verts        uint64_t
+ *   run_index        uint64_t
+ *   run_original_id  uint32_t   <- a mesh ID, not an index; u32 in both widths
+ *   face_id          uint64_t
+ *
+ * num_prop stays uint32_t on both paths: it is a small per-vertex count, and
+ * keeping the signature identical makes the two entry points interchangeable
+ * at the call site.
+ *
+ * NOTE: the kernel currently narrows to single precision and 32 bit indices
+ * internally, so this is a wider interface, not more capacity end to end:
+ *   - Coordinates round trip through float, losing ~1e-7 of relative
+ *     precision. Harmless at any physical tolerance.
+ *   - Indices are narrowed to uint32_t. That would WRAP, not saturate, so
+ *     manifold_rs_from_mesh64 rejects any tri_verts entry greater than
+ *     UINT32_MAX (returns NULL, with the offending index in the last-error
+ *     message) rather than silently building wrong geometry that reports
+ *     status 0. In practice this caps a mesh at ~4 billion vertices.
+ *
+ * Handles produced by manifold_rs_from_mesh64 are ordinary ManifoldRs handles
+ * and may be mixed freely with ones from manifold_rs_from_mesh.
+ */
+
+/*
+ * Double-precision counterpart of manifold_rs_from_mesh. Same argument rules,
+ * same sentinels: a handle (possibly carrying a non-zero status) for anything
+ * that describes a mesh, NULL for arguments that cannot. Both arrays are
+ * copied.
+ */
+ManifoldRs* manifold_rs_from_mesh64(const double* vert_properties,
+                                    size_t vert_properties_len,
+                                    const uint64_t* tri_verts,
+                                    size_t tri_verts_len,
+                                    uint32_t num_prop);
+
+/*
+ * Export m as a double-precision mesh handle. A manifold with a non-zero
+ * status exports as an empty mesh rather than failing. NULL if m is NULL or
+ * the export panics.
+ */
+MeshGl64Rs* manifold_rs_get_meshgl64(const ManifoldRs* m);
+
+/* Properties per vertex (>= 3; slots 0-2 are the position). 0 if g is NULL. */
+uint32_t manifold_rs_meshgl64_num_prop(const MeshGl64Rs* g);
+
+/* Same borrowing / out_len / NULL contract as the MeshGlRs accessors above,
+ * and the same field meanings. */
+const double* manifold_rs_meshgl64_vert_properties(const MeshGl64Rs* g,
+                                                   size_t* out_len);
+const uint64_t* manifold_rs_meshgl64_tri_verts(const MeshGl64Rs* g,
+                                               size_t* out_len);
+const uint64_t* manifold_rs_meshgl64_run_index(const MeshGl64Rs* g,
+                                               size_t* out_len);
+const uint32_t* manifold_rs_meshgl64_run_original_id(const MeshGl64Rs* g,
+                                                     size_t* out_len);
+const uint64_t* manifold_rs_meshgl64_face_id(const MeshGl64Rs* g,
+                                             size_t* out_len);
+
+/* Free a 64-bit mesh handle, invalidating every pointer the accessors returned
+ * for it. NULL is ignored. */
+void manifold_rs_meshgl64_destroy(MeshGl64Rs* g);
 
 /*
  * Copy the calling thread's last failure message into buf as UTF-8 and return
