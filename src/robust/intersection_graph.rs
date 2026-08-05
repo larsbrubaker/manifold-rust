@@ -89,13 +89,7 @@ fn is_degenerate(t: &[Vec3; 3]) -> bool {
 
 /// Exact: p collinear with (a,b) and within the closed segment.
 fn point_on_segment(p: &R3, a: &R3, b: &R3) -> bool {
-    let d = b.sub(a);
-    let ap = p.sub(a);
-    if !ap.cross(&d).is_zero() {
-        return false;
-    }
-    let t = ap.dot(&d);
-    t >= BigRational::zero() && t <= d.dot(&d)
+    super::exact::predicates::point_on_segment_r(p, a, b)
 }
 
 /// Clip segment (a,b) to a convex coplanar polygon (2D test via projection
@@ -158,6 +152,7 @@ fn clip_segment_to_polygon(a: &R3, b: &R3, poly: &[R3]) -> Option<(R3, R3)> {
 /// Build the intersection graph for soups `p` and `q` (each triangle wound
 /// outward; degenerate triangles are dropped here, paper §5).
 pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
+    let t_all = crate::timing::start();
     let meshes: [&[[Vec3; 3]]; 2] = [p, q];
     let live: [Vec<bool>; 2] = [
         p.iter().map(|t| !is_degenerate(t)).collect(),
@@ -215,6 +210,9 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
         }
     }
 
+    crate::timing::print("robust: pair narrow phase", t_all);
+    let t_cross = crate::timing::start();
+
     // 3. Cross-copy primitives through coplanar overlap regions so both
     // sides see identical geometry inside the shared area. Clip against the
     // region to avoid dragging unrelated geometry across.
@@ -247,6 +245,9 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
         copy(&from_q, &mut prims[0][*pi]);
     }
 
+    crate::timing::print("robust: coplanar cross-copy", t_cross);
+    let t_cand = crate::timing::start();
+
     // 4a. Candidate points per intersected triangle.
     let mut candidates: [Vec<Option<Vec<R3>>>; 2] = [
         vec![None; p.len()],
@@ -265,6 +266,9 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
             candidates[m][ti] = Some(arrangement::candidate_points(meshes[m][ti], &input));
         }
     }
+
+    crate::timing::print("robust: candidate points", t_cand);
+    let t_reg = crate::timing::start();
 
     // 4b. Original-edge registry: split points on each mesh edge (geometric
     // identity — soups have no reliable connectivity).
@@ -308,6 +312,9 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
             }
         }
     }
+
+    crate::timing::print("robust: split registries", t_reg);
+    let t_arr = crate::timing::start();
 
     // 5. Build arrangements and emit pieces.
     let mut pieces: Vec<Piece> = Vec::new();
@@ -385,6 +392,8 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
             }
         }
     }
+
+    crate::timing::print("robust: arrangements", t_arr);
 
     IntersectionGraph {
         pieces,

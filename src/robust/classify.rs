@@ -76,13 +76,13 @@ fn angle_cmp(a: (&BigRational, &BigRational), b: (&BigRational, &BigRational)) -
     if qa != qb {
         return qa.cmp(&qb);
     }
-    // Same quadrant: CCW order by cross-product sign.
-    let cross = a.0 * b.1 - a.1 * b.0;
-    match Sign::of_rat(&cross) {
-        Sign::Pos => Ordering::Less,
-        Sign::Neg => Ordering::Greater,
-        Sign::Zero => Ordering::Equal, // coincident direction
-    }
+    // Same quadrant: CCW order by cross-product sign. Cleared of the four
+    // (positive) denominators so unreduced fractions compare without gcds:
+    //   sign(a0·b1 − a1·b0) = sign(n_a0·n_b1·d_a1·d_b0 − n_a1·n_b0·d_a0·d_b1)
+    let lhs = a.0.numer() * b.1.numer() * a.1.denom() * b.0.denom();
+    let rhs = a.1.numer() * b.0.numer() * a.0.denom() * b.1.denom();
+    // Descending cross sign = CCW order: Pos → Less, Neg → Greater.
+    rhs.cmp(&lhs)
 }
 
 /// Coincident-piece regularization and binding (paper §7.1 done globally
@@ -230,9 +230,12 @@ fn classify_one_ring(
     let v = w.cross(&u);
 
     for inc in incidents.iter_mut() {
-        let d = inc.apex.sub(&key.0);
-        inc.du = d.dot(&u);
-        inc.dv = d.dot(&v);
+        // Unreduced (a−o)·basis fractions — sign/compare-only consumers, so
+        // skipping gcd normalization is free speed (see dot_diff_raw).
+        let (du_n, du_d) = super::exact::predicates::dot_diff_raw(&inc.apex, &key.0, &u);
+        let (dv_n, dv_d) = super::exact::predicates::dot_diff_raw(&inc.apex, &key.0, &v);
+        inc.du = num_rational::BigRational::new_raw(du_n, du_d);
+        inc.dv = num_rational::BigRational::new_raw(dv_n, dv_d);
         debug_assert!(
             !(inc.du.is_zero() && inc.dv.is_zero()),
             "apex on the ring axis"

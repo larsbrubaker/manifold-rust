@@ -18,7 +18,7 @@ use num_traits::{Signed, Zero};
 use crate::linalg::Vec3;
 
 use super::exact::filtered::orient3d;
-use super::exact::predicates::{line_line_intersect_2d, line_plane_intersect, orient2d_r, tri_normal_r};
+use super::exact::predicates::{dot_point_raw, line_line_intersect_2d, line_plane_intersect, orient2d_r, tri_normal_int, tri_normal_r};
 use super::exact::rational::{R2, R3};
 use super::exact::Sign;
 
@@ -133,20 +133,38 @@ pub fn tri_tri_intersect(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
     debug_assert!(!pts1.is_empty() && pts1.len() <= 2);
     debug_assert!(!pts2.is_empty() && pts2.len() <= 2);
 
-    let n1 = tri_normal_r(&r1[0], &r1[1], &r1[2]);
-    let n2 = tri_normal_r(&r2[0], &r2[1], &r2[2]);
-    let dir = n1.cross(&n2);
-    debug_assert!(!dir.is_zero(), "non-coplanar intersecting planes");
+    // Integer line direction (positive scale of n1×n2) and unreduced interval
+    // parameters — ordering along L only needs comparisons, not canonical
+    // rationals, so no gcds anywhere in the interval overlap.
+    let n1 = tri_normal_int(&r1[0], &r1[1], &r1[2]);
+    let n2 = tri_normal_int(&r2[0], &r2[1], &r2[2]);
+    let dir = [
+        &n1[1] * &n2[2] - &n1[2] * &n2[1],
+        &n1[2] * &n2[0] - &n1[0] * &n2[2],
+        &n1[0] * &n2[1] - &n1[1] * &n2[0],
+    ];
+    debug_assert!(
+        dir.iter().any(|c| !c.is_zero()),
+        "non-coplanar intersecting planes"
+    );
 
     let i1 = interval_along(&dir, pts1);
     let i2 = interval_along(&dir, pts2);
-    let (lo, lo_pt) = if i1.0 .0 >= i2.0 .0 { i1.0 } else { i2.0 };
-    let (hi, hi_pt) = if i1.1 .0 <= i2.1 .0 { i1.1 } else { i2.1 };
-    match lo.cmp(&hi) {
+    let (lo, lo_pt) = if cmp_frac(&i1.0 .0, &i2.0 .0) != std::cmp::Ordering::Less { i1.0 } else { i2.0 };
+    let (hi, hi_pt) = if cmp_frac(&i1.1 .0, &i2.1 .0) != std::cmp::Ordering::Greater { i1.1 } else { i2.1 };
+    match cmp_frac(&lo, &hi) {
         std::cmp::Ordering::Greater => TriTriIsect::None,
         std::cmp::Ordering::Equal => TriTriIsect::Point(lo_pt),
         std::cmp::Ordering::Less => TriTriIsect::Segment(lo_pt, hi_pt),
     }
+}
+
+/// Unreduced fraction with positive denominator.
+type Frac = (num_bigint::BigInt, num_bigint::BigInt);
+
+fn cmp_frac(a: &Frac, b: &Frac) -> std::cmp::Ordering {
+    // Denominators positive → cross-multiplication preserves order.
+    (&a.0 * &b.1).cmp(&(&b.0 * &a.1))
 }
 
 fn all_same_strict(s: &[Sign; 3]) -> bool {
@@ -175,24 +193,24 @@ fn plane_crossings(tri: &[R3; 3], s: &[Sign; 3], other: &[R3; 3]) -> Vec<R3> {
     pts
 }
 
-/// Interval of points along direction `dir` as ((min_param, min_point),
-/// (max_param, max_point)). A single input point yields a degenerate
-/// interval.
+/// Interval of points along integer direction `dir` as ((min_param,
+/// min_point), (max_param, max_point)), parameters as unreduced fractions.
+/// A single input point yields a degenerate interval.
 #[allow(clippy::type_complexity)]
 fn interval_along(
-    dir: &R3,
+    dir: &[num_bigint::BigInt; 3],
     mut pts: Vec<R3>,
-) -> ((BigRational, R3), (BigRational, R3)) {
+) -> ((Frac, R3), (Frac, R3)) {
     let first = pts.remove(0);
-    let p0 = dir.dot(&first);
-    let mut lo = (p0.clone(), first.clone());
+    let p0 = dot_point_raw(dir, &first);
+    let mut lo = ((p0.0.clone(), p0.1.clone()), first.clone());
     let mut hi = (p0, first);
     for p in pts {
-        let t = dir.dot(&p);
-        if t < lo.0 {
-            lo = (t.clone(), p.clone());
+        let t = dot_point_raw(dir, &p);
+        if cmp_frac(&t, &lo.0) == std::cmp::Ordering::Less {
+            lo = ((t.0.clone(), t.1.clone()), p.clone());
         }
-        if t > hi.0 {
+        if cmp_frac(&t, &hi.0) == std::cmp::Ordering::Greater {
             hi = (t, p);
         }
     }
