@@ -83,25 +83,57 @@ pub fn boolean(
             OpType::Intersect => ManifoldImpl::new(),
         };
     }
+    let p_tris = soup::impl_to_tris(a);
+    let mut q_tris = soup::impl_to_tris(b);
+    let p_props = soup::impl_to_corner_props(a);
+    let mut q_props = soup::impl_to_corner_props(b);
+
     if !a.bbox.does_overlap_box(&b.bbox) {
         match op {
             OpType::Add => {
-                // Disjoint union: concatenate the soups and re-import.
-                let mut tris = soup::impl_to_tris(a);
-                tris.extend(soup::impl_to_tris(b));
-                return assemble_all(&tris);
+                // Disjoint union: concatenate the soups and re-import. The
+                // property context tags the two halves so each keeps its own
+                // interpolated properties.
+                let mut tris = p_tris.clone();
+                tris.extend(q_tris.iter().cloned());
+                let pieces: Vec<intersection_graph::Piece> = tris
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| intersection_graph::Piece {
+                        mesh: if i < p_tris.len() { 0 } else { 1 },
+                        tri: if i < p_tris.len() { i } else { i - p_tris.len() },
+                        v: [
+                            exact::rational::R3::from_vec3(t[0]),
+                            exact::rational::R3::from_vec3(t[1]),
+                            exact::rational::R3::from_vec3(t[2]),
+                        ],
+                    })
+                    .collect();
+                let ctx = assemble::PropCtx {
+                    num_prop: [a.num_prop, b.num_prop],
+                    tris: [&p_tris, &q_tris],
+                    props: [&p_props, &q_props],
+                };
+                let props = (ctx.out_num_prop() > 0).then_some(&ctx);
+                return assemble::assemble(&pieces, |_| true, props).into_impl();
             }
             OpType::Intersect => return ManifoldImpl::new(),
             OpType::Subtract => return a.clone(),
         }
     }
 
-    let p_tris = soup::impl_to_tris(a);
     let complement = op == OpType::Subtract;
-    let mut q_tris = soup::impl_to_tris(b);
     if complement {
-        for t in &mut q_tris {
+        let nq = b.num_prop;
+        for (ti, t) in q_tris.iter_mut().enumerate() {
             t.swap(1, 2);
+            if nq > 0 {
+                // Keep the corner-property alignment in step with the swap.
+                let base = 3 * ti * nq;
+                for k in 0..nq {
+                    q_props.swap(base + nq + k, base + 2 * nq + k);
+                }
+            }
         }
     }
 
@@ -139,15 +171,24 @@ pub fn boolean(
         OpType::Add => Tag::Union,
         OpType::Subtract | OpType::Intersect => Tag::Inter,
     };
-    let out = assemble::assemble(&graph.pieces, |pi| {
-        !cls.discarded[pi] && tags[pi] == Some(want)
-    });
+    let ctx = assemble::PropCtx {
+        num_prop: [a.num_prop, b.num_prop],
+        tris: [&p_tris, &q_tris],
+        props: [&p_props, &q_props],
+    };
+    let props = (ctx.out_num_prop() > 0).then_some(&ctx);
+    let out = assemble::assemble(
+        &graph.pieces,
+        |pi| !cls.discarded[pi] && tags[pi] == Some(want),
+        props,
+    );
     out.into_impl()
 }
 
-/// Import a raw triangle list as a boolean result (used by the disjoint
-/// union fast path and by `boolean3::compose_meshes` when any input is a
-/// soup).
+/// Import a raw triangle list as a boolean result (used by
+/// `boolean3::compose_meshes` when any input is a soup; positions only —
+/// the property-aware disjoint-union path in `boolean` builds its own
+/// tagged pieces).
 pub(crate) fn assemble_all(tris: &[[Vec3; 3]]) -> ManifoldImpl {
     use exact::rational::R3;
     let pieces: Vec<intersection_graph::Piece> = tris
@@ -163,7 +204,7 @@ pub(crate) fn assemble_all(tris: &[[Vec3; 3]]) -> ManifoldImpl {
             ],
         })
         .collect();
-    assemble::assemble(&pieces, |_| true).into_impl()
+    assemble::assemble(&pieces, |_| true, None).into_impl()
 }
 
 #[cfg(test)]
@@ -177,3 +218,7 @@ mod cross_validation_tests;
 #[cfg(test)]
 #[path = "nonmanifold_tests.rs"]
 mod nonmanifold_tests;
+
+#[cfg(test)]
+#[path = "property_tests.rs"]
+mod property_tests;

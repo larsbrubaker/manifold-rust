@@ -159,10 +159,29 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
         q.iter().map(|t| !is_degenerate(t)).collect(),
     ];
 
-    // 1. Broad + narrow phase. (O(|P|·|Q|) box pruning; the Collider BVH is
-    // a later perf upgrade — correctness identical.)
+    // 1. Broad + narrow phase. The broad phase is a BVH (the same Collider
+    // the exact engine uses) over Q's triangle boxes, queried with each P
+    // triangle's box — O((|P|+|Q|)·log|Q|) instead of the all-pairs box
+    // sweep. Candidates are re-sorted to ascending qi per pi, so the pair
+    // provenance ids match the exhaustive loop exactly (only genuinely
+    // intersecting pairs consume an id, and the exact narrow phase decides
+    // those identically regardless of broad-phase method).
     let p_boxes: Vec<Box> = p.iter().map(tri_box).collect();
     let q_boxes: Vec<Box> = q.iter().map(tri_box).collect();
+
+    let scene_box = q_boxes
+        .iter()
+        .enumerate()
+        .filter(|(qi, _)| live[1][*qi])
+        .fold(Box::new(), |acc, (_, b)| acc.union_box(b));
+    let mut q_order: Vec<usize> = (0..q.len()).filter(|&qi| live[1][qi]).collect();
+    q_order.sort_by_key(|&qi| crate::sort::morton_code(q_boxes[qi].center(), &scene_box));
+    let leaf_boxes: Vec<Box> = q_order.iter().map(|&qi| q_boxes[qi]).collect();
+    let leaf_morton: Vec<u32> = q_order
+        .iter()
+        .map(|&qi| crate::sort::morton_code(q_boxes[qi].center(), &scene_box))
+        .collect();
+    let collider = crate::collider::Collider::new(leaf_boxes, leaf_morton);
 
     // Per-(mesh, tri) primitive lists; provenance = pair index.
     let mut prims: [Vec<TriPrims>; 2] = [
@@ -175,12 +194,19 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
     let mut any_intersections = false;
     let mut pair_count = 0usize;
 
+    let mut candidates_q: Vec<usize> = Vec::new();
     for (pi, pt) in p.iter().enumerate() {
         if !live[0][pi] {
             continue;
         }
-        for (qi, qt) in q.iter().enumerate() {
-            if !live[1][qi] || !p_boxes[pi].does_overlap_box(&q_boxes[qi]) {
+        candidates_q.clear();
+        collider.collisions_one(&p_boxes[pi], pi, |_, leaf| {
+            candidates_q.push(q_order[leaf]);
+        });
+        candidates_q.sort_unstable();
+        for &qi in &candidates_q {
+            let qt = &q[qi];
+            if !p_boxes[pi].does_overlap_box(&q_boxes[qi]) {
                 continue;
             }
             let isect = tri_tri_intersect(*pt, *qt);

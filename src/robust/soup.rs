@@ -159,6 +159,24 @@ pub fn soupify(
 #[path = "soup_tests.rs"]
 mod tests;
 
+/// Per-corner vertex properties of an impl, flattened as
+/// `props[(3*tri + corner) * num_prop + channel]`, aligned with
+/// `impl_to_tris` ordering. Empty when the impl carries no properties.
+pub fn impl_to_corner_props(imp: &ManifoldImpl) -> Vec<f64> {
+    let np = imp.num_prop;
+    if np == 0 {
+        return Vec::new();
+    }
+    let mut out = Vec::with_capacity(3 * imp.num_tri() * np);
+    for t in 0..imp.num_tri() {
+        for i in 0..3 {
+            let pv = imp.halfedge[3 * t + i].prop_vert as usize;
+            out.extend_from_slice(&imp.properties[pv * np..(pv + 1) * np]);
+        }
+    }
+    out
+}
+
 /// The triangle list of any impl (soup or manifold) as position triples —
 /// the robust engine's working form.
 pub fn impl_to_tris(imp: &ManifoldImpl) -> Vec<[Vec3; 3]> {

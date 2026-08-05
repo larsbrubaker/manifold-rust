@@ -112,10 +112,10 @@ pub fn imported_boolean(
     rot_y: f64,
     rot_z: f64,
 ) -> Result<MeshData, JsValue> {
-    // Color the operands (A opaque blue, B translucent red) whenever the
-    // exact engine will actually run: the robust pipeline outputs positions
-    // only, and soup geometry cannot carry properties at all.
-    let colorize = engine != 1 && !a.is_soup() && !b.is_soup();
+    // Color the operands (A opaque blue, B translucent red). Both engines
+    // carry properties through; only soup geometry cannot take them
+    // (set_properties requires paired halfedges).
+    let colorize = !a.is_soup() && !b.is_soup();
     let (a_m, b_m) = if colorize {
         (
             crate::color_shape(&a.manifold, 0.27, 0.53, 0.80, 1.0),

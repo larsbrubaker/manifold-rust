@@ -98,6 +98,23 @@ fn main() {
         println!("{name} union: {:8.2} ms   ({out_tris} tris out)", best * 1e3);
     }
 
+    // Dense-mesh case (sparse intersections relative to size): sphere pair.
+    // This is where the BVH broad phase matters — brute-force box pruning is
+    // O(|P|·|Q|) (e.g. 8k×8k tris = 68M box tests) while the BVH visits only
+    // the overlapping region.
+    let s1 = Manifold::sphere(1.0, 64);
+    let s2 = Manifold::sphere(1.0, 64).translate(Vec3::new(1.7, 0.0, 0.0));
+    for (name, engine) in [("exact ", BooleanEngine::Exact), ("robust", BooleanEngine::Robust)] {
+        let t0 = Instant::now();
+        let out = s1.union_with_engine(&s2, engine);
+        println!(
+            "{name} sphere64 union: {:8.2} ms   ({} tris in, {} out)",
+            t0.elapsed().as_secs_f64() * 1e3,
+            s1.num_tri() + s2.num_tri(),
+            out.num_tri()
+        );
+    }
+
     // Robust pipeline stage timings (single run; stages mirror robust::boolean).
     let p_tris = soup::impl_to_tris(a.as_impl());
     let q_tris = soup::impl_to_tris(b.as_impl());
@@ -115,9 +132,11 @@ fn main() {
     let t_prop = t0.elapsed().as_secs_f64();
 
     let t0 = Instant::now();
-    let out = manifold_rust::robust::assemble::assemble(&graph.pieces, |pi| {
-        !cls.discarded[pi] && prop.tags[pi] == Some(classify::Tag::Union)
-    });
+    let out = manifold_rust::robust::assemble::assemble(
+        &graph.pieces,
+        |pi| !cls.discarded[pi] && prop.tags[pi] == Some(classify::Tag::Union),
+        None,
+    );
     let t_assemble = t0.elapsed().as_secs_f64();
     let _ = out;
 
