@@ -215,6 +215,39 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
         }
     }
 
+    // 2b. Self-intersections: cut each mesh along its own P×P / Q×Q contact
+    // segments (beyond ordinary adjacency). Without these cuts a piece could
+    // straddle a fold of a self-overlapping operand, making "is this piece
+    // an interior wall of its own solid" ill-defined; with them, both
+    // winding numbers the classification needs are constant per flood-fill
+    // component (robust/propagate.rs never crosses constraint edges).
+    for m in 0..2 {
+        let (tris, boxes) = if m == 0 {
+            (p, &p_boxes)
+        } else {
+            (q, &q_boxes)
+        };
+        for i in 0..tris.len() {
+            if !live[m][i] {
+                continue;
+            }
+            for j in (i + 1)..tris.len() {
+                if !live[m][j] || !boxes[i].does_overlap_box(&boxes[j]) {
+                    continue;
+                }
+                let Some(segs) = real_self_contact(tris[i], tris[j]) else {
+                    continue;
+                };
+                for (x, y) in segs {
+                    let pair = pair_count;
+                    prims[m][i].segments.push((x.clone(), y.clone(), pair));
+                    prims[m][j].segments.push((x, y, pair));
+                    pair_count += 1;
+                }
+            }
+        }
+    }
+
     // 3. Cross-copy primitives through coplanar overlap regions so both
     // sides see identical geometry inside the shared area. Clip against the
     // region to avoid dragging unrelated geometry across.
@@ -390,6 +423,47 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
         pieces,
         isect_edges,
         any_intersections,
+    }
+}
+
+/// Real self-intersection of one triangle pair from the same mesh: the
+/// contact of `t1` and `t2` reduced by ordinary mesh adjacency. Shared-vertex
+/// point contacts and (sub-)segments of a shared edge are the normal way
+/// neighboring triangles of a closed mesh touch and yield `None`; anything
+/// else is a genuine self-intersection whose segments must cut the surface,
+/// so that every emitted piece lies on a single sheet level of its own mesh
+/// (robust/mod.rs classifies own-mesh winding per component).
+fn real_self_contact(t1: [Vec3; 3], t2: [Vec3; 3]) -> Option<Vec<(R3, R3)>> {
+    // Shared vertex positions (exact identity) between the pair.
+    let shared: Vec<R3> = t1
+        .iter()
+        .filter(|v| t2.contains(v))
+        .map(|v| R3::from_vec3(*v))
+        .collect();
+    match tri_tri_intersect(t1, t2) {
+        TriTriIsect::None => None,
+        // Isolated point contacts (vertex-on-face, edge-through-edge) have
+        // zero area on both sides: they never change which sheet a region
+        // is on, so they need no cut.
+        TriTriIsect::Point(_) => None,
+        TriTriIsect::Segment(x, y) => {
+            let benign = shared.len() >= 2
+                && point_on_segment(&x, &shared[0], &shared[1])
+                && point_on_segment(&y, &shared[0], &shared[1]);
+            (!benign).then(|| vec![(x, y)])
+        }
+        // Positive-area coplanar overlap (a fold or doubled patch): cut both
+        // triangles along the overlap region's boundary.
+        TriTriIsect::Coplanar { polygon, .. } => Some(
+            (0..polygon.len())
+                .map(|i| {
+                    (
+                        polygon[i].clone(),
+                        polygon[(i + 1) % polygon.len()].clone(),
+                    )
+                })
+                .collect(),
+        ),
     }
 }
 

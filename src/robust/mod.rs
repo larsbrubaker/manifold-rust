@@ -19,10 +19,18 @@
 //   arrangement        — per-triangle 2D arrangement of intersection prims
 //   cdt                — exact constrained Delaunay triangulation
 //   intersection_graph — broad phase, prim distribution, piece emission
-//   classify           — radial rings, Prop 2/3 union/intersection tagging
-//   propagate          — per-mesh tag flood fill between intersection cuts
-//   ray_shoot          — exact winding numbers for untouched components
+//   classify           — ring regularization, coincident-piece binding
+//   propagate          — per-mesh component flood fill between cuts
+//   ray_shoot          — exact winding numbers (component tags, wall tests)
 //   soup               — triangle-soup import (closed/orientable validation)
+//
+// Classification is winding-number based: each surface component (bounded
+// by intersection cuts) is inside or outside the other operand uniformly,
+// decided by one exact query; pieces that are interior walls of their own
+// operand (self-overlapping or nested sheets, where the winding exceeds 1)
+// are detected with an own-mesh query just off the piece's outward side and
+// dropped from both outputs — the regularized boolean's boundary only ever
+// lies where the total winding steps between 0 and 1.
 
 pub mod arrangement;
 pub mod assemble;
@@ -41,6 +49,7 @@ use crate::linalg::Vec3;
 use crate::types::{Error, OpType};
 
 use classify::Tag;
+use exact::rational::R3;
 use ray_shoot::{piece_centroid, winding_number};
 
 fn is_cancelled(token: Option<&CancelToken>) -> bool {
@@ -56,11 +65,12 @@ fn cancelled_impl() -> ManifoldImpl {
 /// Robust boolean of two impls (manifold or soup). Same observable contract
 /// as `boolean3::boolean_with_token`, computed by the Barki 2015 pipeline:
 /// intersect exactly, arrange + retriangulate, classify pieces into
-/// union/intersection sets, assemble the requested one.
+/// union/intersection sets by exact winding numbers, assemble the requested
+/// one.
 ///
 /// `Subtract` uses the identity P − Q = P ∩ Q^c: Q's winding is flipped on
-/// the working copy and the intersection set is assembled; the ray-shooting
-/// fallback interprets the flipped operand as its (unbounded) complement.
+/// the working copy and the intersection set is assembled; the winding
+/// queries interpret the flipped operand as its (unbounded) complement.
 pub fn boolean(
     a: &ManifoldImpl,
     b: &ManifoldImpl,
@@ -115,12 +125,38 @@ pub fn boolean(
     }
     let prop = propagate::propagate(&graph, &cls);
     let mut tags = prop.tags;
+
+    // Winding-based classification of every component the coincident-piece
+    // binding did not decide. Both windings are constant per component:
+    // components never cross an intersection cut, and the graph cuts each
+    // mesh along its own self-intersections as well as along the other
+    // operand's surface. So per component, one query against the other
+    // operand decides ∪ vs ∩, and one query against the component's own
+    // operand decides whether it is real boundary or an interior wall.
+    let to_rational = |tris: &[[Vec3; 3]]| -> Vec<[R3; 3]> {
+        tris.iter()
+            .map(|t| [R3::from_vec3(t[0]), R3::from_vec3(t[1]), R3::from_vec3(t[2])])
+            .collect()
+    };
+    let own_rational: [Vec<[R3; 3]>; 2] = [to_rational(&p_tris), to_rational(&q_tris)];
+    let tri_boxes = |tris: &[[Vec3; 3]]| -> Vec<crate::types::Box> {
+        tris.iter()
+            .map(|t| {
+                let mut b = crate::types::Box::from_points(t[0], t[1]);
+                b.union_point(t[2]);
+                b
+            })
+            .collect()
+    };
+    let own_boxes: [Vec<crate::types::Box>; 2] = [tri_boxes(&p_tris), tri_boxes(&q_tris)];
+
     for &(root, rep) in &prop.untagged {
         if is_cancelled(token) {
             return cancelled_impl();
         }
         let piece = &graph.pieces[rep];
-        let (other, other_is_complement): (&[[Vec3; 3]], bool) = if piece.mesh == 0 {
+        let mesh = piece.mesh as usize;
+        let (other, other_is_complement): (&[[Vec3; 3]], bool) = if mesh == 0 {
             (&q_tris, complement)
         } else {
             (&p_tris, false)
@@ -128,9 +164,11 @@ pub fn boolean(
         let w = winding_number(&piece_centroid(&piece.v), other);
         let inside = if other_is_complement { w == 0 } else { w != 0 };
         let tag = if inside { Tag::Inter } else { Tag::Union };
+        let component_tag = on_own_boundary(piece, &own_rational[mesh], &own_boxes[mesh])
+            .then_some(tag);
         for pi in 0..graph.pieces.len() {
             if !cls.discarded[pi] && prop.component[pi] == root {
-                tags[pi] = Some(tag);
+                tags[pi] = component_tag;
             }
         }
     }
@@ -143,6 +181,29 @@ pub fn boolean(
         !cls.discarded[pi] && tags[pi] == Some(want)
     });
     out.into_impl()
+}
+
+/// Is this piece on the boundary of the solid its own operand bounds, or an
+/// interior wall (a sheet with material on both sides)?
+///
+/// With the solid defined as `{winding ≠ 0}` (and its complement, for the
+/// orientation-flipped subtraction operand, as `{winding == 0}`), membership
+/// changes across the piece exactly when the winding just off its outward
+/// side is 0 or −1: crossing the piece adds 1 to the winding, and only the
+/// 0↔1 and −1↔0 steps change either membership predicate. Anything else —
+/// e.g. a 1↔2 step inside a self-overlapping operand, or the inner of two
+/// nested same-orientation shells — is an interior wall that no regularized
+/// boolean output may contain.
+fn on_own_boundary(
+    piece: &intersection_graph::Piece,
+    own: &[[R3; 3]],
+    own_boxes: &[crate::types::Box],
+) -> bool {
+    let normal = piece.v[1]
+        .sub(&piece.v[0])
+        .cross(&piece.v[2].sub(&piece.v[0]));
+    let w = ray_shoot::winding_off_surface(&piece_centroid(&piece.v), &normal, own, own_boxes);
+    w == 0 || w == -1
 }
 
 /// Import a raw triangle list as a boolean result (used by the disjoint
@@ -177,3 +238,7 @@ mod cross_validation_tests;
 #[cfg(test)]
 #[path = "nonmanifold_tests.rs"]
 mod nonmanifold_tests;
+
+#[cfg(test)]
+#[path = "thingi_tests.rs"]
+mod thingi_tests;
