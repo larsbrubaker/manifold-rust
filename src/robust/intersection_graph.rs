@@ -130,6 +130,22 @@ fn point_on_segment(p: &R3, a: &R3, b: &R3) -> bool {
     super::exact::predicates::point_on_segment_r(p, a, b)
 }
 
+/// Correctly rounded f64 approximation of an exact point (relative error
+/// ≤ ε per coordinate) for the semi-static prefilters in exact/approx.rs.
+fn approx3(p: &R3) -> [f64; 3] {
+    use super::exact::rational::rat_to_f64;
+    [rat_to_f64(&p.x), rat_to_f64(&p.y), rat_to_f64(&p.z)]
+}
+
+/// Filtered point-on-segment: the approx prefilter rejects the generic case
+/// without touching BigInt; only near-incidences run the exact test.
+fn point_on_segment_f(p_approx: [f64; 3], p: &R3, a_approx: [f64; 3], a: &R3, b_approx: [f64; 3], b: &R3) -> bool {
+    match super::exact::approx::not_on_segment_a(p_approx, a_approx, b_approx) {
+        Some(false) => false,
+        _ => point_on_segment(p, a, b),
+    }
+}
+
 /// Clip segment (a,b) to a convex coplanar polygon (2D test via projection
 /// on the polygon's own plane). Returns a positive-length sub-segment or
 /// None. Used to cross-copy primitives into coplanar overlap regions.
@@ -405,12 +421,21 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
                 R3::from_vec3(t[1]),
                 R3::from_vec3(t[2]),
             ];
+            let ca: [[f64; 3]; 3] = [
+                [t[0].x, t[0].y, t[0].z],
+                [t[1].x, t[1].y, t[1].z],
+                [t[2].x, t[2].y, t[2].z],
+            ];
+            let cands_a: Vec<[f64; 3]> = cands.iter().map(approx3).collect();
             for e in 0..3 {
                 let a = &corners[e];
                 let b = &corners[(e + 1) % 3];
                 let key = geo_edge_key(a, b);
-                for pt in cands {
-                    if pt != a && pt != b && point_on_segment(pt, a, b) {
+                for (pt, pt_a) in cands.iter().zip(&cands_a) {
+                    if pt != a
+                        && pt != b
+                        && point_on_segment_f(*pt_a, pt, ca[e], a, ca[(e + 1) % 3], b)
+                    {
                         edge_registry[m].entry(key.clone()).or_default().insert(pt.clone());
                     }
                 }
@@ -424,10 +449,12 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
     for m in 0..2 {
         for ti in 0..meshes[m].len() {
             let Some(cands) = &candidates[m][ti] else { continue };
+            let cands_a: Vec<[f64; 3]> = cands.iter().map(approx3).collect();
             for (a, b, _prov) in &prims[m][ti].segments {
                 let key = geo_edge_key(a, b);
-                for pt in cands {
-                    if pt != a && pt != b && point_on_segment(pt, a, b) {
+                let (aa, ba) = (approx3(a), approx3(b));
+                for (pt, pt_a) in cands.iter().zip(&cands_a) {
+                    if pt != a && pt != b && point_on_segment_f(*pt_a, pt, aa, a, ba, b) {
                         seg_splits.entry(key.clone()).or_default().insert(pt.clone());
                     }
                 }

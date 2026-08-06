@@ -58,32 +58,9 @@ pub fn dominant_axis(n: &R3) -> usize {
     }
 }
 
-/// Inverse of `R3::project_drop`: rebuild the dropped coordinate from the
-/// plane through `a` with normal `n` (n's `axis` component must be nonzero).
-pub fn lift_to_plane(p: &R2, axis: usize, a: &R3, n: &R3) -> R3 {
-    let na = n.dot(a);
-    match axis {
-        0 => {
-            let y = p.x.clone();
-            let z = p.y.clone();
-            let x = (&na - &n.y * &y - &n.z * &z) / &n.x;
-            R3::new(x, y, z)
-        }
-        1 => {
-            let z = p.x.clone();
-            let x = p.y.clone();
-            let y = (&na - &n.z * &z - &n.x * &x) / &n.y;
-            R3::new(x, y, z)
-        }
-        2 => {
-            let x = p.x.clone();
-            let y = p.y.clone();
-            let z = (&na - &n.x * &x - &n.y * &y) / &n.z;
-            R3::new(x, y, z)
-        }
-        _ => unreachable!("axis must be 0, 1, or 2"),
-    }
-}
+// Re-exported for the existing call sites; the implementation lives with the
+// other integer-only constructions in robust/exact/predicates.rs.
+pub use super::exact::predicates::lift_to_plane;
 
 /// Exact intersection of triangles t1 and t2 (each three finite f64
 /// vertices). Symmetric: swapping the arguments yields the same set.

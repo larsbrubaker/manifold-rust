@@ -18,8 +18,6 @@
 // locally indistinguishable from the 0↔1 crossing the walk assumes).
 
 use std::cmp::Ordering;
-use std::collections::BTreeMap;
-
 use num_rational::BigRational;
 use num_traits::{Signed, Zero};
 

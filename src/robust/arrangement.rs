@@ -14,16 +14,16 @@
 // the triangle's plane), crossings are rational constructions, and identity
 // is rational equality — no tolerances anywhere.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
-use num_rational::BigRational;
-use num_traits::{Signed, Zero};
+use num_traits::Signed;
 
 use crate::linalg::Vec3;
 
 use super::cdt;
+use super::exact::approx::orient2d_a;
 use super::exact::predicates::{homog2_of, line_line_intersect_2d, orient2d_h, orient2d_r, point_in_tri_2d, tri_normal_r, Homog2, TriLoc};
-use super::exact::rational::{R2, R3};
+use super::exact::rational::{rat_to_f64, R2, R3};
 use super::exact::Sign;
 use super::tri_tri::{dominant_axis, lift_to_plane};
 
@@ -75,7 +75,10 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
 
     let mut points3: Vec<R3> = Vec::new();
     let mut points2: Vec<R2> = Vec::new();
-    let mut index: BTreeMap<R2, usize> = BTreeMap::new();
+    // Hash-keyed dedup: canonical rationals hash linearly, while a BTreeMap's
+    // Ord runs two BigInt cross-multiplications per tree level per lookup.
+    // Indices are assigned in insertion order, so output stays deterministic.
+    let mut index: std::collections::HashMap<R2, usize> = std::collections::HashMap::new();
     let mut add_point = |p3: R3, points3: &mut Vec<R3>, points2: &mut Vec<R2>| -> usize {
         let p2 = p3.project_drop(axis);
         if let Some(&i) = index.get(&p2) {
@@ -116,17 +119,24 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
     }
 
     // Mutual proper crossings between segments become new points. Points are
-    // homogenized once (Homog2) so the O(s²) sign tests never redo the
-    // denominator work.
+    // homogenized once (Homog2) for the exact fallback, and approximated
+    // once (correctly rounded f64) for the semi-static filters that certify
+    // generic-position signs without any BigInt work.
     let mut homogs: Vec<Homog2> = points2.iter().map(homog2_of).collect();
+    let approx = |p: &R2| -> [f64; 2] { [rat_to_f64(&p.x), rat_to_f64(&p.y)] };
+    let mut apts: Vec<[f64; 2]> = points2.iter().map(approx).collect();
+    let o2 = |apts: &[[f64; 2]], homogs: &[Homog2], i: usize, j: usize, k: usize| -> Sign {
+        orient2d_a(apts[i], apts[j], apts[k])
+            .unwrap_or_else(|| orient2d_h(&homogs[i], &homogs[j], &homogs[k]))
+    };
     for i in 0..segs.len() {
         for j in (i + 1)..segs.len() {
-            let (a, b) = (&homogs[segs[i].a], &homogs[segs[i].b]);
-            let (c, d) = (&homogs[segs[j].a], &homogs[segs[j].b]);
-            let sc = orient2d_h(a, b, c);
-            let sd = orient2d_h(a, b, d);
-            let sa = orient2d_h(c, d, a);
-            let sb = orient2d_h(c, d, b);
+            let (ia, ib) = (segs[i].a, segs[i].b);
+            let (ic, id) = (segs[j].a, segs[j].b);
+            let sc = o2(&apts, &homogs, ia, ib, ic);
+            let sd = o2(&apts, &homogs, ia, ib, id);
+            let sa = o2(&apts, &homogs, ic, id, ia);
+            let sb = o2(&apts, &homogs, ic, id, ib);
             // Strict crossing only — endpoint contacts and collinear overlap
             // are handled by the point-on-segment sweep below.
             if sc != Sign::Zero && sd != Sign::Zero && sc != sd
@@ -144,9 +154,12 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
             }
         }
     }
-    // Points added by crossings need homogs too for the sweep below.
+    // Points added by crossings need homogs and approximations too.
     for p in points2.iter().skip(homogs.len()) {
         homogs.push(homog2_of(p));
+    }
+    for p in points2.iter().skip(apts.len()) {
+        apts.push(approx(p));
     }
 
     debug_assert!(points2.iter().all(|p| {
@@ -168,6 +181,12 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
         // rationals anywhere.
         let mut on_seg: Vec<(num_bigint::BigInt, num_bigint::BigInt, usize)> = Vec::new();
         for (idx, hp) in homogs.iter().enumerate() {
+            // Approx filter first: almost every point is certifiably off the
+            // segment's line; only near-collinear candidates pay for BigInt.
+            match orient2d_a(apts[seg.a], apts[seg.b], apts[idx]) {
+                Some(_) => continue, // certified nonzero → not collinear
+                None => {}
+            }
             if orient2d_h(ha, hb, hp) != Sign::Zero {
                 continue;
             }
@@ -228,8 +247,10 @@ pub fn candidate_points(tri: [Vec3; 3], input: &ArrangementInput) -> Vec<R3> {
     let axis = dominant_axis(&normal);
 
     let mut out: Vec<R3> = Vec::new();
-    let mut seen: BTreeSet<R2> = BTreeSet::new();
-    let add = |p3: R3, out: &mut Vec<R3>, seen: &mut BTreeSet<R2>| {
+    // Membership-only set: hashing beats BTreeSet's cross-multiplying Ord,
+    // and `out` keeps insertion order so determinism is unaffected.
+    let mut seen: std::collections::HashSet<R2> = std::collections::HashSet::new();
+    let add = |p3: R3, out: &mut Vec<R3>, seen: &mut std::collections::HashSet<R2>| {
         if seen.insert(p3.project_drop(axis)) {
             out.push(p3);
         }

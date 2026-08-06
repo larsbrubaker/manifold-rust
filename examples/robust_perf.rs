@@ -166,24 +166,48 @@ fn main() {
         );
     }
 
-    // The pathological real-world case: Thingi10K 939888 ∪ 93557 (operand B
-    // is geometrically self-overlapping). Set MANIFOLD_TIMING=1 for the
-    // per-stage breakdown including the winding-query classification.
+    // Pathological real-world cases from the Boolean Gallery, replayed from
+    // their logged frames. Set MANIFOLD_TIMING=1 for the per-stage breakdown
+    // including the winding-query classification.
+    //   939888 ∪ 93557   — operand B is geometrically self-overlapping.
+    //   1663774 ∪ 51334  — the heavy tail: 13k × 15k tris, both operands
+    //                      edge- and vertex-non-manifold (gallery frame 2269;
+    //                      expected ≈18878 tris / 10213 verts out,
+    //                      volume ≈0.4874593).
     if std::env::var("ROBUST_PERF_THINGI").is_ok() {
-        let a = import_stl("src/robust/testdata/939888.stl");
-        let b = import_stl("src/robust/testdata/93557.stl")
-            .rotate(356.0, 140.0, 322.0)
-            .translate(Vec3::new(0.3, 0.0, 0.0));
-        let t0 = Instant::now();
-        let out = a.union_with_engine(&b, BooleanEngine::Robust);
-        println!(
-            "robust thingi 939888∪93557: {:8.0} ms   ({} + {} tris in, {} out, status {:?})",
-            t0.elapsed().as_secs_f64() * 1e3,
-            a.num_tri(),
-            b.num_tri(),
-            out.num_tri(),
-            out.status()
-        );
+        let pairs: [(&str, &str, &str, [f64; 3]); 2] = [
+            (
+                "939888∪93557",
+                "src/robust/testdata/939888.stl",
+                "src/robust/testdata/93557.stl",
+                [356.0, 140.0, 322.0],
+            ),
+            (
+                "1663774∪51334",
+                "src/robust/testdata/1663774.stl",
+                "src/robust/testdata/51334.stl",
+                [231.39999999999753, 124.0, 273.6000000000049],
+            ),
+        ];
+        for (name, file_a, file_b, rot) in pairs {
+            let a = import_stl(file_a);
+            let b = import_stl(file_b)
+                .rotate(rot[0], rot[1], rot[2])
+                .translate(Vec3::new(0.3, 0.0, 0.0));
+            let t0 = Instant::now();
+            let out = a.union_with_engine(&b, BooleanEngine::Robust);
+            println!(
+                "robust thingi {name}: {:8.0} ms   ({} + {} tris in, {} tris / {} verts out, \
+                 volume {:.7}, status {:?})",
+                t0.elapsed().as_secs_f64() * 1e3,
+                a.num_tri(),
+                b.num_tri(),
+                out.num_tri(),
+                out.num_vert(),
+                out.volume(),
+                out.status()
+            );
+        }
     }
 
     // Robust pipeline stage timings (single run; stages mirror robust::boolean).

@@ -14,10 +14,9 @@
 // O(n²) scans (linear point location, fixpoint legalization) over
 // sophisticated locality structures.
 
-use super::exact::predicates::{
-    homog2_of, incircle_h, orient2d_h, point_in_tri_2d_h, Homog2, TriLoc,
-};
-use super::exact::rational::R2;
+use super::exact::approx::{incircle_a, orient2d_a};
+use super::exact::predicates::{homog2_of, incircle_h, orient2d_h, Homog2, TriLoc};
+use super::exact::rational::{rat_to_f64, R2};
 use super::exact::Sign;
 
 /// One triangle of the CDT. Vertices are CCW; edge i runs v[i] → v[i+1],
@@ -32,8 +31,13 @@ struct Tri {
 }
 
 struct Cdt {
-    /// Homogenized once per triangulation; every predicate reuses these.
+    /// Homogenized once per triangulation; exact predicates reuse these.
     pts: Vec<Homog2>,
+    /// Correctly rounded f64 approximations (relative error ≤ ε), computed
+    /// once; the semi-static filters in exact/approx.rs certify most
+    /// predicate signs from these alone, escalating to `pts` only on
+    /// near-degeneracies.
+    apts: Vec<[f64; 2]>,
     tris: Vec<Tri>,
     /// Suspect triangles for queue-based Lawson legalization.
     suspects: Vec<usize>,
@@ -58,8 +62,13 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
         corners.swap(1, 2);
     }
 
+    let apts: Vec<[f64; 2]> = points
+        .iter()
+        .map(|p| [rat_to_f64(&p.x), rat_to_f64(&p.y)])
+        .collect();
     let mut cdt = Cdt {
         pts: hom,
+        apts,
         tris: vec![Tri {
             v: corners,
             adj: [-1, -1, -1],
@@ -91,6 +100,57 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
 }
 
 impl Cdt {
+    /// orient2d with the approx filter first, exact fallback. All CDT sign
+    /// tests funnel through here (and `nondelaunay`) so generic-position
+    /// queries never touch BigInt.
+    #[inline]
+    fn o2(&self, i: usize, j: usize, k: usize) -> Sign {
+        orient2d_a(self.apts[i], self.apts[j], self.apts[k])
+            .unwrap_or_else(|| orient2d_h(&self.pts[i], &self.pts[j], &self.pts[k]))
+    }
+
+    /// Strict-incircle with the approx filter first, exact fallback.
+    #[inline]
+    fn nondelaunay(&self, tri: [usize; 3], d: usize) -> bool {
+        match incircle_a(
+            self.apts[tri[0]],
+            self.apts[tri[1]],
+            self.apts[tri[2]],
+            self.apts[d],
+        ) {
+            Some(s) => s == Sign::Pos,
+            None => {
+                incircle_h(
+                    &self.pts[tri[0]],
+                    &self.pts[tri[1]],
+                    &self.pts[tri[2]],
+                    &self.pts[d],
+                ) == Sign::Pos
+            }
+        }
+    }
+
+    /// `point_in_tri_2d` over the filtered predicate (same TriLoc semantics
+    /// as `predicates::point_in_tri_2d_h`; triangle is CCW by construction).
+    fn loc_in_tri(&self, p: usize, v: [usize; 3]) -> TriLoc {
+        let s0 = self.o2(v[0], v[1], p);
+        let s1 = self.o2(v[1], v[2], p);
+        let s2 = self.o2(v[2], v[0], p);
+        if s0 == Sign::Neg || s1 == Sign::Neg || s2 == Sign::Neg {
+            return TriLoc::Outside;
+        }
+        match (s0 == Sign::Zero, s1 == Sign::Zero, s2 == Sign::Zero) {
+            (false, false, false) => TriLoc::Inside,
+            (true, false, false) => TriLoc::OnEdge(0),
+            (false, true, false) => TriLoc::OnEdge(1),
+            (false, false, true) => TriLoc::OnEdge(2),
+            (true, false, true) => TriLoc::OnVertex(0),
+            (true, true, false) => TriLoc::OnVertex(1),
+            (false, true, true) => TriLoc::OnVertex(2),
+            (true, true, true) => TriLoc::Outside,
+        }
+    }
+
     /// Index of `t`'s edge shared with triangle `n` (panics if not adjacent —
     /// an internal-consistency violation, not an input condition).
     fn shared_edge(&self, t: usize, n: usize) -> usize {
@@ -133,23 +193,13 @@ impl Cdt {
             'walk: while steps < cap {
                 steps += 1;
                 let t = &self.tris[cur];
-                let loc = point_in_tri_2d_h(
-                    &self.pts[p],
-                    &self.pts[t.v[0]],
-                    &self.pts[t.v[1]],
-                    &self.pts[t.v[2]],
-                );
+                let loc = self.loc_in_tri(p, t.v);
                 if loc != TriLoc::Outside {
                     return (cur, loc);
                 }
                 for e in 0..3 {
                     // CCW triangle: strictly outside edge e ⇔ orient2d neg.
-                    if orient2d_h(
-                        &self.pts[t.v[e]],
-                        &self.pts[t.v[(e + 1) % 3]],
-                        &self.pts[p],
-                    ) == Sign::Neg
-                    {
+                    if self.o2(t.v[e], t.v[(e + 1) % 3], p) == Sign::Neg {
                         let n = t.adj[e];
                         if n >= 0 {
                             cur = n as usize;
@@ -164,14 +214,8 @@ impl Cdt {
             if !t.alive {
                 continue;
             }
-            let loc = point_in_tri_2d_h(
-                &self.pts[p],
-                &self.pts[t.v[0]],
-                &self.pts[t.v[1]],
-                &self.pts[t.v[2]],
-            );
-            if loc != TriLoc::Outside {
-                return (i, loc);
+            if self.loc_in_tri(p, t.v) != TriLoc::Outside {
+                return (i, self.loc_in_tri(p, t.v));
             }
         }
         unreachable!("point {p} not located in any live triangle");
@@ -335,13 +379,11 @@ impl Cdt {
         );
         let d = self.tris[n].v[(ne + 2) % 3];
         // Strict Delaunay violation?
-        if !is_strictly_non_delaunay_h(&self.pts, self.tris[t].v, d) {
+        if !self.nondelaunay(self.tris[t].v, d) {
             return false;
         }
         // Strictly convex quad a-d-b-c (new triangles must be CCW)?
-        if orient2d_h(&self.pts[a], &self.pts[d], &self.pts[c]) != Sign::Pos
-            || orient2d_h(&self.pts[d], &self.pts[b], &self.pts[c]) != Sign::Pos
-        {
+        if self.o2(a, d, c) != Sign::Pos || self.o2(d, b, c) != Sign::Pos {
             return false;
         }
         self.flip(t, e, n, ne);
@@ -441,8 +483,6 @@ impl Cdt {
     /// convex (flippable). Anglada's lemma guarantees one exists while any
     /// crossing remains.
     fn find_flippable_crossing(&self, a: usize, b: usize) -> Option<(usize, usize)> {
-        let pa = &self.pts[a];
-        let pb = &self.pts[b];
         for t in 0..self.tris.len() {
             if !self.tris[t].alive {
                 continue;
@@ -453,16 +493,14 @@ impl Cdt {
                 if u == a || u == b || v == a || v == b {
                     continue;
                 }
-                let pu = &self.pts[u];
-                let pv = &self.pts[v];
                 // Strict crossing test.
-                let su = orient2d_h(pa, pb, pu);
-                let sv = orient2d_h(pa, pb, pv);
+                let su = self.o2(a, b, u);
+                let sv = self.o2(a, b, v);
                 if su == Sign::Zero || sv == Sign::Zero || su == sv {
                     continue;
                 }
-                let sa = orient2d_h(pu, pv, pa);
-                let sb = orient2d_h(pu, pv, pb);
+                let sa = self.o2(u, v, a);
+                let sb = self.o2(u, v, b);
                 if sa == Sign::Zero || sb == Sign::Zero || sa == sb {
                     continue;
                 }
@@ -478,9 +516,7 @@ impl Cdt {
                 let ne = self.shared_edge(n as usize, t);
                 let c = self.tris[t].v[(e + 2) % 3];
                 let d = self.tris[n as usize].v[(ne + 2) % 3];
-                if orient2d_h(&self.pts[u], &self.pts[d], &self.pts[c]) == Sign::Pos
-                    && orient2d_h(&self.pts[d], &self.pts[v], &self.pts[c]) == Sign::Pos
-                {
+                if self.o2(u, d, c) == Sign::Pos && self.o2(d, v, c) == Sign::Pos {
                     return Some((t, e));
                 }
             }
@@ -498,11 +534,6 @@ pub(super) fn is_strictly_non_delaunay(pts: &[R2], tri: [usize; 3], d: usize) ->
         &homog2_of(&pts[tri[2]]),
         &homog2_of(&pts[d]),
     ) == Sign::Pos
-}
-
-/// Internal Delaunay test on the cached homogenized points.
-fn is_strictly_non_delaunay_h(pts: &[Homog2], tri: [usize; 3], d: usize) -> bool {
-    incircle_h(&pts[tri[0]], &pts[tri[1]], &pts[tri[2]], &pts[d]) == Sign::Pos
 }
 
 #[cfg(test)]

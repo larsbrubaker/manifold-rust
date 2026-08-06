@@ -365,14 +365,70 @@ pub fn line_plane_intersect(p: &R3, q: &R3, a: &R3, b: &R3, c: &R3) -> Option<R3
 /// lines are parallel (including collinear — overlap is handled by the
 /// caller's collinear branch).
 pub fn line_line_intersect_2d(a: &R2, b: &R2, c: &R2, d: &R2) -> Option<R2> {
-    let ab = b.sub(a);
-    let cd = d.sub(c);
-    let denom = ab.cross(&cd);
-    if denom.is_zero() {
+    // Integer-only (same exact point as the rational formulation): with
+    // homogenized points, x = a + t·(b−a) where
+    //   t = N·Bw / (Dn·Cw),
+    //   N  = cross(c−a, d−c)·AwCw·CwDw,   Dn = cross(b−a, d−c)·AwBw·CwDw,
+    // and each output coordinate reduces exactly once in BigRational::new.
+    let (ax, ay, aw) = homog2(a);
+    let (bx, by, bw) = homog2(b);
+    let (cx, cy, cw) = homog2(c);
+    let (dx, dy, dw) = homog2(d);
+
+    let abx = &bx * &aw - &ax * &bw;
+    let aby = &by * &aw - &ay * &bw;
+    let cdx = &dx * &cw - &cx * &dw;
+    let cdy = &dy * &cw - &cy * &dw;
+    let dn = &abx * &cdy - &aby * &cdx;
+    if dn.is_zero() {
         return None;
     }
-    let t = c.sub(a).cross(&cd) / denom;
-    Some(a.add(&ab.scale(&t)))
+    let cax = &cx * &aw - &ax * &cw;
+    let cay = &cy * &aw - &ay * &cw;
+    let n = &cax * &cdy - &cay * &cdx;
+
+    // x_i = (A_i·Dn·Cw + N·ab_i) / (Aw·Cw·Dn)
+    let den = &aw * &cw * &dn;
+    let dn_cw = &dn * &cw;
+    let x = BigRational::new(&ax * &dn_cw + &n * &abx, den.clone());
+    let y = BigRational::new(&ay * &dn_cw + &n * &aby, den);
+    Some(R2::new(x, y))
+}
+
+/// Inverse of `R3::project_drop`: rebuild the dropped coordinate from the
+/// plane through `a` with (unnormalized, rational) normal `n`, whose `axis`
+/// component must be nonzero. Integer-only: the reconstructed coordinate is
+/// one `BigRational::new` (a single gcd); the carried coordinates are clones
+/// of the projection's already-canonical rationals.
+pub fn lift_to_plane(p: &R2, axis: usize, a: &R3, n: &R3) -> R3 {
+    let (nx, ny, nz, nw) = homog3(n);
+    let (ax, ay, az, aw) = homog3(a);
+    let (px, py, pw) = homog2(p);
+    // S = (n·a)·NwAw; dropped = (n·a − n_i·p_i − n_j·p_j) / n_k
+    //   = (S·Pw − Aw·(N_i·P_i + N_j·P_j)) / (Aw·Pw·N_k).
+    let s = &nx * &ax + &ny * &ay + &nz * &az;
+    let rebuild = |ni: &BigInt, nj: &BigInt, nk: &BigInt| -> BigRational {
+        BigRational::new(
+            &s * &pw - &aw * (ni * &px + nj * &py),
+            &aw * &pw * nk,
+        )
+    };
+    let _ = nw; // cancels: both S and the subtracted terms carry 1/Nw
+    match axis {
+        0 => {
+            let x = rebuild(&ny, &nz, &nx);
+            R3::new(x, p.x.clone(), p.y.clone())
+        }
+        1 => {
+            let y = rebuild(&nz, &nx, &ny);
+            R3::new(p.y.clone(), y, p.x.clone())
+        }
+        2 => {
+            let z = rebuild(&nx, &ny, &nz);
+            R3::new(p.x.clone(), p.y.clone(), z)
+        }
+        _ => unreachable!("axis must be 0, 1, or 2"),
+    }
 }
 
 /// Parameter of point x on segment (p,q) along the dominant axis of the

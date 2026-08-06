@@ -12,6 +12,7 @@
 //
 // The exact boolean pipeline (src/boolean3.rs) never calls into this module.
 
+pub mod approx;
 pub mod filtered;
 pub mod predicates;
 pub mod rational;
