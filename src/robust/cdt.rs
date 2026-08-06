@@ -41,6 +41,12 @@ struct Cdt {
     tris: Vec<Tri>,
     /// Suspect triangles for queue-based Lawson legalization.
     suspects: Vec<usize>,
+    /// For each vertex, the most recently created triangle containing it.
+    /// Invariant: always alive — every operation that kills a triangle
+    /// containing v pushes (and records) a replacement containing v first.
+    /// Constraint recovery uses this to rotate around a vertex instead of
+    /// scanning the whole triangulation.
+    vert_tri: Vec<u32>,
 }
 
 /// Constrained Delaunay triangulation of `points` inside the triangle formed
@@ -76,6 +82,7 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
             alive: true,
         }],
         suspects: Vec::new(),
+        vert_tri: vec![0; points.len()],
     };
 
     for p in 3..cdt.pts.len() {
@@ -149,6 +156,57 @@ impl Cdt {
             (false, true, true) => TriLoc::OnVertex(2),
             (true, true, true) => TriLoc::Outside,
         }
+    }
+
+    /// Record `t` as the latest triangle containing each of its vertices.
+    #[inline]
+    fn record(&mut self, t: usize) {
+        for v in self.tris[t].v {
+            self.vert_tri[v] = t as u32;
+        }
+    }
+
+    /// A live triangle containing vertex `a`. The `vert_tri` invariant makes
+    /// the recorded entry always alive; the scan is a defensive fallback.
+    fn live_tri_with(&self, a: usize) -> usize {
+        let cand = self.vert_tri[a] as usize;
+        if cand < self.tris.len() && self.tris[cand].alive && self.tris[cand].v.contains(&a) {
+            return cand;
+        }
+        debug_assert!(false, "vert_tri invariant broken for vertex {a}");
+        (0..self.tris.len())
+            .rev()
+            .find(|&i| self.tris[i].alive && self.tris[i].v.contains(&a))
+            .expect("vertex not in any live triangle")
+    }
+
+    /// Rotate around vertex `a` (both directions from its recorded triangle,
+    /// so boundary fans are fully covered) applying `f` to each incident
+    /// triangle until it returns Some.
+    fn rotate_around<T>(&self, a: usize, mut f: impl FnMut(usize) -> Option<T>) -> Option<T> {
+        let seed = self.live_tri_with(a);
+        for dirn in 0..2 {
+            let mut cur = seed;
+            loop {
+                if dirn == 0 || cur != seed {
+                    if let Some(out) = f(cur) {
+                        return Some(out);
+                    }
+                }
+                let t = &self.tris[cur];
+                let ia = (0..3)
+                    .position(|k| t.v[k] == a)
+                    .expect("rotation left the vertex fan");
+                // dir 0 crosses the edge leaving `a`; dir 1 the edge entering.
+                let e_step = if dirn == 0 { ia } else { (ia + 2) % 3 };
+                let n = t.adj[e_step];
+                if n < 0 || n as usize == seed {
+                    break;
+                }
+                cur = n as usize;
+            }
+        }
+        None
     }
 
     /// Index of `t`'s edge shared with triangle `n` (panics if not adjacent —
@@ -240,6 +298,7 @@ impl Cdt {
         }
         for k in 0..3 {
             self.rewire(t, k, base + k);
+            self.record(base + k);
         }
         self.tris[t].alive = false;
     }
@@ -287,6 +346,8 @@ impl Cdt {
         });
         self.rewire(t, (e + 1) % 3, t2);
         self.rewire(t, (e + 2) % 3, t1);
+        self.record(t1);
+        self.record(t2);
         self.tris[t].alive = false;
     }
 
@@ -430,6 +491,8 @@ impl Cdt {
         self.rewire(t, (e + 2) % 3, t1);
         self.rewire(n, (ne + 1) % 3, t1);
         self.rewire(n, (ne + 2) % 3, t2);
+        self.record(t1);
+        self.record(t2);
         self.tris[t].alive = false;
         self.tris[n].alive = false;
     }
@@ -456,33 +519,122 @@ impl Cdt {
     }
 
     /// If edge (a,b) exists, set its constrained flag on both sides and
-    /// return true.
+    /// return true. Rotation around `a` visits every incident triangle, so
+    /// absence there is definitive — no global scan.
     fn mark_if_present(&mut self, a: usize, b: usize) -> bool {
-        for t in 0..self.tris.len() {
-            if !self.tris[t].alive {
-                continue;
-            }
-            for e in 0..3 {
+        let found = self.rotate_around(a, |t| {
+            (0..3).find_map(|e| {
                 let u = self.tris[t].v[e];
                 let v = self.tris[t].v[(e + 1) % 3];
-                if (u, v) == (a, b) || (u, v) == (b, a) {
-                    self.tris[t].con[e] = true;
-                    let n = self.tris[t].adj[e];
-                    if n >= 0 {
-                        let ne = self.shared_edge(n as usize, t);
-                        self.tris[n as usize].con[ne] = true;
-                    }
-                    return true;
+                ((u, v) == (a, b) || (u, v) == (b, a)).then_some((t, e))
+            })
+        });
+        match found {
+            Some((t, e)) => {
+                self.tris[t].con[e] = true;
+                let n = self.tris[t].adj[e];
+                if n >= 0 {
+                    let ne = self.shared_edge(n as usize, t);
+                    self.tris[n as usize].con[ne] = true;
                 }
+                true
             }
+            None => false,
         }
-        false
+    }
+
+    /// Strict proper-crossing test of edge (u,v) against segment (a,b).
+    fn strictly_crosses(&self, a: usize, b: usize, u: usize, v: usize) -> bool {
+        let su = self.o2(a, b, u);
+        let sv = self.o2(a, b, v);
+        if su == Sign::Zero || sv == Sign::Zero || su == sv {
+            return false;
+        }
+        let sa = self.o2(u, v, a);
+        let sb = self.o2(u, v, b);
+        sa != Sign::Zero && sb != Sign::Zero && sa != sb
+    }
+
+    /// Is the internal edge `e` of `t` flippable (strictly convex quad)?
+    fn flippable(&self, t: usize, e: usize) -> bool {
+        let n = self.tris[t].adj[e];
+        if n < 0 {
+            return false;
+        }
+        let ne = self.shared_edge(n as usize, t);
+        let u = self.tris[t].v[e];
+        let v = self.tris[t].v[(e + 1) % 3];
+        let c = self.tris[t].v[(e + 2) % 3];
+        let d = self.tris[n as usize].v[(ne + 2) % 3];
+        self.o2(u, d, c) == Sign::Pos && self.o2(d, v, c) == Sign::Pos
     }
 
     /// Find an edge strictly crossing segment (a,b) whose quad is strictly
     /// convex (flippable). Anglada's lemma guarantees one exists while any
     /// crossing remains.
+    /// Walk the triangles pierced by segment (a,b), returning the first
+    /// crossing edge whose quad is strictly convex (flippable). Anglada's
+    /// lemma guarantees one exists while any crossing remains; the walk
+    /// visits exactly the crossing edges — O(crossings), not O(triangles).
     fn find_flippable_crossing(&self, a: usize, b: usize) -> Option<(usize, usize)> {
+        // Entry: the incident triangle of `a` whose opposite edge the
+        // segment leaves through. (No vertex lies strictly inside (a,b) —
+        // arrangement precondition — so the exit is a strict edge crossing.)
+        let entry = self.rotate_around(a, |t| {
+            let ia = (0..3).position(|k| self.tris[t].v[k] == a).unwrap();
+            let e_opp = (ia + 1) % 3;
+            let u = self.tris[t].v[e_opp];
+            let v = self.tris[t].v[(e_opp + 1) % 3];
+            (u != b && v != b && self.strictly_crosses(a, b, u, v)).then_some((t, e_opp))
+        });
+        let Some((mut t, mut e)) = entry else {
+            return self.find_flippable_crossing_scan(a, b);
+        };
+        loop {
+            debug_assert!(
+                !self.tris[t].con[e],
+                "constraint crosses an existing constraint — arrangement bug"
+            );
+            if self.flippable(t, e) {
+                return Some((t, e));
+            }
+            // March into the neighbor; the segment exits it through one of
+            // the two remaining edges (or ends at b).
+            let n = self.tris[t].adj[e];
+            if n < 0 {
+                return self.find_flippable_crossing_scan(a, b);
+            }
+            let n = n as usize;
+            let ne = self.shared_edge(n, t);
+            let mut next = None;
+            for k in 1..3 {
+                let e2 = (ne + k) % 3;
+                let u = self.tris[n].v[e2];
+                let v = self.tris[n].v[(e2 + 1) % 3];
+                if u == a || u == b || v == a || v == b {
+                    continue;
+                }
+                if self.strictly_crosses(a, b, u, v) {
+                    next = Some(e2);
+                    break;
+                }
+            }
+            match next {
+                Some(e2) => {
+                    t = n;
+                    e = e2;
+                }
+                // Walk exhausted without a flippable edge (collinear corner
+                // cases can end it early) — the global scan is the slow but
+                // complete answer, and behaves exactly like the pre-walk code.
+                None => return self.find_flippable_crossing_scan(a, b),
+            }
+        }
+    }
+
+    /// The original exhaustive search — fallback when the segment walk
+    /// terminates without an answer.
+    fn find_flippable_crossing_scan(&self, a: usize, b: usize) -> Option<(usize, usize)> {
         for t in 0..self.tris.len() {
             if !self.tris[t].alive {
                 continue;
@@ -493,30 +645,7 @@ impl Cdt {
                 if u == a || u == b || v == a || v == b {
                     continue;
                 }
-                // Strict crossing test.
-                let su = self.o2(a, b, u);
-                let sv = self.o2(a, b, v);
-                if su == Sign::Zero || sv == Sign::Zero || su == sv {
-                    continue;
-                }
-                let sa = self.o2(u, v, a);
-                let sb = self.o2(u, v, b);
-                if sa == Sign::Zero || sb == Sign::Zero || sa == sb {
-                    continue;
-                }
-                debug_assert!(
-                    !self.tris[t].con[e],
-                    "constraint crosses an existing constraint — arrangement bug"
-                );
-                // Flippable (strictly convex quad)?
-                let n = self.tris[t].adj[e];
-                if n < 0 {
-                    continue;
-                }
-                let ne = self.shared_edge(n as usize, t);
-                let c = self.tris[t].v[(e + 2) % 3];
-                let d = self.tris[n as usize].v[(ne + 2) % 3];
-                if self.o2(u, d, c) == Sign::Pos && self.o2(d, v, c) == Sign::Pos {
+                if self.strictly_crosses(a, b, u, v) && self.flippable(t, e) {
                     return Some((t, e));
                 }
             }
