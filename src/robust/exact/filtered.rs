@@ -5,18 +5,20 @@
 // addition of absolute values). Shewchuk's static error-bound analysis
 // ("Adaptive Precision Floating-Point Arithmetic and Fast Robust Geometric
 // Predicates", 1997) shows the f64 sign is certain whenever
-// |det| > errboundA * permanent; otherwise we escalate to the BigRational
-// evaluation in robust/exact/predicates.rs. Unlike Shewchuk we skip the
-// adaptive intermediate stages — the exact fallback fires rarely enough
-// (see the filter-hit-rate test) that simplicity wins.
+// |det| > errboundA * permanent; otherwise orient2d/orient3d escalate to the
+// exact integer evaluation in robust/exact/intpred.rs (degenerate-heavy
+// meshes make this tier hot) and incircle to the BigRational evaluation in
+// robust/exact/predicates.rs. Unlike Shewchuk we skip the adaptive
+// intermediate stages — exact integer evaluation is cheap enough that
+// simplicity wins.
 //
 // The classic bounds assume no underflow/overflow, so any permanent that is
 // subnormal, zero, or non-finite also escalates to the exact path.
 
 use crate::linalg::{Vec2, Vec3};
 
-use super::predicates::{incircle_r, orient2d_r, orient3d_r};
-use super::rational::{R2, R3};
+use super::predicates::incircle_r;
+use super::rational::R2;
 use super::Sign;
 
 const EPS: f64 = f64::EPSILON * 0.5; // 2^-53, Shewchuk's machine epsilon
@@ -75,7 +77,7 @@ pub fn orient2d(a: Vec2, b: Vec2, c: Vec2) -> Sign {
         return Sign::of_f64(det);
     }
     note_exact();
-    orient2d_r(&R2::from_vec2(a), &R2::from_vec2(b), &R2::from_vec2(c))
+    super::intpred::orient2d_i([a.x, a.y], [b.x, b.y], [c.x, c.y])
 }
 
 /// Sign of dot(cross(b-a, c-a), d-a); Pos ⇔ d on the CCW-normal side of
@@ -107,11 +109,11 @@ pub fn orient3d(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> Sign {
         return Sign::of_f64(det);
     }
     note_exact();
-    orient3d_r(
-        &R3::from_vec3(a),
-        &R3::from_vec3(b),
-        &R3::from_vec3(c),
-        &R3::from_vec3(d),
+    super::intpred::orient3d_i(
+        [a.x, a.y, a.z],
+        [b.x, b.y, b.z],
+        [c.x, c.y, c.z],
+        [d.x, d.y, d.z],
     )
 }
 

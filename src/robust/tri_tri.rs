@@ -18,7 +18,7 @@ use num_traits::{Signed, Zero};
 use crate::linalg::Vec3;
 
 use super::exact::filtered::orient3d;
-use super::exact::predicates::{dot_point_raw, line_line_intersect_2d, line_plane_intersect, orient2d_r, tri_normal_int, tri_normal_r};
+use super::exact::predicates::{line_line_intersect_2d, line_plane_intersect, orient2d_r, tri_normal_r};
 use super::exact::rational::{R2, R3};
 use super::exact::Sign;
 
@@ -62,9 +62,41 @@ pub fn dominant_axis(n: &R3) -> usize {
 // other integer-only constructions in robust/exact/predicates.rs.
 pub use super::exact::predicates::lift_to_plane;
 
+/// Exit-path counters for perf analysis, printed under MANIFOLD_TIMING by
+/// the self-cut loop. Relaxed atomics; negligible cost on the hot path.
+pub mod stats {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+    pub static PLANE_REJECT: AtomicU64 = AtomicU64::new(0);
+    pub static COPLANAR: AtomicU64 = AtomicU64::new(0);
+    pub static COPLANAR_SAT: AtomicU64 = AtomicU64::new(0);
+    pub static SAT_REJECT: AtomicU64 = AtomicU64::new(0);
+    pub static INTERVAL: AtomicU64 = AtomicU64::new(0);
+    pub static COPLANAR_NS: AtomicU64 = AtomicU64::new(0);
+    pub static PLANE_NS: AtomicU64 = AtomicU64::new(0);
+    pub static INTERVAL_NS: AtomicU64 = AtomicU64::new(0);
+
+    pub fn snapshot_and_reset() -> String {
+        let take = |a: &AtomicU64| a.swap(0, Relaxed);
+        format!(
+            "plane-reject {} ({:.3}s signs), coplanar {} (sat {}, {:.3}s), sat-reject {}, interval {} ({:.3}s)",
+            take(&PLANE_REJECT),
+            take(&PLANE_NS) as f64 * 1e-9,
+            take(&COPLANAR),
+            take(&COPLANAR_SAT),
+            take(&COPLANAR_NS) as f64 * 1e-9,
+            take(&SAT_REJECT),
+            take(&INTERVAL),
+            take(&INTERVAL_NS) as f64 * 1e-9,
+        )
+    }
+}
+
 /// Exact intersection of triangles t1 and t2 (each three finite f64
 /// vertices). Symmetric: swapping the arguments yields the same set.
 pub fn tri_tri_intersect(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
+    use std::sync::atomic::Ordering::Relaxed;
+    let t_signs = std::time::Instant::now();
     // Signs of t2's vertices against t1's plane.
     let s2 = [
         orient3d(t1[0], t1[1], t1[2], t2[0]),
@@ -72,10 +104,15 @@ pub fn tri_tri_intersect(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
         orient3d(t1[0], t1[1], t1[2], t2[2]),
     ];
     if all_same_strict(&s2) {
+        stats::PLANE_REJECT.fetch_add(1, Relaxed);
+        stats::PLANE_NS.fetch_add(t_signs.elapsed().as_nanos() as u64, Relaxed);
         return TriTriIsect::None;
     }
     if s2.iter().all(|s| *s == Sign::Zero) {
-        return coplanar_overlap(t1, t2);
+        stats::COPLANAR.fetch_add(1, Relaxed);
+        let out = coplanar_overlap(t1, t2);
+        stats::COPLANAR_NS.fetch_add(t_signs.elapsed().as_nanos() as u64, Relaxed);
+        return out;
     }
     // Signs of t1's vertices against t2's plane.
     let s1 = [
@@ -84,8 +121,11 @@ pub fn tri_tri_intersect(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
         orient3d(t2[0], t2[1], t2[2], t1[2]),
     ];
     if all_same_strict(&s1) {
+        stats::PLANE_REJECT.fetch_add(1, Relaxed);
+        stats::PLANE_NS.fetch_add(t_signs.elapsed().as_nanos() as u64, Relaxed);
         return TriTriIsect::None;
     }
+    stats::PLANE_NS.fetch_add(t_signs.elapsed().as_nanos() as u64, Relaxed);
     debug_assert!(
         !s1.iter().all(|s| *s == Sign::Zero),
         "t1 coplanar with t2's plane implies t2 coplanar with t1's — handled above"
@@ -107,52 +147,175 @@ pub fn tri_tri_intersect(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
             [t2[2].x, t2[2].y, t2[2].z],
         ];
         if super::exact::approx::sat_edge_axes_disjoint(&f1, &f2) {
+            stats::SAT_REJECT.fetch_add(1, Relaxed);
             return TriTriIsect::None;
         }
     }
+    stats::INTERVAL.fetch_add(1, Relaxed);
+    let t_interval = std::time::Instant::now();
 
-    let r1: [R3; 3] = [
-        R3::from_vec3(t1[0]),
-        R3::from_vec3(t1[1]),
-        R3::from_vec3(t1[2]),
-    ];
-    let r2: [R3; 3] = [
-        R3::from_vec3(t2[0]),
-        R3::from_vec3(t2[1]),
-        R3::from_vec3(t2[2]),
-    ];
+    // Both triangles meet the common line L of the two planes. Overlap the
+    // two 1- or 2-point intervals along L entirely in scaled integer
+    // arithmetic (no rational constructions, no gcds): per-axis power-of-two
+    // scaling maps every vertex to an exact integer, and for points on L the
+    // scaled-space parameter dir_s·x_s is a positive multiple of the true
+    // parameter dir·x (x−y ∥ dir makes the difference d·|A·dir|²·λ for
+    // x−y = λ·dir), so ordering — including its orientation — matches the
+    // rational computation exactly. Endpoints stay symbolic; only the 1–2
+    // points of the final answer are constructed rationally.
+    let out = interval_overlap(t1, t2, &s1, &s2);
+    stats::INTERVAL_NS.fetch_add(t_interval.elapsed().as_nanos() as u64, Relaxed);
+    out
+}
 
-    // Both triangles meet the common line L of the two planes. Collect each
-    // triangle's (1- or 2-point) intersection with the other's plane and
-    // overlap the two intervals along L.
-    let pts1 = plane_crossings(&r1, &s1, &r2);
-    let pts2 = plane_crossings(&r2, &s2, &r1);
-    debug_assert!(!pts1.is_empty() && pts1.len() <= 2);
-    debug_assert!(!pts2.is_empty() && pts2.len() <= 2);
+/// Symbolic interval endpoint on the common line L: an original vertex
+/// exactly on the other plane, or a strictly straddling edge's crossing.
+#[derive(Clone, Copy)]
+enum EndPt {
+    /// (which_tri: 0|1, vertex index)
+    Vert(u8, u8),
+    /// (which_tri: 0|1, edge start index i — the edge runs i → (i+1)%3)
+    Cross(u8, u8),
+}
 
-    // Integer line direction (positive scale of n1×n2) and unreduced interval
-    // parameters — ordering along L only needs comparisons, not canonical
-    // rationals, so no gcds anywhere in the interval overlap.
-    let n1 = tri_normal_int(&r1[0], &r1[1], &r1[2]);
-    let n2 = tri_normal_int(&r2[0], &r2[1], &r2[2]);
-    let dir = [
-        &n1[1] * &n2[2] - &n1[2] * &n2[1],
-        &n1[2] * &n2[0] - &n1[0] * &n2[2],
-        &n1[0] * &n2[1] - &n1[1] * &n2[0],
-    ];
+fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]) -> TriTriIsect {
+    use num_bigint::BigInt;
+
+    // Scaled integer coordinates; one common scale per axis across BOTH
+    // triangles so cross-triangle parameter comparisons share a basis.
+    let sx = super::exact::intpred::scaled_big([
+        t1[0].x, t1[1].x, t1[2].x, t2[0].x, t2[1].x, t2[2].x,
+    ]);
+    let sy = super::exact::intpred::scaled_big([
+        t1[0].y, t1[1].y, t1[2].y, t2[0].y, t2[1].y, t2[2].y,
+    ]);
+    let sz = super::exact::intpred::scaled_big([
+        t1[0].z, t1[1].z, t1[2].z, t2[0].z, t2[1].z, t2[2].z,
+    ]);
+    let v = |k: usize| [&sx[k], &sy[k], &sz[k]];
+    let sub = |a: [&BigInt; 3], b: [&BigInt; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let cross = |a: &[BigInt; 3], b: &[BigInt; 3]| {
+        [
+            &a[1] * &b[2] - &a[2] * &b[1],
+            &a[2] * &b[0] - &a[0] * &b[2],
+            &a[0] * &b[1] - &a[1] * &b[0],
+        ]
+    };
+    let dot = |a: &[BigInt; 3], b: [&BigInt; 3]| &a[0] * b[0] + &a[1] * b[1] + &a[2] * b[2];
+
+    let n1 = cross(&sub(v(1), v(0)), &sub(v(2), v(0)));
+    let n2 = cross(&sub(v(4), v(3)), &sub(v(5), v(3)));
+    let dir = cross(&n1, &n2);
     debug_assert!(
         dir.iter().any(|c| !c.is_zero()),
         "non-coplanar intersecting planes"
     );
 
-    let i1 = interval_along(&dir, pts1);
-    let i2 = interval_along(&dir, pts2);
+    // Parameters dir·v of all six vertices, and signed heights against the
+    // other triangle's plane (whose signs replicate s1/s2 exactly).
+    let du: [BigInt; 6] = std::array::from_fn(|k| dot(&dir, v(k)));
+    let h = |k: usize, n: &[BigInt; 3], origin: usize| dot(n, v(k)) - dot(n, v(origin));
+    let h1: [BigInt; 3] = std::array::from_fn(|i| h(i, &n2, 3));
+    let h2: [BigInt; 3] = std::array::from_fn(|i| h(3 + i, &n1, 0));
+    #[cfg(debug_assertions)]
+    for i in 0..3 {
+        debug_assert_eq!(int_sign(&h1[i]), s1[i], "scaled height disagrees with s1");
+        debug_assert_eq!(int_sign(&h2[i]), s2[i], "scaled height disagrees with s2");
+    }
+
+    // The ≤2 endpoints of one triangle's crossing with the other's plane, as
+    // (unreduced parameter fraction, symbolic point), in the same
+    // enumeration order as the rational implementation used (vertices in
+    // index order, then edges (0,1), (1,2), (2,0)) so ties break alike.
+    let endpoints = |which: u8, s: &[Sign; 3], hs: &[BigInt; 3]| -> Vec<(Frac, EndPt)> {
+        let base = if which == 0 { 0 } else { 3 };
+        let mut pts = Vec::with_capacity(2);
+        for i in 0..3 {
+            if s[i] == Sign::Zero {
+                pts.push((
+                    (du[base + i].clone(), BigInt::from(1)),
+                    EndPt::Vert(which, i as u8),
+                ));
+            }
+        }
+        for i in 0..3 {
+            let j = (i + 1) % 3;
+            if s[i] != Sign::Zero && s[j] != Sign::Zero && s[i] != s[j] {
+                // x = u + h_u/(h_u−h_v)·(v−u) ⇒
+                // dir·x = [(h_u−h_v)·du_u + h_u·(du_v−du_u)] / (h_u−h_v).
+                let mut den = &hs[i] - &hs[j];
+                let mut num = &den * &du[base + i] + &hs[i] * (&du[base + j] - &du[base + i]);
+                if den.sign() == num_bigint::Sign::Minus {
+                    den = -den;
+                    num = -num;
+                }
+                pts.push(((num, den), EndPt::Cross(which, i as u8)));
+            }
+        }
+        debug_assert!(!pts.is_empty() && pts.len() <= 2);
+        pts
+    };
+    let pts1 = endpoints(0, s1, &h1);
+    let pts2 = endpoints(1, s2, &h2);
+
+    // Per-triangle interval, first-encountered point winning ties (matching
+    // the old interval_along).
+    let minmax = |pts: Vec<(Frac, EndPt)>| -> ((Frac, EndPt), (Frac, EndPt)) {
+        let mut lo = pts[0].clone();
+        let mut hi = pts[0].clone();
+        for p in &pts[1..] {
+            if cmp_frac(&p.0, &lo.0) == std::cmp::Ordering::Less {
+                lo = p.clone();
+            }
+            if cmp_frac(&p.0, &hi.0) == std::cmp::Ordering::Greater {
+                hi = p.clone();
+            }
+        }
+        (lo, hi)
+    };
+    let i1 = minmax(pts1);
+    let i2 = minmax(pts2);
     let (lo, lo_pt) = if cmp_frac(&i1.0 .0, &i2.0 .0) != std::cmp::Ordering::Less { i1.0 } else { i2.0 };
     let (hi, hi_pt) = if cmp_frac(&i1.1 .0, &i2.1 .0) != std::cmp::Ordering::Greater { i1.1 } else { i2.1 };
+
     match cmp_frac(&lo, &hi) {
         std::cmp::Ordering::Greater => TriTriIsect::None,
-        std::cmp::Ordering::Equal => TriTriIsect::Point(lo_pt),
-        std::cmp::Ordering::Less => TriTriIsect::Segment(lo_pt, hi_pt),
+        std::cmp::Ordering::Equal => TriTriIsect::Point(build_endpoint(lo_pt, &t1, &t2)),
+        std::cmp::Ordering::Less => TriTriIsect::Segment(
+            build_endpoint(lo_pt, &t1, &t2),
+            build_endpoint(hi_pt, &t1, &t2),
+        ),
+    }
+}
+
+#[cfg(debug_assertions)]
+fn int_sign(v: &num_bigint::BigInt) -> Sign {
+    match v.sign() {
+        num_bigint::Sign::Minus => Sign::Neg,
+        num_bigint::Sign::NoSign => Sign::Zero,
+        num_bigint::Sign::Plus => Sign::Pos,
+    }
+}
+
+/// Materialize a symbolic interval endpoint as the exact rational point the
+/// fully rational implementation would have produced.
+fn build_endpoint(e: EndPt, t1: &[Vec3; 3], t2: &[Vec3; 3]) -> R3 {
+    let tri = |which: u8| if which == 0 { t1 } else { t2 };
+    match e {
+        EndPt::Vert(w, i) => R3::from_vec3(tri(w)[i as usize]),
+        EndPt::Cross(w, i) => {
+            let own = tri(w);
+            let other = tri(1 - w);
+            let a = R3::from_vec3(own[i as usize]);
+            let b = R3::from_vec3(own[(i as usize + 1) % 3]);
+            let p: [R3; 3] = [
+                R3::from_vec3(other[0]),
+                R3::from_vec3(other[1]),
+                R3::from_vec3(other[2]),
+            ];
+            line_plane_intersect(&a, &b, &p[0], &p[1], &p[2])
+                .expect("strictly straddling edge cannot be parallel to the plane")
+        }
     }
 }
 
@@ -168,58 +331,52 @@ fn all_same_strict(s: &[Sign; 3]) -> bool {
     s[0] != Sign::Zero && s[0] == s[1] && s[1] == s[2]
 }
 
-/// The 1 or 2 points where triangle `tri` (vertex signs `s` against the
-/// other plane) meets the plane of `other`. Vertices exactly on the plane
-/// contribute themselves; strictly straddling edges contribute constructed
-/// intersection points.
-fn plane_crossings(tri: &[R3; 3], s: &[Sign; 3], other: &[R3; 3]) -> Vec<R3> {
-    let mut pts: Vec<R3> = Vec::with_capacity(2);
-    for i in 0..3 {
-        if s[i] == Sign::Zero {
-            pts.push(tri[i].clone());
-        }
-    }
-    for i in 0..3 {
-        let j = (i + 1) % 3;
-        if s[i] != Sign::Zero && s[j] != Sign::Zero && s[i] != s[j] {
-            let x = line_plane_intersect(&tri[i], &tri[j], &other[0], &other[1], &other[2])
-                .expect("strictly straddling edge cannot be parallel to the plane");
-            pts.push(x);
-        }
-    }
-    pts
-}
-
-/// Interval of points along integer direction `dir` as ((min_param,
-/// min_point), (max_param, max_point)), parameters as unreduced fractions.
-/// A single input point yields a degenerate interval.
-#[allow(clippy::type_complexity)]
-fn interval_along(
-    dir: &[num_bigint::BigInt; 3],
-    mut pts: Vec<R3>,
-) -> ((Frac, R3), (Frac, R3)) {
-    let first = pts.remove(0);
-    let p0 = dot_point_raw(dir, &first);
-    let mut lo = ((p0.0.clone(), p0.1.clone()), first.clone());
-    let mut hi = (p0, first);
-    for p in pts {
-        let t = dot_point_raw(dir, &p);
-        if cmp_frac(&t, &lo.0) == std::cmp::Ordering::Less {
-            lo = ((t.0.clone(), t.1.clone()), p.clone());
-        }
-        if cmp_frac(&t, &hi.0) == std::cmp::Ordering::Greater {
-            hi = (t, p);
-        }
-    }
-    (lo, hi)
-}
-
 // ─── Coplanar overlap ────────────────────────────────────────────────────────
+
+/// Certified separating-edge pre-reject for coplanar pairs, on the raw f64
+/// projection dropping coordinate `axis`. Sound for ANY choice of axis: a
+/// projection is linear, so a shared 3D point would project into both
+/// projected triangles — strict 2D separation therefore proves 3D
+/// disjointness even when the projection degenerates the triangles. Signs
+/// come from the exact filtered orient2d, so a `true` answer is certain.
+fn coplanar_separated_2d(t1: [Vec3; 3], t2: [Vec3; 3], axis: usize) -> bool {
+    use super::exact::filtered::orient2d;
+    // Same cyclic drop-axis convention as R3::project_drop.
+    let proj = |v: Vec3| match axis {
+        0 => crate::linalg::Vec2::new(v.y, v.z),
+        1 => crate::linalg::Vec2::new(v.z, v.x),
+        _ => crate::linalg::Vec2::new(v.x, v.y),
+    };
+    let p1 = t1.map(proj);
+    let p2 = t2.map(proj);
+    let separates = |tri: &[crate::linalg::Vec2; 3], other: &[crate::linalg::Vec2; 3]| {
+        (0..3).any(|i| {
+            let a = tri[i];
+            let b = tri[(i + 1) % 3];
+            let s_ref = orient2d(a, b, tri[(i + 2) % 3]);
+            s_ref != Sign::Zero
+                && other.iter().all(|&q| {
+                    let s = orient2d(a, b, q);
+                    s != Sign::Zero && s != s_ref
+                })
+        })
+    };
+    separates(&p1, &p2) || separates(&p2, &p1)
+}
 
 /// Intersection of two coplanar triangles: Sutherland–Hodgman clip of t2
 /// against t1 in the exact 2D projection, classified by the dimension of the
 /// result (empty / point / segment / convex polygon).
 fn coplanar_overlap(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
+    {
+        let n = crate::linalg::cross(t1[1] - t1[0], t1[2] - t1[0]);
+        let (ax, ay, az) = (n.x.abs(), n.y.abs(), n.z.abs());
+        let axis = if az >= ax && az >= ay { 2 } else if ay >= ax { 1 } else { 0 };
+        if coplanar_separated_2d(t1, t2, axis) {
+            stats::COPLANAR_SAT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            return TriTriIsect::None;
+        }
+    }
     let r1: [R3; 3] = [
         R3::from_vec3(t1[0]),
         R3::from_vec3(t1[1]),

@@ -14,6 +14,7 @@
 
 pub mod approx;
 pub mod filtered;
+pub mod intpred;
 pub mod predicates;
 pub mod rational;
 

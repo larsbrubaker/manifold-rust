@@ -416,6 +416,7 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
         // the dominant cost of an all-benign narrow phase.
         let mut planes: Vec<Option<TriPlane>> = Vec::new();
         planes.resize_with(tris.len(), || None);
+        let mut stats = SelfCutStats::default();
         for i in 0..tris.len() {
             if !live[m][i] {
                 continue;
@@ -431,7 +432,7 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
                 }
                 n_pairs += 1;
                 let plane_i = planes[i].get_or_insert_with(|| tri_plane(&tris[i]));
-                let Some(segs) = real_self_contact(tris[i], tris[j], plane_i) else {
+                let Some(segs) = real_self_contact(tris[i], tris[j], plane_i, &mut stats) else {
                     continue;
                 };
                 n_cut += 1;
@@ -446,6 +447,22 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
         crate::timing::print_count(
             &format!("robust: self-cut mesh {m}: {n_pairs} box pairs, {n_cut} cutting"),
         );
+        crate::timing::print_count(&format!(
+            "robust: self-cut mesh {m} tri_tri exits: {}",
+            super::tri_tri::stats::snapshot_and_reset()
+        ));
+        crate::timing::print_count(&format!(
+            "robust: self-cut mesh {m} paths: identical {}, edge-benign {}, vert-benign {}, \
+             full {} ({:.3}s: none {}, point {}, seg-benign {})",
+            stats.identical,
+            stats.edge_benign,
+            stats.vert_benign,
+            stats.full,
+            stats.full_secs,
+            stats.full_none,
+            stats.full_point,
+            stats.full_seg_benign,
+        ));
     }
 
     crate::timing::print("robust: self-intersection cuts", t_self);
@@ -730,10 +747,26 @@ fn project_f64(v: Vec3, axis: usize) -> crate::linalg::Vec2 {
     }
 }
 
+/// Per-path counters for the self-cut narrow phase, printed under
+/// MANIFOLD_TIMING to show where box-pair time goes (shortcut hits vs full
+/// tri_tri calls and their outcomes).
+#[derive(Default)]
+struct SelfCutStats {
+    identical: usize,
+    edge_benign: usize,
+    vert_benign: usize,
+    full: usize,
+    full_none: usize,
+    full_point: usize,
+    full_seg_benign: usize,
+    full_secs: f64,
+}
+
 fn real_self_contact(
     t1: [Vec3; 3],
     t2: [Vec3; 3],
     plane1: &TriPlane,
+    stats: &mut SelfCutStats,
 ) -> Option<Vec<(R3, R3)>> {
     use super::exact::Sign;
 
@@ -758,12 +791,14 @@ fn real_self_contact(
     // rational coplanar-overlap clip.
     let shared_f: Vec<Vec3> = t1.iter().copied().filter(|v| t2.contains(v)).collect();
     if shared_f.len() == 3 {
+        stats.identical += 1;
         return None;
     }
     if shared_f.len() == 2 {
         if let Some(&opp) = t2.iter().find(|v| !t1.contains(v)) {
             // Non-coplanar edge-neighbors only meet along the shared edge.
             if orient3d_plane(&t1, plane1, opp) != Sign::Zero {
+                stats.edge_benign += 1;
                 return None;
             }
             // Coplanar edge-neighbors: benign exactly when the two opposite
@@ -778,6 +813,7 @@ fn real_self_contact(
                 let s_opp =
                     super::exact::filtered::orient2d(p2(shared_f[0]), p2(shared_f[1]), p2(opp));
                 if s_own != Sign::Zero && s_opp != Sign::Zero && s_own != s_opp {
+                    stats.edge_benign += 1;
                     return None;
                 }
             }
@@ -792,6 +828,7 @@ fn real_self_contact(
             .map(|&v| (v, orient3d_plane(&t1, plane1, v)))
             .collect();
         if others.len() == 2 && others[0].1 != Sign::Zero && others[0].1 == others[1].1 {
+            stats.vert_benign += 1;
             return None;
         }
         // Fully coplanar vertex-neighbors (triangle fans on flat regions):
@@ -822,23 +859,37 @@ fn real_self_contact(
                     || separated(other[0], other[1], [own[0], own[1]])
                     || separated(other[1], other[0], [own[0], own[1]]))
             {
+                stats.vert_benign += 1;
                 return None;
             }
         }
     }
 
-    match tri_tri_intersect(t1, t2) {
-        TriTriIsect::None => None,
+    stats.full += 1;
+    let t_full = std::time::Instant::now();
+    let isect = tri_tri_intersect(t1, t2);
+    stats.full_secs += t_full.elapsed().as_secs_f64();
+    match isect {
+        TriTriIsect::None => {
+            stats.full_none += 1;
+            None
+        }
         // Isolated point contacts (vertex-on-face, edge-through-edge) have
         // zero area on both sides: they never change which sheet a region
         // is on, so they need no cut.
-        TriTriIsect::Point(_) => None,
+        TriTriIsect::Point(_) => {
+            stats.full_point += 1;
+            None
+        }
         TriTriIsect::Segment(x, y) => {
             let benign = shared_f.len() >= 2 && {
                 let s0 = R3::from_vec3(shared_f[0]);
                 let s1 = R3::from_vec3(shared_f[1]);
                 point_on_segment(&x, &s0, &s1) && point_on_segment(&y, &s0, &s1)
             };
+            if benign {
+                stats.full_seg_benign += 1;
+            }
             (!benign).then(|| vec![(x, y)])
         }
         // Positive-area coplanar overlap (a fold or doubled patch): cut both
