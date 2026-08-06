@@ -226,3 +226,79 @@ impl R3 {
         }
     }
 }
+
+// ─── Cheap exact hash keys ───────────────────────────────────────────────────
+//
+// num-rational's Hash and Eq run continued-fraction recursions (a BigInt
+// division per level, a full Euclidean algorithm for equal values) so they
+// stay consistent for UNREDUCED ratios. Every rational this pipeline stores
+// is canonical — built by Ratio::new, arithmetic operators, or from_float,
+// all of which reduce — so field identity IS value identity, and hashing the
+// raw sign/limb data is both exact and division-free. The wrappers below are
+// drop-in hash-map keys that are 1–2 orders of magnitude cheaper than
+// hashing R2/R3 directly. (classify.rs's new_raw fractions are sign/compare
+// scratch values and must never be used as keys.)
+
+#[inline]
+fn rat_fields_eq(a: &BigRational, b: &BigRational) -> bool {
+    a.numer() == b.numer() && a.denom() == b.denom()
+}
+
+fn hash_rat<H: std::hash::Hasher>(r: &BigRational, state: &mut H) {
+    use std::hash::Hash;
+    (r.numer().sign() == num_bigint::Sign::Minus).hash(state);
+    for d in r.numer().iter_u64_digits() {
+        d.hash(state);
+    }
+    0xfeed_u64.hash(state); // length separator between numerator and denominator
+    for d in r.denom().iter_u64_digits() {
+        d.hash(state);
+    }
+}
+
+/// Hash-map key wrapper around a canonical R2.
+#[derive(Clone, Debug)]
+pub struct R2Key(pub R2);
+
+impl PartialEq for R2Key {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        rat_fields_eq(&self.0.x, &other.0.x) && rat_fields_eq(&self.0.y, &other.0.y)
+    }
+}
+impl Eq for R2Key {}
+impl std::hash::Hash for R2Key {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        hash_rat(&self.0.x, state);
+        hash_rat(&self.0.y, state);
+    }
+}
+
+/// Hash-map key wrapper around a canonical R3.
+#[derive(Clone, Debug)]
+pub struct R3Key(pub R3);
+
+impl PartialEq for R3Key {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        rat_fields_eq(&self.0.x, &other.0.x)
+            && rat_fields_eq(&self.0.y, &other.0.y)
+            && rat_fields_eq(&self.0.z, &other.0.z)
+    }
+}
+impl Eq for R3Key {}
+impl std::hash::Hash for R3Key {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        hash_rat(&self.0.x, state);
+        hash_rat(&self.0.y, state);
+        hash_rat(&self.0.z, state);
+    }
+}
+
+/// Field-wise equality of canonical R3 values — value equality without
+/// num-rational's Euclidean comparison (which is most expensive exactly when
+/// the values ARE equal).
+#[inline]
+pub fn r3_eq(a: &R3, b: &R3) -> bool {
+    rat_fields_eq(&a.x, &b.x) && rat_fields_eq(&a.y, &b.y) && rat_fields_eq(&a.z, &b.z)
+}

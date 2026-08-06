@@ -23,7 +23,7 @@ use crate::linalg::Vec3;
 use super::cdt;
 use super::exact::approx::orient2d_a;
 use super::exact::predicates::{homog2_of, line_line_intersect_2d, orient2d_h, point_in_tri_2d, tri_normal_r, Homog2, TriLoc};
-use super::exact::rational::{rat_to_f64, R2, R3};
+use super::exact::rational::{rat_to_f64, R2, R2Key, R3};
 use super::exact::Sign;
 use super::tri_tri::{dominant_axis, lift_to_plane};
 
@@ -60,10 +60,46 @@ pub struct Arrangement {
 }
 
 
+/// Aggregate phase timers for build(), printed under MANIFOLD_TIMING by the
+/// pipeline after the arrangements stage. Relaxed atomics, nanoseconds.
+pub mod stats {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+
+    pub static SETUP_NS: AtomicU64 = AtomicU64::new(0);
+    pub static NORM_NS: AtomicU64 = AtomicU64::new(0);
+    pub static CROSS_NS: AtomicU64 = AtomicU64::new(0);
+    pub static ONSEG_NS: AtomicU64 = AtomicU64::new(0);
+    pub static CDT_NS: AtomicU64 = AtomicU64::new(0);
+    pub static CALLS: AtomicU64 = AtomicU64::new(0);
+    pub static SEGS: AtomicU64 = AtomicU64::new(0);
+    pub static PTS: AtomicU64 = AtomicU64::new(0);
+
+    pub fn snapshot_and_reset() -> String {
+        let take = |a: &AtomicU64| a.swap(0, Relaxed) as f64 * 1e-9;
+        let taken = |a: &AtomicU64| a.swap(0, Relaxed);
+        format!(
+            "setup {:.3}s (norm {:.3}s), crossings {:.3}s, on-seg {:.3}s, cdt {:.3}s ({} calls, {} segs, {} pts)",
+            take(&SETUP_NS),
+            take(&NORM_NS),
+            take(&CROSS_NS),
+            take(&ONSEG_NS),
+            take(&CDT_NS),
+            taken(&CALLS),
+            taken(&SEGS),
+            taken(&PTS),
+        )
+    }
+}
+
 /// Build the arrangement of `input` on triangle `tri`. Primitives must
 /// already be clipped to the triangle (tri_tri output is), with rational
 /// coordinates on its plane.
 pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
+    use std::sync::atomic::Ordering::Relaxed;
+    let t0 = std::time::Instant::now();
+    stats::CALLS.fetch_add(1, Relaxed);
+    stats::SEGS.fetch_add(input.segments.len() as u64, Relaxed);
+    stats::PTS.fetch_add(input.points.len() as u64, Relaxed);
     let corners: [R3; 3] = [
         R3::from_vec3(tri[0]),
         R3::from_vec3(tri[1]),
@@ -72,23 +108,27 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
     let normal = tri_normal_r(&corners[0], &corners[1], &corners[2]);
     debug_assert!(!normal.is_zero(), "degenerate triangle in arrangement");
     let axis = dominant_axis(&normal);
+    stats::NORM_NS.fetch_add(t0.elapsed().as_nanos() as u64, Relaxed);
 
     let mut points3: Vec<R3> = Vec::new();
     let mut points2: Vec<R2> = Vec::new();
-    // Hash-keyed dedup: canonical rationals hash linearly, while a BTreeMap's
-    // Ord runs two BigInt cross-multiplications per tree level per lookup.
-    // Indices are assigned in insertion order, so output stays deterministic.
-    let mut index: std::collections::HashMap<R2, usize> = std::collections::HashMap::new();
+    // Hash-keyed dedup via R2Key: division-free structural hashing of the
+    // canonical rationals (num-rational's own Hash runs a Euclidean
+    // recursion per lookup, which dominated this whole function). Indices
+    // are assigned in insertion order, so output stays deterministic.
+    let mut index: std::collections::HashMap<R2Key, usize> = std::collections::HashMap::new();
     let mut add_point = |p3: R3, points3: &mut Vec<R3>, points2: &mut Vec<R2>| -> usize {
         let p2 = p3.project_drop(axis);
-        if let Some(&i) = index.get(&p2) {
-            return i;
+        let next = points3.len();
+        match index.entry(R2Key(p2.clone())) {
+            std::collections::hash_map::Entry::Occupied(e) => *e.get(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(next);
+                points3.push(p3);
+                points2.push(p2);
+                next
+            }
         }
-        let i = points3.len();
-        index.insert(p2.clone(), i);
-        points3.push(p3);
-        points2.push(p2);
-        i
     };
 
     for c in &corners {
@@ -117,6 +157,9 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
     for (p3, _prov) in &input.points {
         add_point(p3.clone(), &mut points3, &mut points2);
     }
+
+    stats::SETUP_NS.fetch_add(t0.elapsed().as_nanos() as u64, Relaxed);
+    let t0 = std::time::Instant::now();
 
     // Mutual proper crossings between segments become new points. Points are
     // homogenized once (Homog2) for the exact fallback, and approximated
@@ -166,6 +209,9 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
         point_in_tri_2d(p, &points2[0], &points2[1], &points2[2]) != TriLoc::Outside
     }), "arrangement primitive escapes its triangle");
 
+    stats::CROSS_NS.fetch_add(t0.elapsed().as_nanos() as u64, Relaxed);
+    let t0 = std::time::Instant::now();
+
     // Subdivide each segment at every registered point lying exactly on it;
     // consecutive point pairs become constraint edges carrying provenance.
     let mut constraints: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
@@ -212,8 +258,12 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
         }
     }
 
+    stats::ONSEG_NS.fetch_add(t0.elapsed().as_nanos() as u64, Relaxed);
+    let t0 = std::time::Instant::now();
+
     let constraint_pairs: Vec<(usize, usize)> = constraints.keys().copied().collect();
     let tris = cdt::triangulate(&points2, &constraint_pairs);
+    stats::CDT_NS.fetch_add(t0.elapsed().as_nanos() as u64, Relaxed);
 
     let axis_comp = match axis {
         0 => &normal.x,
@@ -247,11 +297,11 @@ pub fn candidate_points(tri: [Vec3; 3], input: &ArrangementInput) -> Vec<R3> {
     let axis = dominant_axis(&normal);
 
     let mut out: Vec<R3> = Vec::new();
-    // Membership-only set: hashing beats BTreeSet's cross-multiplying Ord,
-    // and `out` keeps insertion order so determinism is unaffected.
-    let mut seen: std::collections::HashSet<R2> = std::collections::HashSet::new();
-    let add = |p3: R3, out: &mut Vec<R3>, seen: &mut std::collections::HashSet<R2>| {
-        if seen.insert(p3.project_drop(axis)) {
+    // Membership-only set with division-free R2Key hashing; `out` keeps
+    // insertion order so determinism is unaffected.
+    let mut seen: std::collections::HashSet<R2Key> = std::collections::HashSet::new();
+    let add = |p3: R3, out: &mut Vec<R3>, seen: &mut std::collections::HashSet<R2Key>| {
+        if seen.insert(R2Key(p3.project_drop(axis))) {
             out.push(p3);
         }
     };

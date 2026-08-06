@@ -27,7 +27,7 @@ use crate::linalg::Vec3;
 use crate::types::Box;
 
 use super::arrangement::{self, ArrangementInput};
-use super::exact::rational::R3;
+use super::exact::rational::{r3_eq, R3, R3Key};
 use super::exact::Sign;
 use super::tri_tri::{tri_tri_intersect, TriTriIsect};
 
@@ -126,7 +126,7 @@ impl IntersectionGraph {
 /// and output assembly reuse instead of re-rounding.
 #[derive(Default)]
 pub struct VertInterner {
-    map: HashMap<R3, u32>,
+    map: HashMap<R3Key, u32>,
     fmap: HashMap<[u64; 3], u32>,
     pub verts: Vec<R3>,
     pub verts_f64: Vec<Vec3>,
@@ -158,17 +158,19 @@ impl VertInterner {
     /// f64 key space so both paths agree on ids.
     pub fn intern(&mut self, p: &R3) -> u32 {
         let rounded = p.to_vec3_rounded();
-        if R3::from_vec3(rounded) == *p {
+        if r3_eq(&R3::from_vec3(rounded), p) {
             return self.intern_f64(rounded);
         }
-        if let Some(&id) = self.map.get(p) {
-            return id;
+        let next = self.verts.len() as u32;
+        match self.map.entry(R3Key(p.clone())) {
+            std::collections::hash_map::Entry::Occupied(e) => *e.get(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(next);
+                self.verts.push(p.clone());
+                self.verts_f64.push(rounded);
+                next
+            }
         }
-        let id = self.verts.len() as u32;
-        self.map.insert(p.clone(), id);
-        self.verts.push(p.clone());
-        self.verts_f64.push(rounded);
-        id
     }
 }
 
@@ -550,8 +552,8 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
                 let b = &corners[(e + 1) % 3];
                 let key = bit_edge_key(t[e], t[(e + 1) % 3]);
                 for (pt, pt_a) in cands.iter().zip(&cands_a) {
-                    if pt != a
-                        && pt != b
+                    if !r3_eq(pt, a)
+                        && !r3_eq(pt, b)
                         && point_on_segment_f(*pt_a, pt, ca[e], a, ca[(e + 1) % 3], b)
                     {
                         edge_registry[m].entry(key).or_default().insert(pt.clone());
@@ -572,7 +574,7 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
                 let key = geo_edge_key(a, b);
                 let (aa, ba) = (approx3(a), approx3(b));
                 for (pt, pt_a) in cands.iter().zip(&cands_a) {
-                    if pt != a && pt != b && point_on_segment_f(*pt_a, pt, aa, a, ba, b) {
+                    if !r3_eq(pt, a) && !r3_eq(pt, b) && point_on_segment_f(*pt_a, pt, aa, a, ba, b) {
                         seg_splits.entry(key.clone()).or_default().insert(pt.clone());
                     }
                 }
@@ -656,6 +658,10 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
     }
 
     crate::timing::print("robust: arrangements", t_arr);
+    crate::timing::print_count(&format!(
+        "robust: arrangement phases: {}",
+        arrangement::stats::snapshot_and_reset()
+    ));
 
     IntersectionGraph {
         pieces,
