@@ -175,12 +175,21 @@ fn main() {
     //                      expected ≈18878 tris / 10213 verts out,
     //                      volume ≈0.4874593).
     if std::env::var("ROBUST_PERF_THINGI").is_ok() {
-        let pairs: [(&str, &str, &str, [f64; 3]); 2] = [
+        let pairs: [(&str, &str, &str, [f64; 3]); 3] = [
             (
                 "939888∪93557",
                 "src/robust/testdata/939888.stl",
                 "src/robust/testdata/93557.stl",
                 [356.0, 140.0, 322.0],
+            ),
+            (
+                // Small pair (5.5k tris) with a pathological robust/exact
+                // gap (gallery frame 3: expected ≈1100 tris / 614 verts,
+                // volume ≈3.2540366) — the arrangement-BigInt profile case.
+                "91946∪61459",
+                "src/robust/testdata/91946.stl",
+                "src/robust/testdata/61459.stl",
+                [236.0, 231.0, 42.0],
             ),
             (
                 "1663774∪51334",

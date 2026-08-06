@@ -680,6 +680,14 @@ fn real_self_contact(t1: [Vec3; 3], t2: [Vec3; 3]) -> Option<Vec<(R3, R3)>> {
     // Shared vertex positions (exact f64 identity) between the pair. Kept in
     // f64: hundreds of thousands of benign pairs pass through here, and the
     // rational form is only needed by the final Segment-benign check.
+    //
+    // Exactly identical triangles (all three vertices coincide — doubled
+    // surfaces, which some scans apply to their whole mesh) need no cut:
+    // both emit whole pieces with identical interned ids, and the global
+    // coincident binding in classify::bind_coincident reduces the stack
+    // (same winding keeps one representative, opposite windings cancel).
+    // Cutting them instead would drag every such triangle through the full
+    // arrangement pipeline along its own boundary, for nothing.
 
     // Adjacency fast paths — the overwhelming bulk of same-mesh box-overlap
     // pairs are edge- or vertex-neighbors whose only contact is that shared
@@ -689,6 +697,9 @@ fn real_self_contact(t1: [Vec3; 3], t2: [Vec3; 3]) -> Option<Vec<(R3, R3)>> {
     // ones, and without their 2D shortcuts every such pair pays for a full
     // rational coplanar-overlap clip.
     let shared_f: Vec<Vec3> = t1.iter().copied().filter(|v| t2.contains(v)).collect();
+    if shared_f.len() == 3 {
+        return None;
+    }
     if shared_f.len() == 2 {
         if let Some(&opp) = t2.iter().find(|v| !t1.contains(v)) {
             // Non-coplanar edge-neighbors only meet along the shared edge.

@@ -13,7 +13,7 @@ import {
   type MeshData, type ImportedMesh, type BooleanEngine,
 } from '../wasm.ts';
 import { loadSetting, saveSetting } from '../settings.ts';
-import { pickRandomModel, pairOperandKinds, fetchMesh, meshZipUrl, type ThingiModel, type PairKind } from '../thingi.ts';
+import { pickRandomModel, pairOperandKinds, fetchMesh, meshZipUrl, findModelById, type ThingiModel, type PairKind } from '../thingi.ts';
 
 /// Rebuild a ThingiModel from a Copy-Debug-Info operand record: the URL
 /// carries the repo and format, so a pasted report reproduces without the
@@ -69,6 +69,46 @@ const PAIR_KINDS = [
   { value: 'mm', text: 'Manifold + Manifold' },
   { value: 'mn', text: 'Manifold + Non-manifold' },
   { value: 'nn', text: 'Non-manifold + Non-manifold' },
+];
+
+/// Known Thingi10K trouble cases — the pairs the perf and bug hunts keep
+/// returning to. Selecting one loads the exact configuration (models by id,
+/// op, engine, offsets, rotation) through the same path as Use Debug Info.
+const TROUBLE_CASES: {
+  value: string; text: string; a: number; b: number;
+  op: string; engine: string; offset: [number, number, number];
+  rot: [number, number, number]; pairKind: PairKind;
+}[] = [
+  {
+    value: '1663774-51334',
+    text: '1663774 ∪ 51334 — heavy fins (slowest known)',
+    a: 1663774, b: 51334, op: 'union', engine: 'robust',
+    offset: [0.3, 0, 0], rot: [231.39999999999753, 124, 273.6000000000049], pairKind: 'nn',
+  },
+  {
+    value: '91946-61459',
+    text: '91946 ∪ 61459 — doubled-surface windows (perf)',
+    a: 91946, b: 61459, op: 'union', engine: 'robust',
+    offset: [0.3, 0, 0], rot: [236, 231, 42], pairKind: 'nn',
+  },
+  {
+    value: '939888-93557',
+    text: '939888 ∪ 93557 — self-overlapping operand',
+    a: 939888, b: 93557, op: 'union', engine: 'robust',
+    offset: [0.3, 0, 0], rot: [356, 140, 322], pairKind: 'nn',
+  },
+  {
+    value: '1075458-91115',
+    text: '1075458 − 91115 — wasm panic (open bug)',
+    a: 1075458, b: 91115, op: 'difference', engine: 'robust',
+    offset: [0.7, -0.2, 0.4], rot: [311, 55, 345], pairKind: 'mn',
+  },
+  {
+    value: '92068-39926',
+    text: '92068 ∪ 39926 — tripled facets (fixed NotClosed)',
+    a: 92068, b: 39926, op: 'union', engine: 'robust',
+    offset: [0.3, 0, 0], rot: [0, 0, 0], pairKind: 'nn',
+  },
 ];
 
 const OP_COLORS = [0x4488cc, 0x44aa44, 0xcc4444];
@@ -415,6 +455,12 @@ export function init(container: HTMLElement): () => void {
   thingiSection.appendChild(pairKindCtl);
   const loadBtn = createButton('Load Random Pair', () => { loadRandomPair(); });
   thingiSection.appendChild(loadBtn);
+  const troubleOptions = [{ value: '', text: 'Pick a known case…' }]
+    .concat(TROUBLE_CASES.map(c => ({ value: c.value, text: c.text })));
+  const troubleCtl = createDropdown('Trouble Cases', troubleOptions, '', v => {
+    if (v) loadTroubleCase(v);
+  });
+  thingiSection.appendChild(troubleCtl);
   thingiSection.appendChild(thingiInfo);
   controlsEl.appendChild(thingiSection);
 
@@ -505,7 +551,46 @@ export function init(container: HTMLElement): () => void {
       showUseError('a Thingi10K pair is still loading — try again when it finishes.');
       return;
     }
+    await applyDebugInfo(info);
+  }
 
+  async function loadTroubleCase(value: string) {
+    const c = TROUBLE_CASES.find(tc => tc.value === value);
+    if (!c || loadingPair) return;
+    errorBox.style.display = 'none';
+    // Resolve both models in the metadata index (gives repo/name/format for
+    // the shared restore path).
+    let ma: ThingiModel | null = null;
+    let mb: ThingiModel | null = null;
+    try {
+      [ma, mb] = await Promise.all([findModelById(c.a), findModelById(c.b)]);
+    } catch (e) {
+      showUseError(`could not load the Thingi10K index: ${String(e)}`);
+      return;
+    }
+    if (!ma || !mb) {
+      showUseError(`model #${!ma ? c.a : c.b} is not in the Thingi10K index.`);
+      return;
+    }
+    const rec = (m: ThingiModel) => ({
+      id: m.id, name: m.name, url: meshZipUrl(m), faces: m.faces,
+      edge_manifold: m.edge_manifold, vertex_manifold: m.vertex_manifold,
+    });
+    await applyDebugInfo({
+      demo: DEMO,
+      op: c.op,
+      engine: c.engine,
+      offset: c.offset,
+      rotation_degrees: c.rot,
+      pair_kind: c.pairKind,
+      model_a: rec(ma),
+      model_b: rec(mb),
+    });
+  }
+
+  /// Restore the gallery to the exact state a debug-info record describes.
+  /// Shared by Use Debug Info (clipboard) and the Trouble Cases dropdown.
+  async function applyDebugInfo(info: any) {
     // Land exactly on the captured frame: freeze animation first.
     forceAnimateOff();
 

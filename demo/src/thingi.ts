@@ -59,6 +59,7 @@ export function meshZipUrl(model: ThingiModel): string {
 
 let manifoldPool: ThingiModel[] | null = null;
 let nonManifoldPool: ThingiModel[] | null = null;
+let allModels: ThingiModel[] | null = null;
 let metadataPromise: Promise<void> | null = null;
 
 /** Fetch and index the metadata once per session. */
@@ -77,6 +78,7 @@ async function ensureMetadata(): Promise<void> {
         } catch (e) { lastErr = e; }
       }
       if (!all) throw new Error(`Thingi10K metadata fetch failed: ${lastErr}`);
+      allModels = all;
       const usable = all.filter(m =>
         m.format === 'stl' && m.closed && m.faces >= MIN_FACES && m.faces <= MAX_FACES);
       // Prefer the weld_result ground truth (computed by manifold-rust
@@ -124,6 +126,15 @@ export async function pickRandomModel(kind: 'm' | 'n', exclude?: ThingiModel): P
 /** Operand manifoldness for each pair combination. */
 export function pairOperandKinds(kind: PairKind): ['m' | 'n', 'm' | 'n'] {
   return kind === 'mm' ? ['m', 'm'] : kind === 'mn' ? ['m', 'n'] : ['n', 'n'];
+}
+
+/**
+ * Look a model up by its Thingi10K id in the full metadata index (not just
+ * the curated pools — trouble-case fixtures may fall outside them).
+ */
+export async function findModelById(id: number): Promise<ThingiModel | null> {
+  await ensureMetadata();
+  return allModels?.find(m => m.id === id && m.format === 'stl') ?? null;
 }
 
 async function fetchAndUnzip(url: string): Promise<ArrayBuffer> {
