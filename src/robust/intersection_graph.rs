@@ -322,6 +322,8 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
                 .collect(),
         );
         let mut cands: Vec<usize> = Vec::new();
+        let mut n_pairs = 0usize;
+        let mut n_cut = 0usize;
         for i in 0..tris.len() {
             if !live[m][i] {
                 continue;
@@ -335,9 +337,11 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
                 if j <= i || !boxes[i].does_overlap_box(&boxes[j]) {
                     continue;
                 }
+                n_pairs += 1;
                 let Some(segs) = real_self_contact(tris[i], tris[j]) else {
                     continue;
                 };
+                n_cut += 1;
                 for (x, y) in segs {
                     let pair = pair_count;
                     prims[m][i].segments.push((x.clone(), y.clone(), pair));
@@ -346,6 +350,9 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
                 }
             }
         }
+        crate::timing::print_count(
+            &format!("robust: self-cut mesh {m}: {n_pairs} box pairs, {n_cut} cutting"),
+        );
     }
 
     crate::timing::print("robust: self-intersection cuts", t_self);
@@ -575,40 +582,111 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
 /// else is a genuine self-intersection whose segments must cut the surface,
 /// so that every emitted piece lies on a single sheet level of its own mesh
 /// (robust/mod.rs classifies own-mesh winding per component).
+/// Axis of the largest |component| of the (f64) triangle normal. Only a
+/// projection *choice*: when the exact normal's chosen component happens to
+/// be zero, the projected points go collinear, the exact 2D signs come back
+/// Zero, and every shortcut below falls through — sound, just unoptimized.
+fn dominant_axis_f64(t: [Vec3; 3]) -> usize {
+    let n = crate::linalg::cross(t[1] - t[0], t[2] - t[0]);
+    let (ax, ay, az) = (n.x.abs(), n.y.abs(), n.z.abs());
+    if az >= ax && az >= ay {
+        2
+    } else if ay >= ax {
+        1
+    } else {
+        0
+    }
+}
+
+/// `R3::project_drop` for raw f64 points (same cyclic axis convention).
+fn project_f64(v: Vec3, axis: usize) -> crate::linalg::Vec2 {
+    match axis {
+        0 => crate::linalg::Vec2::new(v.y, v.z),
+        1 => crate::linalg::Vec2::new(v.z, v.x),
+        _ => crate::linalg::Vec2::new(v.x, v.y),
+    }
+}
+
 fn real_self_contact(t1: [Vec3; 3], t2: [Vec3; 3]) -> Option<Vec<(R3, R3)>> {
     use super::exact::filtered::orient3d;
     use super::exact::Sign;
 
-    // Shared vertex positions (exact identity) between the pair.
-    let shared: Vec<R3> = t1
-        .iter()
-        .filter(|v| t2.contains(v))
-        .map(|v| R3::from_vec3(*v))
-        .collect();
+    // Shared vertex positions (exact f64 identity) between the pair. Kept in
+    // f64: hundreds of thousands of benign pairs pass through here, and the
+    // rational form is only needed by the final Segment-benign check.
 
     // Adjacency fast paths — the overwhelming bulk of same-mesh box-overlap
     // pairs are edge- or vertex-neighbors whose only contact is that shared
-    // simplex, which never needs a cut. Both shortcuts are exact (filtered
-    // predicates escalate to rationals when uncertain).
-    if shared.len() == 2 {
-        // Edge-adjacent: a non-coplanar neighbor can only meet along the
-        // shared edge itself (benign). Coplanar pairs fall through.
+    // simplex, which never needs a cut. All shortcuts are exact (filtered
+    // predicates escalate to rationals when uncertain); flat triangulated
+    // regions make the *coplanar* neighbor cases as common as the generic
+    // ones, and without their 2D shortcuts every such pair pays for a full
+    // rational coplanar-overlap clip.
+    let shared_f: Vec<Vec3> = t1.iter().copied().filter(|v| t2.contains(v)).collect();
+    if shared_f.len() == 2 {
         if let Some(&opp) = t2.iter().find(|v| !t1.contains(v)) {
+            // Non-coplanar edge-neighbors only meet along the shared edge.
             if orient3d(t1[0], t1[1], t1[2], opp) != Sign::Zero {
                 return None;
             }
+            // Coplanar edge-neighbors: benign exactly when the two opposite
+            // corners strictly straddle the shared edge's line within the
+            // plane (the flat-plate case) — then the closed half-plane
+            // intersection is the shared edge itself.
+            if let Some(&own) = t1.iter().find(|v| !t2.contains(v)) {
+                let axis = dominant_axis_f64(t1);
+                let p2 = |v: Vec3| project_f64(v, axis);
+                let s_own =
+                    super::exact::filtered::orient2d(p2(shared_f[0]), p2(shared_f[1]), p2(own));
+                let s_opp =
+                    super::exact::filtered::orient2d(p2(shared_f[0]), p2(shared_f[1]), p2(opp));
+                if s_own != Sign::Zero && s_opp != Sign::Zero && s_own != s_opp {
+                    return None;
+                }
+            }
         }
-    } else if shared.len() == 1 {
+    } else if shared_f.len() == 1 {
         // Vertex-adjacent: if t2's two non-shared corners lie strictly on
         // one side of t1's plane, the contact is exactly the shared vertex —
         // an isolated point, no cut.
-        let others: Vec<Sign> = t2
+        let others: Vec<(Vec3, Sign)> = t2
             .iter()
             .filter(|v| !t1.contains(v))
-            .map(|&v| orient3d(t1[0], t1[1], t1[2], v))
+            .map(|&v| (v, orient3d(t1[0], t1[1], t1[2], v)))
             .collect();
-        if others.len() == 2 && others[0] != Sign::Zero && others[0] == others[1] {
+        if others.len() == 2 && others[0].1 != Sign::Zero && others[0].1 == others[1].1 {
             return None;
+        }
+        // Fully coplanar vertex-neighbors (triangle fans on flat regions):
+        // an edge through the shared vertex that strictly separates the two
+        // triangles certifies the contact is exactly that vertex.
+        if others.len() == 2 && others[0].1 == Sign::Zero && others[1].1 == Sign::Zero {
+            let axis = dominant_axis_f64(t1);
+            let p2 = |v: Vec3| project_f64(v, axis);
+            let v0 = shared_f[0];
+            let own: Vec<Vec3> = t1.iter().copied().filter(|v| !t2.contains(v)).collect();
+            let other = [others[0].0, others[1].0];
+            // Candidate separators: each triangle's two edges through v0,
+            // tested against its own third corner vs the other triangle's
+            // two corners.
+            let separated = |ea: Vec3, third: Vec3, far: [Vec3; 2]| -> bool {
+                let s_t = super::exact::filtered::orient2d(p2(v0), p2(ea), p2(third));
+                if s_t == Sign::Zero {
+                    return false;
+                }
+                far.iter().all(|&f| {
+                    let s = super::exact::filtered::orient2d(p2(v0), p2(ea), p2(f));
+                    s != Sign::Zero && s != s_t
+                })
+            };
+            if own.len() == 2
+                && (separated(own[0], own[1], other)
+                    || separated(own[1], own[0], other)
+                    || separated(other[0], other[1], [own[0], own[1]])
+                    || separated(other[1], other[0], [own[0], own[1]]))
+            {
+                return None;
+            }
         }
     }
 
@@ -619,9 +697,11 @@ fn real_self_contact(t1: [Vec3; 3], t2: [Vec3; 3]) -> Option<Vec<(R3, R3)>> {
         // is on, so they need no cut.
         TriTriIsect::Point(_) => None,
         TriTriIsect::Segment(x, y) => {
-            let benign = shared.len() >= 2
-                && point_on_segment(&x, &shared[0], &shared[1])
-                && point_on_segment(&y, &shared[0], &shared[1]);
+            let benign = shared_f.len() >= 2 && {
+                let s0 = R3::from_vec3(shared_f[0]);
+                let s1 = R3::from_vec3(shared_f[1]);
+                point_on_segment(&x, &s0, &s1) && point_on_segment(&y, &s0, &s1)
+            };
             (!benign).then(|| vec![(x, y)])
         }
         // Positive-area coplanar overlap (a fold or doubled patch): cut both

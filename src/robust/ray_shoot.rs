@@ -19,7 +19,7 @@ use num_rational::BigRational;
 use crate::linalg::Vec3;
 
 use super::exact::predicates::orient3d_r;
-use super::exact::rational::{rat, R3};
+use super::exact::rational::{rat, rat_to_f64, R3};
 use super::exact::Sign;
 
 /// Fixed retry directions; pairwise non-parallel, chosen to make consecutive
@@ -105,41 +105,207 @@ fn tri_box_f64(t: &[Vec3; 3]) -> crate::types::Box {
 /// triangle soup `tris`. The point must not lie on the surface.
 pub fn winding_number(point: &R3, tris: &[[Vec3; 3]]) -> i32 {
     let boxes: Vec<crate::types::Box> = tris.iter().map(tri_box_f64).collect();
+    winding_number_boxed(point, tris, &boxes)
+}
+
+/// Per-operand acceleration structure for batches of winding queries: a BVH
+/// over the triangle boxes, queried with a conservative semi-infinite box
+/// around each candidate ray. Build once per operand; thousands of
+/// per-component queries then touch only the triangles near their ray
+/// instead of scanning the whole soup.
+pub struct WindingIndex {
+    boxes: Vec<crate::types::Box>,
+    collider: crate::collider::Collider,
+    order: Vec<usize>,
+}
+
+impl WindingIndex {
+    pub fn new(tris: &[[Vec3; 3]]) -> Self {
+        let boxes: Vec<crate::types::Box> = tris.iter().map(tri_box_f64).collect();
+        let scene = boxes
+            .iter()
+            .fold(crate::types::Box::new(), |acc, b| acc.union_box(b));
+        let mut order: Vec<usize> = (0..tris.len()).collect();
+        order.sort_by_key(|&i| crate::sort::morton_code(boxes[i].center(), &scene));
+        let collider = crate::collider::Collider::new(
+            order.iter().map(|&i| boxes[i]).collect(),
+            order
+                .iter()
+                .map(|&i| crate::sort::morton_code(boxes[i].center(), &scene))
+                .collect(),
+        );
+        WindingIndex {
+            boxes,
+            collider,
+            order,
+        }
+    }
+
+    /// Conservative superset of every triangle `RayPrefilter::may_hit` would
+    /// keep for this (origin, direction): a box stretching to infinity along
+    /// the ray, inflated past the prefilter's epsilon and backward reach.
+    fn candidates(&self, prefilter: &RayPrefilter, d: [i32; 3]) -> Vec<usize> {
+        let maxd = d.iter().map(|v| v.abs()).max().unwrap_or(1) as f64;
+        let slack = prefilter.eps * (2.0 + maxd);
+        let mut lo = crate::linalg::Vec3::new(0.0, 0.0, 0.0);
+        let mut hi = crate::linalg::Vec3::new(0.0, 0.0, 0.0);
+        for k in 0..3 {
+            let o = prefilter.origin[k];
+            if d[k] > 0 {
+                lo[k] = o - slack;
+                hi[k] = f64::INFINITY;
+            } else if d[k] < 0 {
+                lo[k] = f64::NEG_INFINITY;
+                hi[k] = o + slack;
+            } else {
+                lo[k] = o - slack;
+                hi[k] = o + slack;
+            }
+        }
+        let query = crate::types::Box { min: lo, max: hi };
+        let mut out = Vec::new();
+        self.collider.collisions_one(&query, usize::MAX, |_, leaf| {
+            out.push(self.order[leaf]);
+        });
+        out
+    }
+}
+
+/// [`winding_number`] against a prebuilt [`WindingIndex`].
+pub fn winding_number_indexed(point: &R3, tris: &[[Vec3; 3]], index: &WindingIndex) -> i32 {
     let prefilter = RayPrefilter::new(point);
-    'dirs: for d in DIRS {
-        let dir = dir_r3(d);
-        let o2 = point.add(&dir);
-        let mut winding = 0i32;
-        for (t, bbox) in tris.iter().zip(&boxes) {
-            if !prefilter.may_hit(d, bbox) {
+    let ap = [
+        rat_to_f64(&point.x),
+        rat_to_f64(&point.y),
+        rat_to_f64(&point.z),
+    ];
+    for d in DIRS {
+        let mut cand = index.candidates(&prefilter, d);
+        cand.sort_unstable(); // deterministic evaluation order
+        if let Some(w) = winding_one_dir(
+            point,
+            &ap,
+            d,
+            &prefilter,
+            cand.iter().map(|&i| (&tris[i], &index.boxes[i])),
+        ) {
+            return w;
+        }
+    }
+    unreachable!("all candidate ray directions degenerate — malformed input");
+}
+
+/// [`winding_number`] with caller-provided per-triangle boxes — batch query
+/// sites build them once per operand instead of once per query.
+pub fn winding_number_boxed(
+    point: &R3,
+    tris: &[[Vec3; 3]],
+    boxes: &[crate::types::Box],
+) -> i32 {
+    let prefilter = RayPrefilter::new(point);
+    let ap = [
+        rat_to_f64(&point.x),
+        rat_to_f64(&point.y),
+        rat_to_f64(&point.z),
+    ];
+    for d in DIRS {
+        if let Some(w) = winding_one_dir(point, &ap, d, &prefilter, tris.iter().zip(boxes.iter()))
+        {
+            return w;
+        }
+    }
+    unreachable!("all candidate ray directions degenerate — malformed input");
+}
+
+/// One direction's signed crossing count over the given (triangle, box)
+/// pairs; `None` means the ray grazed something and the caller must retry
+/// with the next direction. Approx-filtered first, exact on demand.
+fn winding_one_dir<'a, I: Iterator<Item = (&'a [Vec3; 3], &'a crate::types::Box)>>(
+    point: &R3,
+    ap: &[f64; 3],
+    d: [i32; 3],
+    prefilter: &RayPrefilter,
+    tris_boxes: I,
+) -> Option<i32> {
+    use super::exact::approx::orient3d_a;
+
+    let dir = dir_r3(d);
+    let o2 = point.add(&dir);
+    let ao2 = [
+        ap[0] + d[0] as f64,
+        ap[1] + d[1] as f64,
+        ap[2] + d[2] as f64,
+    ];
+    let mut winding = 0i32;
+    for (t, bbox) in tris_boxes {
+        if !prefilter.may_hit(d, bbox) {
+            continue;
+        }
+            let fa = [t[0].x, t[0].y, t[0].z];
+            let fb = [t[1].x, t[1].y, t[1].z];
+            let fc = [t[2].x, t[2].y, t[2].z];
+            // Plücker side tests of the ray line against the three edges —
+            // approx first, exact only when the filter cannot certify.
+            let sides = [
+                orient3d_a(*ap, ao2, fa, fb),
+                orient3d_a(*ap, ao2, fb, fc),
+                orient3d_a(*ap, ao2, fc, fa),
+            ];
+            // Certified miss without touching BigInt: two strict opposite
+            // signs mean the line cannot pierce the closed triangle.
+            if matches!(
+                (sides[0], sides[1]),
+                (Some(Sign::Pos), Some(Sign::Neg)) | (Some(Sign::Neg), Some(Sign::Pos))
+            ) || matches!(
+                (sides[1], sides[2]),
+                (Some(Sign::Pos), Some(Sign::Neg)) | (Some(Sign::Neg), Some(Sign::Pos))
+            ) || matches!(
+                (sides[0], sides[2]),
+                (Some(Sign::Pos), Some(Sign::Neg)) | (Some(Sign::Neg), Some(Sign::Pos))
+            ) {
                 continue;
             }
-            let a = R3::from_vec3(t[0]);
-            let b = R3::from_vec3(t[1]);
-            let c = R3::from_vec3(t[2]);
-            // Plücker side tests of the ray line against the three edges.
-            let s_ab = orient3d_r(point, &o2, &a, &b);
-            let s_bc = orient3d_r(point, &o2, &b, &c);
-            let s_ca = orient3d_r(point, &o2, &c, &a);
-            if s_ab == Sign::Zero || s_bc == Sign::Zero || s_ca == Sign::Zero {
-                // Might graze an edge or vertex of this triangle — only a
-                // problem if the grazing happens on the forward ray within
-                // the triangle's neighborhood; retrying is always safe.
-                if could_graze(point, &o2, &a, &b, &c) {
-                    continue 'dirs;
+            // Resolve any uncertain side exactly (rational triangle built
+            // only when a filter actually missed).
+            let (s_ab, s_bc, s_ca) = match (sides[0], sides[1], sides[2]) {
+                (Some(x), Some(y), Some(z)) => (x, y, z),
+                _ => {
+                    let a = R3::from_vec3(t[0]);
+                    let b = R3::from_vec3(t[1]);
+                    let c = R3::from_vec3(t[2]);
+                    let s_ab = sides[0].unwrap_or_else(|| orient3d_r(point, &o2, &a, &b));
+                    let s_bc = sides[1].unwrap_or_else(|| orient3d_r(point, &o2, &b, &c));
+                    let s_ca = sides[2].unwrap_or_else(|| orient3d_r(point, &o2, &c, &a));
+                    if s_ab == Sign::Zero || s_bc == Sign::Zero || s_ca == Sign::Zero {
+                        // Might graze an edge or vertex of this triangle —
+                        // only a problem if the grazing happens on the
+                        // forward ray within the triangle's neighborhood;
+                        // retrying is always safe.
+                        if could_graze(point, &o2, &a, &b, &c) {
+                            return None;
+                        }
+                        continue;
+                    }
+                    (s_ab, s_bc, s_ca)
                 }
-                continue;
-            }
+            };
             if s_ab != s_bc || s_bc != s_ca {
                 continue; // line misses the triangle
             }
             // Line pierces the triangle interior. Forward (t > 0)?
-            let h = orient3d_r(&a, &b, &c, point);
+            let h = orient3d_a(fa, fb, fc, *ap).unwrap_or_else(|| {
+                orient3d_r(
+                    &R3::from_vec3(t[0]),
+                    &R3::from_vec3(t[1]),
+                    &R3::from_vec3(t[2]),
+                    point,
+                )
+            });
             if h == Sign::Zero {
                 // Point on the triangle's plane while the line pierces the
                 // interior ⇒ the point is on the surface — caller violated
                 // the precondition, or the ray grazes; retry.
-                continue 'dirs;
+                return None;
             }
             // n·dir sign == common side-sign (all three Pos ⇔ dir on the
             // CCW-normal side).
@@ -151,10 +317,8 @@ pub fn winding_number(point: &R3, tris: &[[Vec3; 3]]) -> i32 {
                 Sign::Pos => 1, // exits through a front face
                 _ => -1,
             };
-        }
-        return winding;
     }
-    unreachable!("all candidate ray directions degenerate — malformed input");
+    Some(winding)
 }
 
 /// Exact winding number of `point + ε·outward` for an infinitesimal ε > 0:
@@ -179,10 +343,19 @@ pub fn winding_off_surface(
     point: &R3,
     outward: &R3,
     tris: &[[R3; 3]],
+    tris_f64: &[[Vec3; 3]],
     boxes: &[crate::types::Box],
 ) -> i32 {
+    use super::exact::approx::orient3d_a;
+
     debug_assert_eq!(tris.len(), boxes.len());
+    debug_assert_eq!(tris.len(), tris_f64.len());
     let prefilter = RayPrefilter::new(point);
+    let ap = [
+        rat_to_f64(&point.x),
+        rat_to_f64(&point.y),
+        rat_to_f64(&point.z),
+    ];
     'dirs: for d in DIRS
         .iter()
         .flat_map(|d| [*d, [-d[0], -d[1], -d[2]]])
@@ -194,15 +367,41 @@ pub fn winding_off_surface(
             continue;
         }
         let o2 = point.add(&dir);
+        let ao2 = [
+            ap[0] + d[0] as f64,
+            ap[1] + d[1] as f64,
+            ap[2] + d[2] as f64,
+        ];
         let mut winding = 0i32;
-        for (t, bbox) in tris.iter().zip(boxes) {
+        for ((t, tf), bbox) in tris.iter().zip(tris_f64.iter()).zip(boxes) {
             if !prefilter.may_hit(d, bbox) {
                 continue;
             }
+            let fa = [tf[0].x, tf[0].y, tf[0].z];
+            let fb = [tf[1].x, tf[1].y, tf[1].z];
+            let fc = [tf[2].x, tf[2].y, tf[2].z];
+            // Approx-first (certified misses skip all rational work).
+            let sides = [
+                orient3d_a(ap, ao2, fa, fb),
+                orient3d_a(ap, ao2, fb, fc),
+                orient3d_a(ap, ao2, fc, fa),
+            ];
+            if matches!(
+                (sides[0], sides[1]),
+                (Some(Sign::Pos), Some(Sign::Neg)) | (Some(Sign::Neg), Some(Sign::Pos))
+            ) || matches!(
+                (sides[1], sides[2]),
+                (Some(Sign::Pos), Some(Sign::Neg)) | (Some(Sign::Neg), Some(Sign::Pos))
+            ) || matches!(
+                (sides[0], sides[2]),
+                (Some(Sign::Pos), Some(Sign::Neg)) | (Some(Sign::Neg), Some(Sign::Pos))
+            ) {
+                continue;
+            }
             let (a, b, c) = (&t[0], &t[1], &t[2]);
-            let s_ab = orient3d_r(point, &o2, a, b);
-            let s_bc = orient3d_r(point, &o2, b, c);
-            let s_ca = orient3d_r(point, &o2, c, a);
+            let s_ab = sides[0].unwrap_or_else(|| orient3d_r(point, &o2, a, b));
+            let s_bc = sides[1].unwrap_or_else(|| orient3d_r(point, &o2, b, c));
+            let s_ca = sides[2].unwrap_or_else(|| orient3d_r(point, &o2, c, a));
             if s_ab == Sign::Zero || s_bc == Sign::Zero || s_ca == Sign::Zero {
                 if could_graze(point, &o2, a, b, c) {
                     continue 'dirs;
@@ -213,7 +412,7 @@ pub fn winding_off_surface(
                 continue; // line misses the triangle
             }
             let n_dot_dir = s_ab; // sign(n·dir), n the CCW normal
-            let h = orient3d_r(a, b, c, point);
+            let h = orient3d_a(fa, fb, fc, ap).unwrap_or_else(|| orient3d_r(a, b, c, point));
             if h == Sign::Zero {
                 // Plane through the query point; the pierce point is `point`
                 // itself (the transversal line meets the plane only there).

@@ -91,6 +91,26 @@ pub fn tri_tri_intersect(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
         "t1 coplanar with t2's plane implies t2 coplanar with t1's — handled above"
     );
 
+    // Both triangles straddle each other's plane, but most such box-pair
+    // candidates still miss along the common line. A certified
+    // separating-axis check on the raw f64 vertices skips the entire
+    // rational interval construction for them.
+    {
+        let f1 = [
+            [t1[0].x, t1[0].y, t1[0].z],
+            [t1[1].x, t1[1].y, t1[1].z],
+            [t1[2].x, t1[2].y, t1[2].z],
+        ];
+        let f2 = [
+            [t2[0].x, t2[0].y, t2[0].z],
+            [t2[1].x, t2[1].y, t2[1].z],
+            [t2[2].x, t2[2].y, t2[2].z],
+        ];
+        if super::exact::approx::sat_edge_axes_disjoint(&f1, &f2) {
+            return TriTriIsect::None;
+        }
+    }
+
     let r1: [R3; 3] = [
         R3::from_vec3(t1[0]),
         R3::from_vec3(t1[1]),

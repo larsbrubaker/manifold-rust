@@ -38,6 +38,14 @@ pub fn set_mem_hook(hook: MemHook) {
     let _ = MEM_HOOK.set(hook);
 }
 
+/// Print a counter/diagnostic line, gated on the same MANIFOLD_TIMING
+/// switch as the stage timers.
+pub(crate) fn print_count(label: &str) {
+    if enabled() {
+        eprintln!("{label}");
+    }
+}
+
 /// Print the elapsed time for a stage started with `start`, matching the C++
 /// Timer::Print format ("label: N sec") on stderr. If a memory hook is
 /// registered, appends current/stage-peak heap use.

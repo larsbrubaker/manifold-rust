@@ -138,6 +138,83 @@ pub fn not_on_segment_a(p: [f64; 3], a: [f64; 3], b: [f64; 3]) -> Option<bool> {
     None
 }
 
+/// Certified separating-axis disjointness for two triangles with EXACT f64
+/// vertices (mesh input triangles — no input perturbation, only evaluation
+/// roundoff). Returns true only when some edge-pair cross axis provably
+/// separates the triangles; the face-plane axes are the caller's sign gates.
+/// Division-free: every projection is a degree-3 polynomial with a
+/// magnitude-permanent error bound (conservative 64ε).
+///
+/// A `false` says nothing (the triangles may or may not intersect); a `true`
+/// certifies empty intersection, letting narrow phases skip all exact work
+/// for the both-straddle-but-miss pairs that otherwise pay full rational
+/// interval construction.
+pub fn sat_edge_axes_disjoint(t1: &[[f64; 3]; 3], t2: &[[f64; 3]; 3]) -> bool {
+    #[inline]
+    fn sub(a: &[f64; 3], b: &[f64; 3]) -> [f64; 3] {
+        [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+    }
+    #[inline]
+    fn mag_sum(a: &[f64; 3], b: &[f64; 3]) -> [f64; 3] {
+        [
+            a[0].abs() + b[0].abs(),
+            a[1].abs() + b[1].abs(),
+            a[2].abs() + b[2].abs(),
+        ]
+    }
+    // Magnitude bound of every vertex coordinate, per axis.
+    let mut m = [0.0f64; 3];
+    for t in [t1, t2] {
+        for v in t {
+            for k in 0..3 {
+                m[k] = m[k].max(v[k].abs());
+            }
+        }
+    }
+    for i in 0..3 {
+        let e1 = sub(&t1[(i + 1) % 3], &t1[i]);
+        let me1 = mag_sum(&t1[(i + 1) % 3], &t1[i]);
+        for j in 0..3 {
+            let e2 = sub(&t2[(j + 1) % 3], &t2[j]);
+            let me2 = mag_sum(&t2[(j + 1) % 3], &t2[j]);
+            let axis = [
+                e1[1] * e2[2] - e1[2] * e2[1],
+                e1[2] * e2[0] - e1[0] * e2[2],
+                e1[0] * e2[1] - e1[1] * e2[0],
+            ];
+            // Component-wise magnitude bound of the (computed) axis.
+            let ma = [
+                me1[1] * me2[2] + me1[2] * me2[1],
+                me1[2] * me2[0] + me1[0] * me2[2],
+                me1[0] * me2[1] + me1[1] * me2[0],
+            ];
+            // Projection error bound: dot of a degree-2 axis with degree-1
+            // coordinates; 64ε·Σ|axis_k|·(2·m_k) is conservative for every
+            // rounding along the way.
+            let bound = 64.0 * EPS * (ma[0] * (2.0 * m[0]) + ma[1] * (2.0 * m[1]) + ma[2] * (2.0 * m[2]));
+            if !bound.is_finite() {
+                continue;
+            }
+            let proj = |t: &[[f64; 3]; 3]| -> (f64, f64) {
+                let mut lo = f64::INFINITY;
+                let mut hi = f64::NEG_INFINITY;
+                for v in t {
+                    let p = axis[0] * v[0] + axis[1] * v[1] + axis[2] * v[2];
+                    lo = lo.min(p);
+                    hi = hi.max(p);
+                }
+                (lo, hi)
+            };
+            let (lo1, hi1) = proj(t1);
+            let (lo2, hi2) = proj(t2);
+            if lo1 > hi2 + bound || lo2 > hi1 + bound {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::super::predicates::{incircle_r, orient2d_r, orient3d_r, point_on_segment_r};

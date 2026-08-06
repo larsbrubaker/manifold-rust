@@ -50,7 +50,7 @@ use crate::types::{Error, OpType};
 
 use classify::Tag;
 use exact::rational::R3;
-use ray_shoot::{piece_centroid, winding_number};
+use ray_shoot::piece_centroid;
 
 fn is_cancelled(token: Option<&CancelToken>) -> bool {
     token.is_some_and(|t| t.is_cancelled())
@@ -197,22 +197,28 @@ pub fn boolean(
     let own_boxes: [Vec<crate::types::Box>; 2] = [tri_boxes(&p_tris), tri_boxes(&q_tris)];
 
     let t_winding = crate::timing::start();
+    // BVH per operand, built once for the whole query batch (components can
+    // number in the thousands on self-intersecting scans).
+    let winding_indexes: Option<[ray_shoot::WindingIndex; 2]> = (!prop.untagged.is_empty())
+        .then(|| [ray_shoot::WindingIndex::new(&p_tris), ray_shoot::WindingIndex::new(&q_tris)]);
     for &(root, rep) in &prop.untagged {
         if is_cancelled(token) {
             return cancelled_impl();
         }
         let piece = &graph.pieces[rep];
         let mesh = piece.mesh as usize;
-        let (other, other_is_complement): (&[[Vec3; 3]], bool) = if mesh == 0 {
-            (&q_tris, complement)
+        let indexes = winding_indexes.as_ref().expect("built when untagged is non-empty");
+        let (other, other_index, other_is_complement): (&[[Vec3; 3]], _, bool) = if mesh == 0 {
+            (&q_tris, &indexes[1], complement)
         } else {
-            (&p_tris, false)
+            (&p_tris, &indexes[0], false)
         };
-        let w = winding_number(&piece_centroid(&piece.v), other);
+        let w = ray_shoot::winding_number_indexed(&piece_centroid(&piece.v), other, other_index);
         let inside = if other_is_complement { w == 0 } else { w != 0 };
         let tag = if inside { Tag::Inter } else { Tag::Union };
-        let component_tag = on_own_boundary(piece, &own_rational[mesh], &own_boxes[mesh])
-            .then_some(tag);
+        let own_f64: &[[Vec3; 3]] = if mesh == 0 { &p_tris } else { &q_tris };
+        let component_tag =
+            on_own_boundary(piece, &own_rational[mesh], own_f64, &own_boxes[mesh]).then_some(tag);
         for pi in 0..graph.pieces.len() {
             if !cls.discarded[pi] && prop.component[pi] == root {
                 tags[pi] = component_tag;
@@ -259,12 +265,19 @@ pub fn boolean(
 fn on_own_boundary(
     piece: &intersection_graph::Piece,
     own: &[[R3; 3]],
+    own_f64: &[[Vec3; 3]],
     own_boxes: &[crate::types::Box],
 ) -> bool {
     let normal = piece.v[1]
         .sub(&piece.v[0])
         .cross(&piece.v[2].sub(&piece.v[0]));
-    let w = ray_shoot::winding_off_surface(&piece_centroid(&piece.v), &normal, own, own_boxes);
+    let w = ray_shoot::winding_off_surface(
+        &piece_centroid(&piece.v),
+        &normal,
+        own,
+        own_f64,
+        own_boxes,
+    );
     w == 0 || w == -1
 }
 
