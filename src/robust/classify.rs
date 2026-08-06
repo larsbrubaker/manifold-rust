@@ -81,13 +81,26 @@ fn angle_cmp(a: (&BigRational, &BigRational), b: (&BigRational, &BigRational)) -
 
 /// Coincident-piece regularization and binding (paper §7.1 done globally
 /// rather than per ring, so every ring sees one consistent decision):
-/// exactly-equal pieces from the two meshes — the copies coplanar overlap
-/// regions produce on each side, identical thanks to the common-subdivision
-/// guarantees — are paired up. Opposite-winding pairs are infinitely thin
-/// material and get discarded outright; same-winding pairs are the shared
-/// regions both outputs keep once, so the P copy is bound to Union and the
-/// Q copy to Inter. (The paper notes the choice is arbitrary; making it
-/// globally per piece, not per ring, is what keeps it conflict-free.)
+/// exactly-equal pieces are grouped by their sorted vertex triple and
+/// reduced in two stages.
+///
+/// Within one mesh first: a mesh's own exactly-coincident pieces are
+/// degenerate sheets of that operand. Opposite-winding pairs (a fold touching
+/// itself, or a zero-thickness flap) are infinitely thin material and cancel;
+/// same-winding stacks (a doubled/tripled surface — e.g. a Thingi10K scan
+/// whose STL repeats every facet, making the operand a multiple cover) are
+/// one surface element that any regularized boundary may contain at most
+/// once, so a single representative survives. The winding-based component
+/// classification in robust/mod.rs then decides that representative exactly
+/// as it would the single-cover surface — the winding queries run against the
+/// full original soup, where the multiplicity is still visible.
+///
+/// Then across meshes, on the reduced (≤1 piece per mesh) groups:
+/// opposite-winding pairs are again thin material and get discarded; a
+/// same-winding pair is a region shared by both surfaces that each output
+/// keeps exactly once, so the P copy is bound to Union and the Q copy to
+/// Inter. (The paper notes the choice is arbitrary; making it globally per
+/// piece, not per ring, is what keeps it conflict-free.)
 fn bind_coincident(
     graph: &IntersectionGraph,
     tags: &mut [Option<Tag>],
@@ -105,11 +118,27 @@ fn bind_coincident(
         let same = piece.v[(start + 1) % 3] == sorted[1];
         by_key.entry(sorted).or_default().push((pi, same));
     }
+    // Same-mesh reduction: cancel opposite-parity pairs, then keep only the
+    // lowest-indexed survivor of the remaining same-parity stack.
+    let reduce = |side: &mut Vec<(usize, bool)>, discarded: &mut [bool]| {
+        let mut fwd: Vec<usize> = side.iter().filter(|e| e.1).map(|e| e.0).collect();
+        let mut bwd: Vec<usize> = side.iter().filter(|e| !e.1).map(|e| e.0).collect();
+        // NB: popping both inside one `while let` tuple pattern would consume
+        // (and silently un-discard) a piece when only one list has any left.
+        while !fwd.is_empty() && !bwd.is_empty() {
+            discarded[fwd.pop().unwrap()] = true;
+            discarded[bwd.pop().unwrap()] = true;
+        }
+        for &pi in fwd.iter().chain(&bwd).skip(1) {
+            discarded[pi] = true;
+        }
+        side.retain(|&(pi, _)| !discarded[pi]);
+        debug_assert!(side.len() <= 1);
+    };
     for owners in by_key.values() {
         if owners.len() < 2 {
             continue;
         }
-        // Cancel opposite-parity cross-mesh pairs first (regularization)...
         let mut p_side: Vec<(usize, bool)> = Vec::new();
         let mut q_side: Vec<(usize, bool)> = Vec::new();
         for &(pi, parity) in owners {
@@ -119,27 +148,18 @@ fn bind_coincident(
                 q_side.push((pi, parity));
             }
         }
-        let mut used_q = vec![false; q_side.len()];
-        for &(pi, parity) in &p_side {
-            if let Some(k) = (0..q_side.len())
-                .find(|&k| !used_q[k] && q_side[k].1 != parity)
-            {
-                used_q[k] = true;
-                discarded[pi] = true;
-                discarded[q_side[k].0] = true;
-            }
-        }
-        // ...then bind same-parity cross-mesh pairs: P → Union, Q → Inter.
-        for &(pi, parity) in &p_side {
-            if discarded[pi] {
-                continue;
-            }
-            if let Some(k) = (0..q_side.len())
-                .find(|&k| !used_q[k] && q_side[k].1 == parity)
-            {
-                used_q[k] = true;
-                tags[pi] = Some(Tag::Union);
-                tags[q_side[k].0] = Some(Tag::Inter);
+        reduce(&mut p_side, discarded);
+        reduce(&mut q_side, discarded);
+        if let (Some(&(pp, p_parity)), Some(&(qp, q_parity))) =
+            (p_side.first(), q_side.first())
+        {
+            if p_parity != q_parity {
+                // Coincident with opposite winding: thin material, cancel.
+                discarded[pp] = true;
+                discarded[qp] = true;
+            } else {
+                tags[pp] = Some(Tag::Union);
+                tags[qp] = Some(Tag::Inter);
             }
         }
     }

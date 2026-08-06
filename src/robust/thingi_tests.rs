@@ -33,6 +33,36 @@ fn parse_binary_stl(data: &[u8]) -> Vec<f32> {
     positions
 }
 
+/// Parse an ASCII STL exactly as the demo does: scan for `vertex x y z`
+/// lines, parse each coordinate as a double (JS `parseFloat`), then store
+/// into an f32 soup (Float32Array narrowing).
+fn parse_ascii_stl(data: &[u8]) -> Vec<f32> {
+    let text = std::str::from_utf8(data).expect("ASCII STL is not UTF-8");
+    let mut positions = Vec::new();
+    for line in text.lines() {
+        let mut it = line.split_whitespace();
+        if it.next() == Some("vertex") {
+            for _ in 0..3 {
+                let v: f64 = it
+                    .next()
+                    .expect("vertex line missing coordinate")
+                    .parse()
+                    .expect("bad coordinate");
+                positions.push(v as f32);
+            }
+        }
+    }
+    positions
+}
+
+/// The demo's format sniff: ASCII iff the head starts with "solid" and the
+/// file mentions "facet" early on.
+fn is_ascii_stl(data: &[u8]) -> bool {
+    let head = &data[..data.len().min(512)];
+    let head = String::from_utf8_lossy(head);
+    head.trim_start().starts_with("solid") && head.contains("facet")
+}
+
 /// Normalize exactly as the demo's `fetchMesh` does: bbox center to origin,
 /// uniform scale so the longest bbox side is 2.0. JS stores positions in a
 /// Float32Array but computes in doubles, so: read f32 -> widen to f64 ->
@@ -68,7 +98,11 @@ fn normalize_positions(positions: &mut [f32]) {
 /// The demo's import path: soup MeshGL (num_prop = 3, sequential indices),
 /// weld with `MeshGL::merge`, import through the robust entry point.
 fn import_stl_like_demo(stl: &[u8]) -> Manifold {
-    let mut positions = parse_binary_stl(stl);
+    let mut positions = if is_ascii_stl(stl) {
+        parse_ascii_stl(stl)
+    } else {
+        parse_binary_stl(stl)
+    };
     normalize_positions(&mut positions);
     let n_verts = (positions.len() / 3) as u32;
     let mut mesh = MeshGL::default();
@@ -81,6 +115,27 @@ fn import_stl_like_demo(stl: &[u8]) -> Manifold {
 
 const TENTACLE_939888: &[u8] = include_bytes!("testdata/939888.stl");
 const PICKAXE_93557: &[u8] = include_bytes!("testdata/93557.stl");
+const MODEL_92068: &[u8] = include_bytes!("testdata/92068.stl");
+const MODEL_39926: &[u8] = include_bytes!("testdata/39926.stl");
+
+/// Thingi10K #92068 union #39926 (demo repro): both operands import as
+/// closed manifolds; the robust union returned NotClosed. Reproduces with no
+/// rotation at all — just the demo's translate(0.3, 0, 0) on operand B.
+#[test]
+fn thingi_92068_union_39926_is_closed() {
+    let a = import_stl_like_demo(MODEL_92068);
+    assert_eq!(a.status(), Error::NoError, "operand A import");
+    assert!(!a.as_impl().is_soup, "operand A should weld to a manifold");
+
+    let b = import_stl_like_demo(MODEL_39926).translate(Vec3::new(0.3, 0.0, 0.0));
+    assert_eq!(b.status(), Error::NoError, "operand B import");
+    assert!(!b.as_impl().is_soup, "operand B should weld to a manifold");
+
+    let result = a.union_with_engine(&b, BooleanEngine::Robust);
+    assert_eq!(result.status(), Error::NoError, "robust union status");
+    assert!(!result.is_empty(), "robust union should be non-empty");
+    assert!(result.volume() > 0.0, "union volume must be positive");
+}
 
 /// Thingi10K #939888 union #93557 (demo repro): both operands import as
 /// closed manifolds, so the robust union must produce a valid result — the

@@ -1,0 +1,3 @@
+# Test fixtures must stay byte-exact: STL meshes (binary or ASCII) feed
+# exactness-sensitive regression tests and must match their upstream bytes.
+*.stl -text

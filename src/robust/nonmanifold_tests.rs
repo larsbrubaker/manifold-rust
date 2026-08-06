@@ -162,6 +162,30 @@ fn multi_component_soup_boolean() {
 }
 
 #[test]
+fn doubled_cover_operand() {
+    // Every facet listed twice with the same winding — a doubled cover, as
+    // some Thingi10K scans ship (#92068 triples every facet). The regularized
+    // boolean must emit each surface element once: exactly-coincident
+    // same-mesh pieces reduce to a single representative in
+    // classify::bind_coincident, otherwise the output surface is multiply
+    // covered and stops being closed where it meets the other operand.
+    let mut tris = cube_tris([0.0; 3], [2.0; 3]);
+    tris.extend(cube_tris([0.0; 3], [2.0; 3]));
+    let soup = soup_manifold(&tris);
+    assert!(soup.as_impl().is_soup);
+    // Divergence-theorem volume counts both covers before regularization.
+    assert_vol(&soup, 16.0, "doubled cube import");
+
+    let other = Manifold::cube(v(2.0, 2.0, 2.0), false).translate(v(1.0, 1.0, 1.0));
+    let u = soup.boolean_with_engine(&other, OpType::Add, BooleanEngine::Auto);
+    assert_vol(&u, 8.0 + 8.0 - 1.0, "doubled cube ∪ cube");
+    let i = soup.boolean_with_engine(&other, OpType::Intersect, BooleanEngine::Auto);
+    assert_vol(&i, 1.0, "doubled cube ∩ cube");
+    let d = soup.boolean_with_engine(&other, OpType::Subtract, BooleanEngine::Auto);
+    assert_vol(&d, 7.0, "doubled cube − cube");
+}
+
+#[test]
 fn soup_op_soup() {
     // Both operands non-manifold: edge-kissing pairs crossing each other.
     let a = edge_kissing_cubes();
