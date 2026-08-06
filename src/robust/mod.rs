@@ -110,23 +110,14 @@ pub fn boolean(
                 let pieces: Vec<intersection_graph::Piece> = tris
                     .iter()
                     .enumerate()
-                    .map(|(i, t)| {
-                        let v = [
-                            exact::rational::R3::from_vec3(t[0]),
-                            exact::rational::R3::from_vec3(t[1]),
-                            exact::rational::R3::from_vec3(t[2]),
-                        ];
-                        let vi = [
-                            interner.intern(&v[0]),
-                            interner.intern(&v[1]),
-                            interner.intern(&v[2]),
-                        ];
-                        intersection_graph::Piece {
-                            mesh: if i < p_tris.len() { 0 } else { 1 },
-                            tri: if i < p_tris.len() { i } else { i - p_tris.len() },
-                            v,
-                            vi,
-                        }
+                    .map(|(i, t)| intersection_graph::Piece {
+                        mesh: if i < p_tris.len() { 0 } else { 1 },
+                        tri: if i < p_tris.len() { i } else { i - p_tris.len() },
+                        vi: [
+                            interner.intern_f64(t[0]),
+                            interner.intern_f64(t[1]),
+                            interner.intern_f64(t[2]),
+                        ],
                     })
                     .collect();
                 let ctx = assemble::PropCtx {
@@ -135,7 +126,14 @@ pub fn boolean(
                     props: [&p_props, &q_props],
                 };
                 let props = (ctx.out_num_prop() > 0).then_some(&ctx);
-                return assemble::assemble(&pieces, |_| true, props).into_impl();
+                return assemble::assemble(
+                    &pieces,
+                    &interner.verts,
+                    &interner.verts_f64,
+                    |_| true,
+                    props,
+                )
+                .into_impl();
             }
             OpType::Intersect => return ManifoldImpl::new(),
             OpType::Subtract => return a.clone(),
@@ -179,12 +177,20 @@ pub fn boolean(
     // operand's surface. So per component, one query against the other
     // operand decides ∪ vs ∩, and one query against the component's own
     // operand decides whether it is real boundary or an interior wall.
+    // Whole-soup rational tables only exist when winding queries actually
+    // run — a pass-through boolean (everything decided by rings/binding)
+    // never converts an input triangle to rationals at all.
     let to_rational = |tris: &[[Vec3; 3]]| -> Vec<[R3; 3]> {
         tris.iter()
             .map(|t| [R3::from_vec3(t[0]), R3::from_vec3(t[1]), R3::from_vec3(t[2])])
             .collect()
     };
-    let own_rational: [Vec<[R3; 3]>; 2] = [to_rational(&p_tris), to_rational(&q_tris)];
+    let need_windings = !prop.untagged.is_empty();
+    let own_rational: [Vec<[R3; 3]>; 2] = if need_windings {
+        [to_rational(&p_tris), to_rational(&q_tris)]
+    } else {
+        [Vec::new(), Vec::new()]
+    };
     let tri_boxes = |tris: &[[Vec3; 3]]| -> Vec<crate::types::Box> {
         tris.iter()
             .map(|t| {
@@ -194,7 +200,11 @@ pub fn boolean(
             })
             .collect()
     };
-    let own_boxes: [Vec<crate::types::Box>; 2] = [tri_boxes(&p_tris), tri_boxes(&q_tris)];
+    let own_boxes: [Vec<crate::types::Box>; 2] = if need_windings {
+        [tri_boxes(&p_tris), tri_boxes(&q_tris)]
+    } else {
+        [Vec::new(), Vec::new()]
+    };
 
     let t_winding = crate::timing::start();
     // BVH per operand, built once for the whole query batch (components can
@@ -213,12 +223,13 @@ pub fn boolean(
         } else {
             (&p_tris, &indexes[0], false)
         };
-        let w = ray_shoot::winding_number_indexed(&piece_centroid(&piece.v), other, other_index);
+        let pv = graph.piece_verts(rep);
+        let w = ray_shoot::winding_number_indexed(&piece_centroid(pv), other, other_index);
         let inside = if other_is_complement { w == 0 } else { w != 0 };
         let tag = if inside { Tag::Inter } else { Tag::Union };
         let own_f64: &[[Vec3; 3]] = if mesh == 0 { &p_tris } else { &q_tris };
         let component_tag =
-            on_own_boundary(piece, &own_rational[mesh], own_f64, &own_boxes[mesh]).then_some(tag);
+            on_own_boundary(pv, &own_rational[mesh], own_f64, &own_boxes[mesh]).then_some(tag);
         for pi in 0..graph.pieces.len() {
             if !cls.discarded[pi] && prop.component[pi] == root {
                 tags[pi] = component_tag;
@@ -244,6 +255,8 @@ pub fn boolean(
     let t_asm = crate::timing::start();
     let out = assemble::assemble(
         &graph.pieces,
+        &graph.verts,
+        &graph.verts_f64,
         |pi| !cls.discarded[pi] && tags[pi] == Some(want),
         props,
     );
@@ -263,16 +276,14 @@ pub fn boolean(
 /// nested same-orientation shells — is an interior wall that no regularized
 /// boolean output may contain.
 fn on_own_boundary(
-    piece: &intersection_graph::Piece,
+    pv: [&R3; 3],
     own: &[[R3; 3]],
     own_f64: &[[Vec3; 3]],
     own_boxes: &[crate::types::Box],
 ) -> bool {
-    let normal = piece.v[1]
-        .sub(&piece.v[0])
-        .cross(&piece.v[2].sub(&piece.v[0]));
+    let normal = pv[1].sub(pv[0]).cross(&pv[2].sub(pv[0]));
     let w = ray_shoot::winding_off_surface(
-        &piece_centroid(&piece.v),
+        &piece_centroid(pv),
         &normal,
         own,
         own_f64,
@@ -286,26 +297,21 @@ fn on_own_boundary(
 /// the property-aware disjoint-union path in `boolean` builds its own
 /// tagged pieces).
 pub(crate) fn assemble_all(tris: &[[Vec3; 3]]) -> ManifoldImpl {
-    use exact::rational::R3;
     let mut interner = intersection_graph::VertInterner::default();
     let pieces: Vec<intersection_graph::Piece> = tris
         .iter()
         .enumerate()
-        .map(|(i, t)| {
-            let v = [
-                R3::from_vec3(t[0]),
-                R3::from_vec3(t[1]),
-                R3::from_vec3(t[2]),
-            ];
-            let vi = [
-                interner.intern(&v[0]),
-                interner.intern(&v[1]),
-                interner.intern(&v[2]),
-            ];
-            intersection_graph::Piece { mesh: 0, tri: i, v, vi }
+        .map(|(i, t)| intersection_graph::Piece {
+            mesh: 0,
+            tri: i,
+            vi: [
+                interner.intern_f64(t[0]),
+                interner.intern_f64(t[1]),
+                interner.intern_f64(t[2]),
+            ],
         })
         .collect();
-    assemble::assemble(&pieces, |_| true, None).into_impl()
+    assemble::assemble(&pieces, &interner.verts, &interner.verts_f64, |_| true, None).into_impl()
 }
 
 #[cfg(test)]

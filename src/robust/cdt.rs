@@ -654,8 +654,10 @@ impl Cdt {
     }
 }
 
-/// Delaunay test used by `try_flip`: is the fourth point strictly inside the
-/// circumcircle of the (CCW) triangle? Split out so tests can call it too.
+/// Delaunay test on raw points: is the fourth point strictly inside the
+/// circumcircle of the (CCW) triangle? Kept for the validation in
+/// robust/cdt_tests.rs.
+#[cfg(test)]
 pub(super) fn is_strictly_non_delaunay(pts: &[R2], tri: [usize; 3], d: usize) -> bool {
     incircle_h(
         &homog2_of(&pts[tri[0]]),

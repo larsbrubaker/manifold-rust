@@ -229,6 +229,8 @@ fn main() {
     let t0 = Instant::now();
     let out = manifold_rust::robust::assemble::assemble(
         &graph.pieces,
+        &graph.verts,
+        &graph.verts_f64,
         |pi| !cls.discarded[pi] && prop.tags[pi] == Some(classify::Tag::Union),
         None,
     );

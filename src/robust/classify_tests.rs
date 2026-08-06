@@ -61,7 +61,7 @@ fn run(
         let piece = &graph.pieces[rep];
         let other: &[[Vec3; 3]] = if piece.mesh == 0 { q } else { p };
         let other_complement = if piece.mesh == 0 { q_complement } else { false };
-        let centroid = piece_centroid(&piece.v);
+        let centroid = piece_centroid(graph.piece_verts(rep));
         let w = winding_number(&centroid, other);
         let inside = if other_complement { w == 0 } else { w != 0 };
         let tag = if inside { Tag::Inter } else { Tag::Union };
@@ -88,7 +88,7 @@ fn check_against_winding_oracle(
             continue;
         }
         let other: &[[Vec3; 3]] = if piece.mesh == 0 { q } else { p };
-        let centroid = piece_centroid(&piece.v);
+        let centroid = piece_centroid(graph.piece_verts(pi));
         // Skip pieces on the other mesh's surface (winding undefined there):
         // detect via any zero orient3d against a containing plane — cheap
         // proxy: coplanar-overlap pieces are exactly the ones both meshes
@@ -139,8 +139,8 @@ fn centroid_on_surface(c: &super::super::exact::rational::R3, tris: &[[Vec3; 3]]
 
 /// Exact double-area of a piece, valid for axis-plane-aligned geometry used
 /// in these tests (cross product has one nonzero component).
-fn piece_area2(v: &[super::super::exact::rational::R3; 3]) -> BigRational {
-    let n = v[1].sub(&v[0]).cross(&v[2].sub(&v[0]));
+fn piece_area2(v: [&super::super::exact::rational::R3; 3]) -> BigRational {
+    let n = v[1].sub(v[0]).cross(&v[2].sub(v[0]));
     let comps = [n.x.abs(), n.y.abs(), n.z.abs()];
     let mut nonzero: Vec<&BigRational> = comps.iter().filter(|c| !c.is_zero()).collect();
     assert!(nonzero.len() <= 1, "test helper requires axis-aligned pieces");
@@ -198,7 +198,7 @@ fn face_touching_cubes_discard_shared_face() {
     for (pi, piece) in graph.pieces.iter().enumerate() {
         if discarded[pi] {
             discarded_area2[piece.mesh as usize] =
-                &discarded_area2[piece.mesh as usize] + piece_area2(&piece.v);
+                &discarded_area2[piece.mesh as usize] + piece_area2(graph.piece_verts(pi));
         }
     }
     let eight = BigRational::from_integer(8.into());
@@ -228,8 +228,8 @@ fn identical_cubes_share_every_face_once_per_output() {
     let mut inter_area2 = BigRational::zero();
     for (pi, piece) in graph.pieces.iter().enumerate() {
         match tags[pi].expect("all pieces must be tagged for identical cubes") {
-            Tag::Union => union_area2 = &union_area2 + piece_area2(&piece.v),
-            Tag::Inter => inter_area2 = &inter_area2 + piece_area2(&piece.v),
+            Tag::Union => union_area2 = &union_area2 + piece_area2(graph.piece_verts(pi)),
+            Tag::Inter => inter_area2 = &inter_area2 + piece_area2(graph.piece_verts(pi)),
         }
     }
     assert_eq!(union_area2, full_surface2, "union output must cover the cube once");

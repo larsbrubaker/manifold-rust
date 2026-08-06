@@ -57,16 +57,33 @@ fn geo_edge_key(a: &R3, b: &R3) -> GeoEdgeKey {
     }
 }
 
+/// Canonical original-mesh edge keyed by raw coordinate bits — original
+/// edges always join exact f64 vertices, so the boundary-split registry
+/// never needs rational keys (and untouched triangles probe it for free).
+type BitEdgeKey = ([u64; 3], [u64; 3]);
+
+fn bit_edge_key(a: Vec3, b: Vec3) -> BitEdgeKey {
+    let (ka, kb) = (f64_key(a), f64_key(b));
+    if ka <= kb {
+        (ka, kb)
+    } else {
+        (kb, ka)
+    }
+}
+
 /// One output fragment: a sub-triangle of an arranged input triangle, or an
 /// untouched whole triangle. `v` is wound to match the input mesh's outward
 /// orientation; `vi` are the interned ids of the same three vertices.
-#[derive(Clone, Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct Piece {
     /// 0 = first operand (P), 1 = second operand (Q).
     pub mesh: u8,
     /// Index of the originating triangle in its soup.
     pub tri: usize,
-    pub v: [R3; 3],
+    /// Interned vertex ids (indices into `IntersectionGraph::verts`), wound
+    /// to the input mesh's outward orientation. Pieces carry no coordinates
+    /// of their own — the shared tables keep untouched triangles free of
+    /// rational clones entirely.
     pub vi: [u32; 3],
 }
 
@@ -75,6 +92,10 @@ pub struct IntersectionGraph {
     pub pieces: Vec<Piece>,
     /// Interned unique vertices; `Piece::vi` and `EdgeKey` index into this.
     pub verts: Vec<R3>,
+    /// Correctly rounded f64 approximation per interned vertex (exact for
+    /// input vertices) — float filters and output assembly read these
+    /// instead of re-rounding rationals.
+    pub verts_f64: Vec<Vec3>,
     /// Canonical keys of every arrangement constraint edge — the exact
     /// intersection sub-segments the classification rings live on.
     pub isect_edges: HashSet<EdgeKey>,
@@ -82,21 +103,70 @@ pub struct IntersectionGraph {
     pub any_intersections: bool,
 }
 
-/// Exact-point interner: one id per distinct rational point.
+impl IntersectionGraph {
+    /// The three exact vertices of a piece.
+    pub fn piece_verts(&self, pi: usize) -> [&R3; 3] {
+        let vi = self.pieces[pi].vi;
+        [
+            &self.verts[vi[0] as usize],
+            &self.verts[vi[1] as usize],
+            &self.verts[vi[2] as usize],
+        ]
+    }
+}
+
+/// Exact-point interner: one id per distinct point, with two disjoint key
+/// spaces. f64-representable points (all input vertices, and any constructed
+/// point that rounds exactly) key on their coordinate bits — no rational
+/// hashing, so untouched input triangles intern for the cost of a HashMap
+/// probe. Only genuinely non-representable constructed points use the
+/// rational map. `verts_f64` caches the correctly rounded approximation of
+/// every id (exact for bit-keyed points), which downstream float filters
+/// and output assembly reuse instead of re-rounding.
 #[derive(Default)]
 pub struct VertInterner {
     map: HashMap<R3, u32>,
+    fmap: HashMap<[u64; 3], u32>,
     pub verts: Vec<R3>,
+    pub verts_f64: Vec<Vec3>,
+}
+
+fn f64_key(v: Vec3) -> [u64; 3] {
+    // Normalize -0.0 so it shares an id with +0.0 (they are the same
+    // rational point).
+    let norm = |x: f64| if x == 0.0 { 0.0f64 } else { x }.to_bits();
+    [norm(v.x), norm(v.y), norm(v.z)]
 }
 
 impl VertInterner {
+    /// Intern an exact-f64 point (input mesh vertices): zero rational work
+    /// on hits; one `R3::from_vec3` on first sight, for the exact table.
+    pub fn intern_f64(&mut self, v: Vec3) -> u32 {
+        let key = f64_key(v);
+        if let Some(&id) = self.fmap.get(&key) {
+            return id;
+        }
+        let id = self.verts.len() as u32;
+        self.fmap.insert(key, id);
+        self.verts.push(R3::from_vec3(v));
+        self.verts_f64.push(v);
+        id
+    }
+
+    /// Intern an exact rational point. Representable points route to the
+    /// f64 key space so both paths agree on ids.
     pub fn intern(&mut self, p: &R3) -> u32 {
+        let rounded = p.to_vec3_rounded();
+        if R3::from_vec3(rounded) == *p {
+            return self.intern_f64(rounded);
+        }
         if let Some(&id) = self.map.get(p) {
             return id;
         }
         let id = self.verts.len() as u32;
         self.map.insert(p.clone(), id);
         self.verts.push(p.clone());
+        self.verts_f64.push(rounded);
         id
     }
 }
@@ -116,6 +186,21 @@ fn tri_box(t: &[Vec3; 3]) -> Box {
 }
 
 fn is_degenerate(t: &[Vec3; 3]) -> bool {
+    // Certified-nonzero f64 cross first (magnitude-permanent bound, matching
+    // exact/approx.rs conventions); only near-degenerate triangles pay for
+    // the rational cross.
+    const EPS: f64 = f64::EPSILON * 0.5;
+    let u = t[1] - t[0];
+    let v = t[2] - t[0];
+    let n = crate::linalg::cross(u, v);
+    let m = |k: usize| t[0][k].abs() + t[1][k].abs() + t[2][k].abs();
+    let (mx, my, mz) = (m(0), m(1), m(2));
+    if n.x.abs() > 16.0 * EPS * my * mz
+        || n.y.abs() > 16.0 * EPS * mz * mx
+        || n.z.abs() > 16.0 * EPS * mx * my
+    {
+        return false;
+    }
     use super::exact::predicates::tri_normal_r;
     tri_normal_r(
         &R3::from_vec3(t[0]),
@@ -416,9 +501,10 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
     let t_reg = crate::timing::start();
 
     // 4b. Original-edge registry: split points on each mesh edge (geometric
-    // identity — soups have no reliable connectivity).
-    let mut edge_registry: [BTreeMap<GeoEdgeKey, BTreeSet<R3>>; 2] =
-        [BTreeMap::new(), BTreeMap::new()];
+    // identity — soups have no reliable connectivity). Bit-keyed: original
+    // edges join exact f64 vertices.
+    let mut edge_registry: [HashMap<BitEdgeKey, BTreeSet<R3>>; 2] =
+        [HashMap::new(), HashMap::new()];
     for m in 0..2 {
         for ti in 0..meshes[m].len() {
             let Some(cands) = &candidates[m][ti] else { continue };
@@ -437,13 +523,13 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
             for e in 0..3 {
                 let a = &corners[e];
                 let b = &corners[(e + 1) % 3];
-                let key = geo_edge_key(a, b);
+                let key = bit_edge_key(t[e], t[(e + 1) % 3]);
                 for (pt, pt_a) in cands.iter().zip(&cands_a) {
                     if pt != a
                         && pt != b
                         && point_on_segment_f(*pt_a, pt, ca[e], a, ca[(e + 1) % 3], b)
                     {
-                        edge_registry[m].entry(key.clone()).or_default().insert(pt.clone());
+                        edge_registry[m].entry(key).or_default().insert(pt.clone());
                     }
                 }
             }
@@ -483,20 +569,15 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
                 continue;
             }
             let t = meshes[m][ti];
-            let corners = [
-                R3::from_vec3(t[0]),
-                R3::from_vec3(t[1]),
-                R3::from_vec3(t[2]),
-            ];
-            // Boundary split points for this triangle.
+            let pr = &prims[m][ti];
+            // Boundary split points for this triangle (bit-keyed: uncut
+            // triangles probe with zero rational work).
             let mut extra: BTreeSet<R3> = BTreeSet::new();
             for e in 0..3 {
-                let key = geo_edge_key(&corners[e], &corners[(e + 1) % 3]);
-                if let Some(set) = edge_registry[m].get(&key) {
+                if let Some(set) = edge_registry[m].get(&bit_edge_key(t[e], t[(e + 1) % 3])) {
                     extra.extend(set.iter().cloned());
                 }
             }
-            let pr = &prims[m][ti];
             // Split points along this triangle's intersection segments
             // discovered by the other side.
             for (a, b, _) in &pr.segments {
@@ -506,17 +587,15 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
             }
 
             if pr.points.is_empty() && pr.segments.is_empty() && extra.is_empty() {
-                // Untouched triangle → whole piece.
-                let vi = [
-                    interner.intern(&corners[0]),
-                    interner.intern(&corners[1]),
-                    interner.intern(&corners[2]),
-                ];
+                // Untouched triangle → whole piece, interned by f64 bits.
                 pieces.push(Piece {
                     mesh: m as u8,
                     tri: ti,
-                    v: corners,
-                    vi,
+                    vi: [
+                        interner.intern_f64(t[0]),
+                        interner.intern_f64(t[1]),
+                        interner.intern_f64(t[2]),
+                    ],
                 });
                 continue;
             }
@@ -529,36 +608,22 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
                 input.points.push((pt, usize::MAX));
             }
             let arr = arrangement::build(t, &input);
+            // Intern each arrangement point once; sub-triangles and
+            // constraint edges then only shuffle ids.
+            let ids: Vec<u32> = arr.points3.iter().map(|p| interner.intern(p)).collect();
             for (u, w) in arr.constraints.keys() {
-                isect_edges.insert(edge_key(
-                    interner.intern(&arr.points3[*u]),
-                    interner.intern(&arr.points3[*w]),
-                ));
+                isect_edges.insert(edge_key(ids[*u], ids[*w]));
             }
             for st in &arr.tris {
                 let (a, b, c) = (st[0], st[1], st[2]);
-                let v = if arr.flipped {
-                    [
-                        arr.points3[a].clone(),
-                        arr.points3[c].clone(),
-                        arr.points3[b].clone(),
-                    ]
+                let vi = if arr.flipped {
+                    [ids[a], ids[c], ids[b]]
                 } else {
-                    [
-                        arr.points3[a].clone(),
-                        arr.points3[b].clone(),
-                        arr.points3[c].clone(),
-                    ]
+                    [ids[a], ids[b], ids[c]]
                 };
-                let vi = [
-                    interner.intern(&v[0]),
-                    interner.intern(&v[1]),
-                    interner.intern(&v[2]),
-                ];
                 pieces.push(Piece {
                     mesh: m as u8,
                     tri: ti,
-                    v,
                     vi,
                 });
             }
@@ -570,6 +635,7 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
     IntersectionGraph {
         pieces,
         verts: interner.verts,
+        verts_f64: interner.verts_f64,
         isect_edges,
         any_intersections,
     }

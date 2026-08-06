@@ -102,11 +102,16 @@ fn interpolate_props(ctx: &PropCtx, piece: &Piece, v: &R3, out: usize) -> Vec<f6
 }
 
 /// Build the output manifold from every piece whose index passes `select`.
+/// `verts` / `verts_f64` are the graph's interned tables: exact coordinates
+/// for property interpolation, cached correctly rounded positions for the
+/// output — no per-vertex rational rounding here.
 /// With a `PropCtx` whose operands carry properties, output vertices get
 /// interpolated properties; otherwise the output is positions-only and
 /// byte-identical to the pre-property behavior.
 pub fn assemble<F: Fn(usize) -> bool>(
     pieces: &[Piece],
+    verts: &[R3],
+    verts_f64: &[Vec3],
     select: F,
     props: Option<&PropCtx>,
 ) -> Manifold {
@@ -116,22 +121,24 @@ pub fn assemble<F: Fn(usize) -> bool>(
     // (id equality is exact geometric identity — see VertInterner).
     type Key = (u32, Vec<u64>);
     let mut vert_index: std::collections::HashMap<Key, u64> = std::collections::HashMap::new();
-    let mut vert_order: Vec<(u32, R3, Vec<f64>)> = Vec::new();
+    let mut vert_order: Vec<(u32, Vec<f64>)> = Vec::new();
     let mut tri_verts: Vec<u64> = Vec::new();
 
     for (pi, piece) in pieces.iter().enumerate() {
         if !select(pi) {
             continue;
         }
-        for (v, &vid) in piece.v.iter().zip(&piece.vi) {
+        for &vid in &piece.vi {
             let pvals = match props {
-                Some(ctx) if out_prop > 0 => interpolate_props(ctx, piece, v, out_prop),
+                Some(ctx) if out_prop > 0 => {
+                    interpolate_props(ctx, piece, &verts[vid as usize], out_prop)
+                }
                 _ => Vec::new(),
             };
             let key = (vid, pvals.iter().map(|x| x.to_bits()).collect());
             let next = vert_order.len() as u64;
             let id = *vert_index.entry(key).or_insert_with(|| {
-                vert_order.push((vid, v.clone(), pvals));
+                vert_order.push((vid, pvals));
                 next
             });
             tri_verts.push(id);
@@ -145,8 +152,8 @@ pub fn assemble<F: Fn(usize) -> bool>(
     let mut mesh = MeshGL64::default();
     mesh.num_prop = stride as u64;
     mesh.vert_properties = Vec::with_capacity(stride * vert_order.len());
-    for (_, v, pvals) in &vert_order {
-        let p = v.to_vec3_rounded();
+    for (vid, pvals) in &vert_order {
+        let p = verts_f64[*vid as usize];
         mesh.vert_properties.extend([p.x, p.y, p.z]);
         mesh.vert_properties.extend(pvals.iter());
     }
@@ -156,7 +163,7 @@ pub fn assemble<F: Fn(usize) -> bool>(
     // vertices; merge vectors tell the import they are topologically one.
     if out_prop > 0 {
         let mut by_pos: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
-        for (i, (vid, _, _)) in vert_order.iter().enumerate() {
+        for (i, (vid, _)) in vert_order.iter().enumerate() {
             match by_pos.get(vid) {
                 Some(&first) => {
                     mesh.merge_from_vert.push(i as u64);

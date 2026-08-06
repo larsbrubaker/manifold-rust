@@ -191,7 +191,7 @@ pub fn classify_rings(graph: &IntersectionGraph) -> Classification {
                 continue;
             }
             let forward = a == key.0; // winding visits key.0 → key.1
-            let apex = &piece.v[(e + 2) % 3];
+            let apex = &graph.verts[piece.vi[(e + 2) % 3] as usize];
             rings.entry(key).or_default().push(Incident {
                 piece: pi,
                 forward,
