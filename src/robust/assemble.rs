@@ -20,8 +20,6 @@
 // vertices linked by merge vectors, mirroring the exact engine's MeshGL
 // output shape.
 
-use std::collections::BTreeMap;
-
 use num_rational::BigRational;
 use num_traits::One;
 
@@ -114,25 +112,26 @@ pub fn assemble<F: Fn(usize) -> bool>(
 ) -> Manifold {
     let out_prop = props.map_or(0, |p| p.out_num_prop());
 
-    // Property-vertex identity: exact position + property bit pattern.
-    type Key = (R3, Vec<u64>);
-    let mut vert_index: BTreeMap<Key, u64> = BTreeMap::new();
-    let mut vert_order: Vec<(R3, Vec<f64>)> = Vec::new();
+    // Property-vertex identity: interned position id + property bit pattern
+    // (id equality is exact geometric identity — see VertInterner).
+    type Key = (u32, Vec<u64>);
+    let mut vert_index: std::collections::HashMap<Key, u64> = std::collections::HashMap::new();
+    let mut vert_order: Vec<(u32, R3, Vec<f64>)> = Vec::new();
     let mut tri_verts: Vec<u64> = Vec::new();
 
     for (pi, piece) in pieces.iter().enumerate() {
         if !select(pi) {
             continue;
         }
-        for v in &piece.v {
+        for (v, &vid) in piece.v.iter().zip(&piece.vi) {
             let pvals = match props {
                 Some(ctx) if out_prop > 0 => interpolate_props(ctx, piece, v, out_prop),
                 _ => Vec::new(),
             };
-            let key = (v.clone(), pvals.iter().map(|x| x.to_bits()).collect());
+            let key = (vid, pvals.iter().map(|x| x.to_bits()).collect());
             let next = vert_order.len() as u64;
             let id = *vert_index.entry(key).or_insert_with(|| {
-                vert_order.push((v.clone(), pvals));
+                vert_order.push((vid, v.clone(), pvals));
                 next
             });
             tri_verts.push(id);
@@ -146,7 +145,7 @@ pub fn assemble<F: Fn(usize) -> bool>(
     let mut mesh = MeshGL64::default();
     mesh.num_prop = stride as u64;
     mesh.vert_properties = Vec::with_capacity(stride * vert_order.len());
-    for (v, pvals) in &vert_order {
+    for (_, v, pvals) in &vert_order {
         let p = v.to_vec3_rounded();
         mesh.vert_properties.extend([p.x, p.y, p.z]);
         mesh.vert_properties.extend(pvals.iter());
@@ -156,15 +155,15 @@ pub fn assemble<F: Fn(usize) -> bool>(
     // Coincident positions with different properties are distinct property
     // vertices; merge vectors tell the import they are topologically one.
     if out_prop > 0 {
-        let mut by_pos: BTreeMap<R3, u64> = BTreeMap::new();
-        for (i, (v, _)) in vert_order.iter().enumerate() {
-            match by_pos.get(v) {
+        let mut by_pos: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
+        for (i, (vid, _, _)) in vert_order.iter().enumerate() {
+            match by_pos.get(vid) {
                 Some(&first) => {
                     mesh.merge_from_vert.push(i as u64);
                     mesh.merge_to_vert.push(first);
                 }
                 None => {
-                    by_pos.insert(v.clone(), i as u64);
+                    by_pos.insert(*vid, i as u64);
                 }
             }
         }

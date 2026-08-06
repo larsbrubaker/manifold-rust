@@ -63,6 +63,57 @@ fn make_spiky_dodecahedron(spike_height: f64) -> Manifold {
     Manifold::from_mesh_gl(&mesh)
 }
 
+/// Binary-STL import replicating the demo pipeline (normalize → weld →
+/// robust import); enough for the fixture meshes.
+fn import_stl(path: &str) -> Manifold {
+    let data = std::fs::read(path).expect("fixture STL");
+    let head = String::from_utf8_lossy(&data[..data.len().min(512)]).to_string();
+    let mut positions: Vec<f32> = Vec::new();
+    if head.trim_start().starts_with("solid") && head.contains("facet") {
+        for line in String::from_utf8_lossy(&data).lines() {
+            if let Some(rest) = line.trim_start().strip_prefix("vertex") {
+                for tok in rest.split_whitespace().take(3) {
+                    positions.push(tok.parse::<f64>().unwrap() as f32);
+                }
+            }
+        }
+    } else {
+        let n = u32::from_le_bytes(data[80..84].try_into().unwrap()) as usize;
+        let n = n.min((data.len() - 84) / 50);
+        for f in 0..n {
+            let base = 84 + f * 50 + 12;
+            for v in 0..9 {
+                let o = base + v * 4;
+                positions.push(f32::from_le_bytes(data[o..o + 4].try_into().unwrap()));
+            }
+        }
+    }
+    // Normalize like the demo: center, scale longest side to 2.
+    let nv = positions.len() / 3;
+    let (mut min, mut max) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for i in 0..nv {
+        for k in 0..3 {
+            let v = positions[i * 3 + k] as f64;
+            min[k] = min[k].min(v);
+            max[k] = max[k].max(v);
+        }
+    }
+    let c = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0, (min[2] + max[2]) / 2.0];
+    let side = (max[0] - min[0]).max(max[1] - min[1]).max(max[2] - min[2]);
+    let s = if side > 0.0 { 2.0 / side } else { 1.0 };
+    for i in 0..nv {
+        for k in 0..3 {
+            positions[i * 3 + k] = ((positions[i * 3 + k] as f64 - c[k]) * s) as f32;
+        }
+    }
+    let mut mesh = MeshGL::default();
+    mesh.num_prop = 3;
+    mesh.tri_verts = (0..nv as u32).collect();
+    mesh.vert_properties = positions;
+    mesh.merge();
+    Manifold::from_mesh_gl_robust(&mesh)
+}
+
 fn main() {
     let args: Vec<f64> = std::env::args()
         .skip(1)
@@ -112,6 +163,26 @@ fn main() {
             t0.elapsed().as_secs_f64() * 1e3,
             s1.num_tri() + s2.num_tri(),
             out.num_tri()
+        );
+    }
+
+    // The pathological real-world case: Thingi10K 939888 ∪ 93557 (operand B
+    // is geometrically self-overlapping). Set MANIFOLD_TIMING=1 for the
+    // per-stage breakdown including the winding-query classification.
+    if std::env::var("ROBUST_PERF_THINGI").is_ok() {
+        let a = import_stl("src/robust/testdata/939888.stl");
+        let b = import_stl("src/robust/testdata/93557.stl")
+            .rotate(356.0, 140.0, 322.0)
+            .translate(Vec3::new(0.3, 0.0, 0.0));
+        let t0 = Instant::now();
+        let out = a.union_with_engine(&b, BooleanEngine::Robust);
+        println!(
+            "robust thingi 939888∪93557: {:8.0} ms   ({} + {} tris in, {} out, status {:?})",
+            t0.elapsed().as_secs_f64() * 1e3,
+            a.num_tri(),
+            b.num_tri(),
+            out.num_tri(),
+            out.status()
         );
     }
 

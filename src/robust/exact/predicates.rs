@@ -46,6 +46,27 @@ fn homog3(p: &R3) -> (BigInt, BigInt, BigInt, BigInt) {
     (xn * &yz, yn * (xd * zd), zn * (xd * yd), xd * yz)
 }
 
+/// Cached homogenization of a 2D point: (X, Y, W), x = X/W, W > 0. Hot
+/// loops that test one point against many (the arrangement's segment sweep)
+/// homogenize each point once and reuse it across every predicate call.
+#[derive(Clone, Debug)]
+pub struct Homog2(pub BigInt, pub BigInt, pub BigInt);
+
+pub fn homog2_of(p: &R2) -> Homog2 {
+    let (x, y, w) = homog2(p);
+    Homog2(x, y, w)
+}
+
+/// `orient2d_r` over pre-homogenized points — identical sign, no repeated
+/// denominator work.
+pub fn orient2d_h(a: &Homog2, b: &Homog2, c: &Homog2) -> Sign {
+    let ux = &b.0 * &a.2 - &a.0 * &b.2;
+    let uy = &b.1 * &a.2 - &a.1 * &b.2;
+    let vx = &c.0 * &a.2 - &a.0 * &c.2;
+    let vy = &c.1 * &a.2 - &a.1 * &c.2;
+    sign_of_int(&(ux * vy - uy * vx))
+}
+
 #[inline]
 fn sign_of_int(v: &BigInt) -> Sign {
     if v.is_positive() {

@@ -106,17 +106,27 @@ pub fn boolean(
                 // interpolated properties.
                 let mut tris = p_tris.clone();
                 tris.extend(q_tris.iter().cloned());
+                let mut interner = intersection_graph::VertInterner::default();
                 let pieces: Vec<intersection_graph::Piece> = tris
                     .iter()
                     .enumerate()
-                    .map(|(i, t)| intersection_graph::Piece {
-                        mesh: if i < p_tris.len() { 0 } else { 1 },
-                        tri: if i < p_tris.len() { i } else { i - p_tris.len() },
-                        v: [
+                    .map(|(i, t)| {
+                        let v = [
                             exact::rational::R3::from_vec3(t[0]),
                             exact::rational::R3::from_vec3(t[1]),
                             exact::rational::R3::from_vec3(t[2]),
-                        ],
+                        ];
+                        let vi = [
+                            interner.intern(&v[0]),
+                            interner.intern(&v[1]),
+                            interner.intern(&v[2]),
+                        ];
+                        intersection_graph::Piece {
+                            mesh: if i < p_tris.len() { 0 } else { 1 },
+                            tri: if i < p_tris.len() { i } else { i - p_tris.len() },
+                            v,
+                            vi,
+                        }
                     })
                     .collect();
                 let ctx = assemble::PropCtx {
@@ -151,11 +161,15 @@ pub fn boolean(
     if is_cancelled(token) {
         return cancelled_impl();
     }
+    let t_cls = crate::timing::start();
     let cls = classify::classify_rings(&graph);
+    crate::timing::print("robust: classify_rings", t_cls);
     if is_cancelled(token) {
         return cancelled_impl();
     }
+    let t_prop = crate::timing::start();
     let prop = propagate::propagate(&graph, &cls);
+    crate::timing::print("robust: propagate", t_prop);
     let mut tags = prop.tags;
 
     // Winding-based classification of every component the coincident-piece
@@ -182,6 +196,7 @@ pub fn boolean(
     };
     let own_boxes: [Vec<crate::types::Box>; 2] = [tri_boxes(&p_tris), tri_boxes(&q_tris)];
 
+    let t_winding = crate::timing::start();
     for &(root, rep) in &prop.untagged {
         if is_cancelled(token) {
             return cancelled_impl();
@@ -205,6 +220,11 @@ pub fn boolean(
         }
     }
 
+    crate::timing::print(
+        &format!("robust: winding queries ({} components)", prop.untagged.len()),
+        t_winding,
+    );
+
     let want = match op {
         OpType::Add => Tag::Union,
         OpType::Subtract | OpType::Intersect => Tag::Inter,
@@ -215,11 +235,13 @@ pub fn boolean(
         props: [&p_props, &q_props],
     };
     let props = (ctx.out_num_prop() > 0).then_some(&ctx);
+    let t_asm = crate::timing::start();
     let out = assemble::assemble(
         &graph.pieces,
         |pi| !cls.discarded[pi] && tags[pi] == Some(want),
         props,
     );
+    crate::timing::print("robust: assemble+import", t_asm);
     out.into_impl()
 }
 
@@ -252,17 +274,22 @@ fn on_own_boundary(
 /// tagged pieces).
 pub(crate) fn assemble_all(tris: &[[Vec3; 3]]) -> ManifoldImpl {
     use exact::rational::R3;
+    let mut interner = intersection_graph::VertInterner::default();
     let pieces: Vec<intersection_graph::Piece> = tris
         .iter()
         .enumerate()
-        .map(|(i, t)| intersection_graph::Piece {
-            mesh: 0,
-            tri: i,
-            v: [
+        .map(|(i, t)| {
+            let v = [
                 R3::from_vec3(t[0]),
                 R3::from_vec3(t[1]),
                 R3::from_vec3(t[2]),
-            ],
+            ];
+            let vi = [
+                interner.intern(&v[0]),
+                interner.intern(&v[1]),
+                interner.intern(&v[2]),
+            ];
+            intersection_graph::Piece { mesh: 0, tri: i, v, vi }
         })
         .collect();
     assemble::assemble(&pieces, |_| true, None).into_impl()

@@ -106,16 +106,19 @@ fn bind_coincident(
     tags: &mut [Option<Tag>],
     discarded: &mut [bool],
 ) {
-    // Canonical key: sorted vertex triple; parity bit = winding orientation
-    // relative to the sorted order.
-    let mut by_key: BTreeMap<[R3; 3], Vec<(usize, bool)>> = BTreeMap::new();
+    // Canonical key: sorted interned-id triple; parity bit = winding
+    // orientation relative to the sorted order. (Any consistent canonical
+    // order works — parity is only compared between pieces with the same
+    // key, and a different canonical order flips both parities together.)
+    let mut by_key: std::collections::HashMap<[u32; 3], Vec<(usize, bool)>> =
+        std::collections::HashMap::new();
     for (pi, piece) in graph.pieces.iter().enumerate() {
-        let mut sorted = piece.v.clone();
-        sorted.sort();
+        let mut sorted = piece.vi;
+        sorted.sort_unstable();
         // parity: does the winding cycle (v0,v1,v2), rotated to start at the
         // smallest vertex, match (sorted0, sorted1, sorted2)?
-        let start = piece.v.iter().position(|v| *v == sorted[0]).unwrap();
-        let same = piece.v[(start + 1) % 3] == sorted[1];
+        let start = piece.vi.iter().position(|v| *v == sorted[0]).unwrap();
+        let same = piece.vi[(start + 1) % 3] == sorted[1];
         by_key.entry(sorted).or_default().push((pi, same));
     }
     // Same-mesh reduction: cancel opposite-parity pairs, then keep only the
@@ -176,19 +179,20 @@ pub fn classify_rings(graph: &IntersectionGraph) -> Classification {
 
     // Ring construction: intersection edge key → incident pieces (globally
     // discarded pieces excluded up front).
-    let mut rings: BTreeMap<EdgeKey, Vec<Incident>> = BTreeMap::new();
+    let mut rings: std::collections::HashMap<EdgeKey, Vec<Incident>> =
+        std::collections::HashMap::new();
     for (pi, piece) in graph.pieces.iter().enumerate() {
         if discarded[pi] {
             continue;
         }
         for e in 0..3 {
-            let a = &piece.v[e];
-            let b = &piece.v[(e + 1) % 3];
+            let a = piece.vi[e];
+            let b = piece.vi[(e + 1) % 3];
             let key = edge_key(a, b);
             if !graph.isect_edges.contains(&key) {
                 continue;
             }
-            let forward = *a == key.0; // winding visits key.0 → key.1
+            let forward = a == key.0; // winding visits key.0 → key.1
             let apex = &piece.v[(e + 2) % 3];
             rings.entry(key).or_default().push(Incident {
                 piece: pi,
@@ -201,16 +205,21 @@ pub fn classify_rings(graph: &IntersectionGraph) -> Classification {
     }
 
     for (key, incidents) in rings.iter_mut() {
-        regularize_one_ring(key, incidents, &mut discarded);
+        regularize_one_ring(
+            &graph.verts[key.0 as usize],
+            &graph.verts[key.1 as usize],
+            incidents,
+            &mut discarded,
+        );
     }
 
     Classification { tags, discarded }
 }
 
-fn regularize_one_ring(key: &EdgeKey, incidents: &mut [Incident], discarded: &mut [bool]) {
+fn regularize_one_ring(k0: &R3, k1: &R3, incidents: &mut [Incident], discarded: &mut [bool]) {
     // Radial basis: w along the edge, u ⊥ w via the axis of w's smallest
     // |component| (never parallel), v = w × u; (u, v, w) is right-handed.
-    let w = key.1.sub(&key.0);
+    let w = k1.sub(k0);
     let ax = w.x.abs();
     let ay = w.y.abs();
     let az = w.z.abs();
@@ -237,8 +246,8 @@ fn regularize_one_ring(key: &EdgeKey, incidents: &mut [Incident], discarded: &mu
     for inc in incidents.iter_mut() {
         // Unreduced (a−o)·basis fractions — sign/compare-only consumers, so
         // skipping gcd normalization is free speed (see dot_diff_raw).
-        let (du_n, du_d) = super::exact::predicates::dot_diff_raw(&inc.apex, &key.0, &u);
-        let (dv_n, dv_d) = super::exact::predicates::dot_diff_raw(&inc.apex, &key.0, &v);
+        let (du_n, du_d) = super::exact::predicates::dot_diff_raw(&inc.apex, k0, &u);
+        let (dv_n, dv_d) = super::exact::predicates::dot_diff_raw(&inc.apex, k0, &v);
         inc.du = num_rational::BigRational::new_raw(du_n, du_d);
         inc.dv = num_rational::BigRational::new_raw(dv_n, dv_d);
         debug_assert!(

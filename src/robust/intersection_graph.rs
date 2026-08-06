@@ -18,7 +18,7 @@
 //
 // Everything is exact; broad-phase boxes are conservative f64.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use num_rational::BigRational;
 use num_traits::{One, Zero};
@@ -30,10 +30,26 @@ use super::arrangement::{self, ArrangementInput};
 use super::exact::rational::R3;
 use super::tri_tri::{tri_tri_intersect, TriTriIsect};
 
-/// Canonical (lexicographically sorted) exact edge between two points.
-pub type EdgeKey = (R3, R3);
+/// Canonical (sorted) edge between two interned vertex ids. Downstream
+/// stages (classify rings, propagate flood fill) key their maps on these
+/// integers instead of exact rational point pairs — vertex interning at
+/// piece-emission time makes id equality coincide with exact geometric
+/// identity.
+pub type EdgeKey = (u32, u32);
 
-pub fn edge_key(a: &R3, b: &R3) -> EdgeKey {
+pub fn edge_key(a: u32, b: u32) -> EdgeKey {
+    if a <= b {
+        (a, b)
+    } else {
+        (b, a)
+    }
+}
+
+/// Canonical (lexicographically sorted) exact edge between two points —
+/// local key for the split-point registries built before interning exists.
+type GeoEdgeKey = (R3, R3);
+
+fn geo_edge_key(a: &R3, b: &R3) -> GeoEdgeKey {
     if a <= b {
         (a.clone(), b.clone())
     } else {
@@ -43,7 +59,7 @@ pub fn edge_key(a: &R3, b: &R3) -> EdgeKey {
 
 /// One output fragment: a sub-triangle of an arranged input triangle, or an
 /// untouched whole triangle. `v` is wound to match the input mesh's outward
-/// orientation.
+/// orientation; `vi` are the interned ids of the same three vertices.
 #[derive(Clone, Debug)]
 pub struct Piece {
     /// 0 = first operand (P), 1 = second operand (Q).
@@ -51,16 +67,38 @@ pub struct Piece {
     /// Index of the originating triangle in its soup.
     pub tri: usize,
     pub v: [R3; 3],
+    pub vi: [u32; 3],
 }
 
 /// Everything classification and assembly need.
 pub struct IntersectionGraph {
     pub pieces: Vec<Piece>,
+    /// Interned unique vertices; `Piece::vi` and `EdgeKey` index into this.
+    pub verts: Vec<R3>,
     /// Canonical keys of every arrangement constraint edge — the exact
     /// intersection sub-segments the classification rings live on.
-    pub isect_edges: BTreeSet<EdgeKey>,
+    pub isect_edges: HashSet<EdgeKey>,
     /// True when any P×Q pair intersected at all.
     pub any_intersections: bool,
+}
+
+/// Exact-point interner: one id per distinct rational point.
+#[derive(Default)]
+pub struct VertInterner {
+    map: HashMap<R3, u32>,
+    pub verts: Vec<R3>,
+}
+
+impl VertInterner {
+    pub fn intern(&mut self, p: &R3) -> u32 {
+        if let Some(&id) = self.map.get(p) {
+            return id;
+        }
+        let id = self.verts.len() as u32;
+        self.map.insert(p.clone(), id);
+        self.verts.push(p.clone());
+        id
+    }
 }
 
 /// A pair's primitives after distribution: segments (including coplanar
@@ -356,7 +394,7 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
 
     // 4b. Original-edge registry: split points on each mesh edge (geometric
     // identity — soups have no reliable connectivity).
-    let mut edge_registry: [BTreeMap<EdgeKey, BTreeSet<R3>>; 2] =
+    let mut edge_registry: [BTreeMap<GeoEdgeKey, BTreeSet<R3>>; 2] =
         [BTreeMap::new(), BTreeMap::new()];
     for m in 0..2 {
         for ti in 0..meshes[m].len() {
@@ -370,7 +408,7 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
             for e in 0..3 {
                 let a = &corners[e];
                 let b = &corners[(e + 1) % 3];
-                let key = edge_key(a, b);
+                let key = geo_edge_key(a, b);
                 for pt in cands {
                     if pt != a && pt != b && point_on_segment(pt, a, b) {
                         edge_registry[m].entry(key.clone()).or_default().insert(pt.clone());
@@ -382,12 +420,12 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
 
     // 4c. Intersection-segment registry: for every pair segment, gather the
     // split points both sides know about.
-    let mut seg_splits: BTreeMap<EdgeKey, BTreeSet<R3>> = BTreeMap::new();
+    let mut seg_splits: BTreeMap<GeoEdgeKey, BTreeSet<R3>> = BTreeMap::new();
     for m in 0..2 {
         for ti in 0..meshes[m].len() {
             let Some(cands) = &candidates[m][ti] else { continue };
             for (a, b, _prov) in &prims[m][ti].segments {
-                let key = edge_key(a, b);
+                let key = geo_edge_key(a, b);
                 for pt in cands {
                     if pt != a && pt != b && point_on_segment(pt, a, b) {
                         seg_splits.entry(key.clone()).or_default().insert(pt.clone());
@@ -402,7 +440,8 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
 
     // 5. Build arrangements and emit pieces.
     let mut pieces: Vec<Piece> = Vec::new();
-    let mut isect_edges: BTreeSet<EdgeKey> = BTreeSet::new();
+    let mut isect_edges: HashSet<EdgeKey> = HashSet::new();
+    let mut interner = VertInterner::default();
 
     for m in 0..2 {
         for ti in 0..meshes[m].len() {
@@ -418,7 +457,7 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
             // Boundary split points for this triangle.
             let mut extra: BTreeSet<R3> = BTreeSet::new();
             for e in 0..3 {
-                let key = edge_key(&corners[e], &corners[(e + 1) % 3]);
+                let key = geo_edge_key(&corners[e], &corners[(e + 1) % 3]);
                 if let Some(set) = edge_registry[m].get(&key) {
                     extra.extend(set.iter().cloned());
                 }
@@ -427,17 +466,23 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
             // Split points along this triangle's intersection segments
             // discovered by the other side.
             for (a, b, _) in &pr.segments {
-                if let Some(set) = seg_splits.get(&edge_key(a, b)) {
+                if let Some(set) = seg_splits.get(&geo_edge_key(a, b)) {
                     extra.extend(set.iter().cloned());
                 }
             }
 
             if pr.points.is_empty() && pr.segments.is_empty() && extra.is_empty() {
                 // Untouched triangle → whole piece.
+                let vi = [
+                    interner.intern(&corners[0]),
+                    interner.intern(&corners[1]),
+                    interner.intern(&corners[2]),
+                ];
                 pieces.push(Piece {
                     mesh: m as u8,
                     tri: ti,
                     v: corners,
+                    vi,
                 });
                 continue;
             }
@@ -451,7 +496,10 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
             }
             let arr = arrangement::build(t, &input);
             for (u, w) in arr.constraints.keys() {
-                isect_edges.insert(edge_key(&arr.points3[*u], &arr.points3[*w]));
+                isect_edges.insert(edge_key(
+                    interner.intern(&arr.points3[*u]),
+                    interner.intern(&arr.points3[*w]),
+                ));
             }
             for st in &arr.tris {
                 let (a, b, c) = (st[0], st[1], st[2]);
@@ -468,10 +516,16 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
                         arr.points3[c].clone(),
                     ]
                 };
+                let vi = [
+                    interner.intern(&v[0]),
+                    interner.intern(&v[1]),
+                    interner.intern(&v[2]),
+                ];
                 pieces.push(Piece {
                     mesh: m as u8,
                     tri: ti,
                     v,
+                    vi,
                 });
             }
         }
@@ -481,6 +535,7 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
 
     IntersectionGraph {
         pieces,
+        verts: interner.verts,
         isect_edges,
         any_intersections,
     }

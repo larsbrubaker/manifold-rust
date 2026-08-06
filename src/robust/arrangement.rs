@@ -22,7 +22,7 @@ use num_traits::Zero;
 use crate::linalg::Vec3;
 
 use super::cdt;
-use super::exact::predicates::{line_line_intersect_2d, orient2d_r, point_in_tri_2d, tri_normal_r, TriLoc};
+use super::exact::predicates::{homog2_of, line_line_intersect_2d, orient2d_h, orient2d_r, point_in_tri_2d, tri_normal_r, Homog2, TriLoc};
 use super::exact::rational::{R2, R3};
 use super::exact::Sign;
 use super::tri_tri::{dominant_axis, lift_to_plane};
@@ -58,6 +58,7 @@ pub struct Arrangement {
     /// indices of each sub-triangle to recover outward orientation.
     pub flipped: bool,
 }
+
 
 /// Build the arrangement of `input` on triangle `tri`. Primitives must
 /// already be clipped to the triangle (tri_tri output is), with rational
@@ -114,26 +115,38 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
         add_point(p3.clone(), &mut points3, &mut points2);
     }
 
-    // Mutual proper crossings between segments become new points.
+    // Mutual proper crossings between segments become new points. Points are
+    // homogenized once (Homog2) so the O(s²) sign tests never redo the
+    // denominator work.
+    let mut homogs: Vec<Homog2> = points2.iter().map(homog2_of).collect();
     for i in 0..segs.len() {
         for j in (i + 1)..segs.len() {
-            let (a, b) = (&points2[segs[i].a], &points2[segs[i].b]);
-            let (c, d) = (&points2[segs[j].a], &points2[segs[j].b]);
-            let sc = orient2d_r(a, b, c);
-            let sd = orient2d_r(a, b, d);
-            let sa = orient2d_r(c, d, a);
-            let sb = orient2d_r(c, d, b);
+            let (a, b) = (&homogs[segs[i].a], &homogs[segs[i].b]);
+            let (c, d) = (&homogs[segs[j].a], &homogs[segs[j].b]);
+            let sc = orient2d_h(a, b, c);
+            let sd = orient2d_h(a, b, d);
+            let sa = orient2d_h(c, d, a);
+            let sb = orient2d_h(c, d, b);
             // Strict crossing only — endpoint contacts and collinear overlap
             // are handled by the point-on-segment sweep below.
             if sc != Sign::Zero && sd != Sign::Zero && sc != sd
                 && sa != Sign::Zero && sb != Sign::Zero && sa != sb
             {
-                let x2 = line_line_intersect_2d(a, b, c, d)
-                    .expect("properly crossing segments are not parallel");
+                let x2 = line_line_intersect_2d(
+                    &points2[segs[i].a],
+                    &points2[segs[i].b],
+                    &points2[segs[j].a],
+                    &points2[segs[j].b],
+                )
+                .expect("properly crossing segments are not parallel");
                 let x3 = lift_to_plane(&x2, axis, &corners[0], &normal);
                 add_point(x3, &mut points3, &mut points2);
             }
         }
+    }
+    // Points added by crossings need homogs too for the sweep below.
+    for p in points2.iter().skip(homogs.len()) {
+        homogs.push(homog2_of(p));
     }
 
     debug_assert!(points2.iter().all(|p| {
@@ -146,11 +159,12 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
     for seg in &segs {
         let pa = &points2[seg.a];
         let pb = &points2[seg.b];
+        let (ha, hb) = (&homogs[seg.a], &homogs[seg.b]);
         let dir = pb.sub(pa);
         let len2 = dir.dot(&dir);
         let mut on_seg: Vec<(BigRational, usize)> = Vec::new();
         for (idx, p) in points2.iter().enumerate() {
-            if orient2d_r(pa, pb, p) != Sign::Zero {
+            if orient2d_h(ha, hb, &homogs[idx]) != Sign::Zero {
                 continue;
             }
             let t = p.sub(pa).dot(&dir);
