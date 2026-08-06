@@ -15,6 +15,30 @@ import {
 import { loadSetting, saveSetting } from '../settings.ts';
 import { pickRandomModel, pairOperandKinds, fetchMesh, meshZipUrl, type ThingiModel, type PairKind } from '../thingi.ts';
 
+/// Rebuild a ThingiModel from a Copy-Debug-Info operand record: the URL
+/// carries the repo and format, so a pasted report reproduces without the
+/// metadata index (whose pools might have changed since the capture).
+function modelFromDebugRecord(rec: any): ThingiModel {
+  if (typeof rec?.id !== 'number' || typeof rec?.url !== 'string') {
+    throw new Error('operand record is missing id/url');
+  }
+  const repoMatch = /Thingi10K-meshes-(\d+)@/.exec(rec.url);
+  const formatMatch = /\.(\w+)\.zip$/.exec(rec.url);
+  if (!repoMatch) throw new Error(`unrecognized mesh URL: ${rec.url}`);
+  return {
+    id: rec.id,
+    thing_id: 0,
+    name: rec.name ?? `#${rec.id}`,
+    format: formatMatch ? formatMatch[1] : 'stl',
+    repo: parseInt(repoMatch[1]),
+    closed: true,
+    edge_manifold: !!rec.edge_manifold,
+    vertex_manifold: !!rec.vertex_manifold,
+    faces: rec.faces ?? 0,
+    vertices: 0,
+  };
+}
+
 const DEMO = 'boolean-gallery';
 
 const SOURCES = [
@@ -106,6 +130,9 @@ export function init(container: HTMLElement): () => void {
 
   let lastDebugInfo: any = null;
   let frameCount = 0;
+  // Wall time of the most recent boolean evaluation (not mesh upload), shown
+  // in the info panel so slow pairs are visible at a glance.
+  let lastFrameMs: number | null = null;
 
   // Thingi mode is active only once a pair is actually loaded; while a pair
   // is in flight the built-in shapes stay on screen.
@@ -161,14 +188,22 @@ export function init(container: HTMLElement): () => void {
     return info;
   }
 
+  function formatMs(ms: number): string {
+    return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms.toFixed(1)} ms`;
+  }
+
   function showReadout(data: MeshData) {
     errorBox.style.display = 'none';
-    updateReadout(readout, [
+    const rows = [
       { label: 'Vertices', value: String(data.num_vert) },
       { label: 'Triangles', value: String(data.num_tri) },
       { label: 'Volume', value: data.volume.toFixed(4) },
       { label: 'Surface Area', value: data.surface_area.toFixed(4) },
-    ]);
+    ];
+    if (lastFrameMs !== null) {
+      rows.push({ label: 'Last Frame', value: formatMs(lastFrameMs) });
+    }
+    updateReadout(readout, rows);
   }
 
   function update(silent = false) {
@@ -176,11 +211,14 @@ export function init(container: HTMLElement): () => void {
     const info = captureDebugInfo();
     try {
       let data: MeshData;
+      const t0 = performance.now();
       if (inThingi()) {
         data = importedBoolean(thingiA!.handle, thingiB!.handle, op, engine, offsetX, offsetY, offsetZ, rotX, rotY, rotZ);
       } else {
         data = booleanGalleryMeshEngine(shapeA, shapeB, op, offsetX, offsetY, offsetZ, rotX, rotY, rotZ, engine);
       }
+      lastFrameMs = performance.now() - t0;
+      info.elapsed_ms = Math.round(lastFrameMs * 10) / 10;
       info.result = { num_tri: data.num_tri, num_vert: data.num_vert, volume: data.volume };
       try { localStorage.setItem('boolean-gallery-debug', JSON.stringify(info)); } catch { /* ignore */ }
       viewer.setMesh(data);
@@ -361,32 +399,180 @@ export function init(container: HTMLElement): () => void {
     }
   }
 
-  controlsEl.appendChild(createDropdown('Source', SOURCES, source, v => setSource(v as 'builtin' | 'thingi')));
+  const sourceCtl = createDropdown('Source', SOURCES, source, v => setSource(v as 'builtin' | 'thingi'));
+  controlsEl.appendChild(sourceCtl);
 
   const builtinSection = document.createElement('div');
-  builtinSection.appendChild(createDropdown('Shape A', SHAPES, String(shapeA), v => { shapeA = parseInt(v); saveSetting(DEMO, 'shapeA', shapeA); update(); }));
-  builtinSection.appendChild(createDropdown('Shape B', SHAPES, String(shapeB), v => { shapeB = parseInt(v); saveSetting(DEMO, 'shapeB', shapeB); update(); }));
+  const shapeACtl = createDropdown('Shape A', SHAPES, String(shapeA), v => { shapeA = parseInt(v); saveSetting(DEMO, 'shapeA', shapeA); update(); });
+  const shapeBCtl = createDropdown('Shape B', SHAPES, String(shapeB), v => { shapeB = parseInt(v); saveSetting(DEMO, 'shapeB', shapeB); update(); });
+  builtinSection.appendChild(shapeACtl);
+  builtinSection.appendChild(shapeBCtl);
   controlsEl.appendChild(builtinSection);
 
   const thingiSection = document.createElement('div');
-  thingiSection.appendChild(createDropdown('Pair Type', PAIR_KINDS, pairKind, v => { pairKind = v as PairKind; saveSetting(DEMO, 'pairKind', pairKind); }));
+  const pairKindCtl = createDropdown('Pair Type', PAIR_KINDS, pairKind, v => { pairKind = v as PairKind; saveSetting(DEMO, 'pairKind', pairKind); });
+  thingiSection.appendChild(pairKindCtl);
   const loadBtn = createButton('Load Random Pair', () => { loadRandomPair(); });
   thingiSection.appendChild(loadBtn);
   thingiSection.appendChild(thingiInfo);
   controlsEl.appendChild(thingiSection);
 
-  controlsEl.appendChild(createDropdown('Operation', OPS, String(op), v => { op = parseInt(v); saveSetting(DEMO, 'op', op); update(); }));
-  controlsEl.appendChild(createDropdown('Engine', ENGINES, String(engine), v => { engine = parseInt(v) as BooleanEngine; saveSetting(DEMO, 'engine', engine); update(); }));
-  controlsEl.appendChild(createSlider('Offset X ', -1.5, 1.5, offsetX, 0.1, v => { offsetX = v; saveSetting(DEMO, 'offsetX', v); update(); }));
-  controlsEl.appendChild(createSlider('Offset Y ', -1.5, 1.5, offsetY, 0.1, v => { offsetY = v; saveSetting(DEMO, 'offsetY', v); update(); }));
-  controlsEl.appendChild(createSlider('Offset Z ', -1.5, 1.5, offsetZ, 0.1, v => { offsetZ = v; saveSetting(DEMO, 'offsetZ', v); update(); }));
+  const opCtl = createDropdown('Operation', OPS, String(op), v => { op = parseInt(v); saveSetting(DEMO, 'op', op); update(); });
+  const engineCtl = createDropdown('Engine', ENGINES, String(engine), v => { engine = parseInt(v) as BooleanEngine; saveSetting(DEMO, 'engine', engine); update(); });
+  const offXCtl = createSlider('Offset X ', -1.5, 1.5, offsetX, 0.1, v => { offsetX = v; saveSetting(DEMO, 'offsetX', v); update(); });
+  const offYCtl = createSlider('Offset Y ', -1.5, 1.5, offsetY, 0.1, v => { offsetY = v; saveSetting(DEMO, 'offsetY', v); update(); });
+  const offZCtl = createSlider('Offset Z ', -1.5, 1.5, offsetZ, 0.1, v => { offsetZ = v; saveSetting(DEMO, 'offsetZ', v); update(); });
+  controlsEl.appendChild(opCtl);
+  controlsEl.appendChild(engineCtl);
+  controlsEl.appendChild(offXCtl);
+  controlsEl.appendChild(offYCtl);
+  controlsEl.appendChild(offZCtl);
   const animateBox = createCheckbox('Animate', animate, toggleAnimate);
   controlsEl.appendChild(animateBox);
   controlsEl.appendChild(createCheckbox('Wireframe', wireframe, v => { saveSetting(DEMO, 'wireframe', v); viewer.setWireframe(v); }));
   const copyBtn = createButton('Copy Debug Info', () => { copyDebugInfo(); });
   controlsEl.appendChild(copyBtn);
+  const useBtn = createButton('Use Debug Info', () => { useDebugInfo(); });
+  controlsEl.appendChild(useBtn);
   controlsEl.appendChild(errorBox);
   controlsEl.appendChild(readout);
+
+  // ---- Use Debug Info: restore the exact captured state from a paste ----
+
+  function setDropdownValue(ctl: HTMLElement, value: string) {
+    const sel = ctl.querySelector('select');
+    if (sel) sel.value = value;
+  }
+
+  function setSliderValue(ctl: HTMLElement, v: number) {
+    const input = ctl.querySelector('input');
+    if (input) input.value = String(v);
+    const span = ctl.querySelector('.slider-value');
+    if (span) span.textContent = String(v);
+  }
+
+  function forceAnimateOff() {
+    if (animate || animating) toggleAnimate(false);
+    const box = animateBox.querySelector('input') as HTMLInputElement | null;
+    if (box) box.checked = false;
+  }
+
+  function showUseError(msg: string) {
+    errorBox.style.display = 'block';
+    errorBox.innerHTML = `<strong>Use Debug Info:</strong> ${msg}`;
+  }
+
+  async function loadOperandFromRecord(rec: any): Promise<ThingiOperand> {
+    const model = modelFromDebugRecord(rec);
+    setThingiInfo(`Fetching #${model.id} &ldquo;${model.name}&rdquo;…`);
+    const parsed = await fetchMesh(model);
+    if (disposed) throw new Error('demo closed');
+    const handle = importTriangleSoup(parsed.positions, parsed.indices);
+    if (!handle.ok) {
+      const status = handle.status;
+      handle.free();
+      throw new Error(`#${model.id} failed to import: ${status}`);
+    }
+    return { model, handle, normalization: { center: parsed.center, scale: parsed.scale } };
+  }
+
+  async function useDebugInfo() {
+    errorBox.style.display = 'none';
+    let text: string;
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (e) {
+      showUseError(`could not read the clipboard (${String(e)}). The browser may need ` +
+        `clipboard permission, or this page must run on a secure context (https or localhost).`);
+      return;
+    }
+    let info: any;
+    try {
+      info = JSON.parse(text);
+    } catch {
+      showUseError('the clipboard does not contain debug info (not valid JSON). ' +
+        'Press <em>Copy Debug Info</em> on a gallery frame first, then paste it back here.');
+      return;
+    }
+    if (!info || info.demo !== DEMO || !Array.isArray(info.rotation_degrees) || !Array.isArray(info.offset)) {
+      showUseError('the clipboard JSON is not Boolean Gallery debug info ' +
+        '(expected the object produced by <em>Copy Debug Info</em>).');
+      return;
+    }
+    if (loadingPair) {
+      showUseError('a Thingi10K pair is still loading — try again when it finishes.');
+      return;
+    }
+
+    // Land exactly on the captured frame: freeze animation first.
+    forceAnimateOff();
+
+    const opIdx = OP_NAMES.indexOf(info.op);
+    if (opIdx >= 0) { op = opIdx; saveSetting(DEMO, 'op', op); setDropdownValue(opCtl, String(op)); }
+    const engIdx = ENGINE_NAMES.indexOf(info.engine);
+    if (engIdx >= 0) { engine = engIdx as BooleanEngine; saveSetting(DEMO, 'engine', engine); setDropdownValue(engineCtl, String(engine)); }
+    [offsetX, offsetY, offsetZ] = info.offset.map(Number) as [number, number, number];
+    saveSetting(DEMO, 'offsetX', offsetX);
+    saveSetting(DEMO, 'offsetY', offsetY);
+    saveSetting(DEMO, 'offsetZ', offsetZ);
+    setSliderValue(offXCtl, offsetX);
+    setSliderValue(offYCtl, offsetY);
+    setSliderValue(offZCtl, offsetZ);
+    [rotX, rotY, rotZ] = info.rotation_degrees.map(Number) as [number, number, number];
+
+    if (info.model_a && info.model_b) {
+      source = 'thingi';
+      saveSetting(DEMO, 'source', source);
+      setDropdownValue(sourceCtl, source);
+      builtinSection.style.display = 'none';
+      thingiSection.style.display = '';
+      if (typeof info.pair_kind === 'string') {
+        pairKind = info.pair_kind as PairKind;
+        saveSetting(DEMO, 'pairKind', pairKind);
+        setDropdownValue(pairKindCtl, pairKind);
+      }
+      loadingPair = true;
+      loadBtn.disabled = true;
+      useBtn.disabled = true;
+      useBtn.textContent = 'Loading pair…';
+      skippedImports = [];
+      try {
+        const a = await loadOperandFromRecord(info.model_a);
+        let b: ThingiOperand;
+        try {
+          b = await loadOperandFromRecord(info.model_b);
+        } catch (e) {
+          a.handle.free();
+          throw e;
+        }
+        freeThingiPair();
+        thingiA = a;
+        thingiB = b;
+        setThingiInfo(`A: ${operandLabel(thingiA)}<br>B: ${operandLabel(thingiB)}<br>` +
+          `Restored rotation: [${rotX}, ${rotY}, ${rotZ}]&deg;`);
+        update();
+      } catch (e) {
+        setThingiInfo(inThingi() ? `A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}` : null);
+        showUseError(`failed to load the captured pair: ${String(e)}`);
+      } finally {
+        loadingPair = false;
+        loadBtn.disabled = false;
+        useBtn.disabled = false;
+        useBtn.textContent = 'Use Debug Info';
+      }
+    } else {
+      source = 'builtin';
+      saveSetting(DEMO, 'source', source);
+      setDropdownValue(sourceCtl, source);
+      builtinSection.style.display = '';
+      thingiSection.style.display = 'none';
+      const sa = SHAPE_NAMES.indexOf(info.shape_a);
+      const sb = SHAPE_NAMES.indexOf(info.shape_b);
+      if (sa >= 0) { shapeA = sa; saveSetting(DEMO, 'shapeA', shapeA); setDropdownValue(shapeACtl, String(shapeA)); }
+      if (sb >= 0) { shapeB = sb; saveSetting(DEMO, 'shapeB', shapeB); setDropdownValue(shapeBCtl, String(shapeB)); }
+      update();
+    }
+  }
 
   builtinSection.style.display = source === 'builtin' ? '' : 'none';
   thingiSection.style.display = source === 'thingi' ? '' : 'none';
