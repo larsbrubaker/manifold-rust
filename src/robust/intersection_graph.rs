@@ -759,7 +759,17 @@ fn real_self_contact(
     // regions make the *coplanar* neighbor cases as common as the generic
     // ones, and without their 2D shortcuts every such pair pays for a full
     // rational coplanar-overlap clip.
-    let shared_f: Vec<Vec3> = t1.iter().copied().filter(|v| t2.contains(v)).collect();
+    // Stack-allocated shared-vertex list: this runs per box pair (hundreds
+    // of thousands on dense meshes) and a heap Vec here is measurable.
+    let mut shared_f = [Vec3::default(); 3];
+    let mut n_shared = 0usize;
+    for &v in &t1 {
+        if t2.contains(&v) {
+            shared_f[n_shared] = v;
+            n_shared += 1;
+        }
+    }
+    let shared_f = &shared_f[..n_shared];
     if shared_f.len() == 3 {
         stats.identical += 1;
         return None;
@@ -792,11 +802,15 @@ fn real_self_contact(
         // Vertex-adjacent: if t2's two non-shared corners lie strictly on
         // one side of t1's plane, the contact is exactly the shared vertex —
         // an isolated point, no cut.
-        let others: Vec<(Vec3, Sign)> = t2
-            .iter()
-            .filter(|v| !t1.contains(v))
-            .map(|&v| (v, orient3d_plane(&t1, v)))
-            .collect();
+        let mut others = [(Vec3::default(), Sign::Zero); 3];
+        let mut n_others = 0usize;
+        for &v in &t2 {
+            if !t1.contains(&v) {
+                others[n_others] = (v, orient3d_plane(&t1, v));
+                n_others += 1;
+            }
+        }
+        let others = &others[..n_others];
         if others.len() == 2 && others[0].1 != Sign::Zero && others[0].1 == others[1].1 {
             stats.vert_benign += 1;
             return None;
@@ -808,7 +822,15 @@ fn real_self_contact(
             let axis = dominant_axis_f64(t1);
             let p2 = |v: Vec3| project_f64(v, axis);
             let v0 = shared_f[0];
-            let own: Vec<Vec3> = t1.iter().copied().filter(|v| !t2.contains(v)).collect();
+            let mut own = [Vec3::default(); 3];
+            let mut n_own = 0usize;
+            for &v in &t1 {
+                if !t2.contains(&v) {
+                    own[n_own] = v;
+                    n_own += 1;
+                }
+            }
+            let own = &own[..n_own];
             let other = [others[0].0, others[1].0];
             // Candidate separators: each triangle's two edges through v0,
             // tested against its own third corner vs the other triangle's

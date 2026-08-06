@@ -181,6 +181,28 @@ enum EndPt {
 fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]) -> TriTriIsect {
     use num_bigint::BigInt;
 
+    // Fast path: when a triangle has exactly one vertex ON the other's plane
+    // and its remaining vertices strictly on one side, its interval on the
+    // common line L is that single vertex. Two degenerate intervals overlap
+    // iff the vertices coincide — original f64 vertices are equal as
+    // rationals iff equal as f64, so no arithmetic at all. This is the
+    // dominant configuration on touching sheets (vertex-to-vertex contacts).
+    let degenerate_at = |s: &[Sign; 3]| -> Option<usize> {
+        (0..3).find(|&i| {
+            s[i] == Sign::Zero
+                && s[(i + 1) % 3] != Sign::Zero
+                && s[(i + 1) % 3] == s[(i + 2) % 3]
+        })
+    };
+    if let (Some(i), Some(j)) = (degenerate_at(s1), degenerate_at(s2)) {
+        // Ties prefer t1's endpoint, matching the general path's lo pick.
+        return if t1[i] == t2[j] {
+            TriTriIsect::Point(R3::from_vec3(t1[i]))
+        } else {
+            TriTriIsect::None
+        };
+    }
+
     // Scaled integer coordinates; one common scale per axis across BOTH
     // triangles so cross-triangle parameter comparisons share a basis.
     let sx = super::exact::intpred::scaled_big([
@@ -211,29 +233,30 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
         "non-coplanar intersecting planes"
     );
 
-    // Parameters dir·v of all six vertices, and signed heights against the
-    // other triangle's plane (whose signs replicate s1/s2 exactly).
-    let du: [BigInt; 6] = std::array::from_fn(|k| dot(&dir, v(k)));
+    // Parameters dir·v and signed heights against the other triangle's
+    // plane, computed lazily: a typical call touches 2–4 of the six
+    // vertices, and every skipped dot product is three skipped BigInt
+    // multiplications. Height signs replicate s1/s2 exactly.
+    let du = |k: usize| dot(&dir, v(k));
     let h = |k: usize, n: &[BigInt; 3], origin: usize| dot(n, v(k)) - dot(n, v(origin));
-    let h1: [BigInt; 3] = std::array::from_fn(|i| h(i, &n2, 3));
-    let h2: [BigInt; 3] = std::array::from_fn(|i| h(3 + i, &n1, 0));
     #[cfg(debug_assertions)]
     for i in 0..3 {
-        debug_assert_eq!(int_sign(&h1[i]), s1[i], "scaled height disagrees with s1");
-        debug_assert_eq!(int_sign(&h2[i]), s2[i], "scaled height disagrees with s2");
+        debug_assert_eq!(int_sign(&h(i, &n2, 3)), s1[i], "scaled height disagrees with s1");
+        debug_assert_eq!(int_sign(&h(3 + i, &n1, 0)), s2[i], "scaled height disagrees with s2");
     }
 
     // The ≤2 endpoints of one triangle's crossing with the other's plane, as
     // (unreduced parameter fraction, symbolic point), in the same
     // enumeration order as the rational implementation used (vertices in
     // index order, then edges (0,1), (1,2), (2,0)) so ties break alike.
-    let endpoints = |which: u8, s: &[Sign; 3], hs: &[BigInt; 3]| -> Vec<(Frac, EndPt)> {
+    let endpoints = |which: u8, s: &[Sign; 3]| -> Vec<(Frac, EndPt)> {
         let base = if which == 0 { 0 } else { 3 };
+        let (n, origin) = if which == 0 { (&n2, 3) } else { (&n1, 0) };
         let mut pts = Vec::with_capacity(2);
         for i in 0..3 {
             if s[i] == Sign::Zero {
                 pts.push((
-                    (du[base + i].clone(), BigInt::from(1)),
+                    (du(base + i), BigInt::from(1)),
                     EndPt::Vert(which, i as u8),
                 ));
             }
@@ -243,8 +266,12 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
             if s[i] != Sign::Zero && s[j] != Sign::Zero && s[i] != s[j] {
                 // x = u + h_u/(h_u−h_v)·(v−u) ⇒
                 // dir·x = [(h_u−h_v)·du_u + h_u·(du_v−du_u)] / (h_u−h_v).
-                let mut den = &hs[i] - &hs[j];
-                let mut num = &den * &du[base + i] + &hs[i] * (&du[base + j] - &du[base + i]);
+                let hu = h(base + i, n, origin);
+                let hv = h(base + j, n, origin);
+                let du_u = du(base + i);
+                let du_v = du(base + j);
+                let mut den = &hu - &hv;
+                let mut num = &den * &du_u + &hu * (&du_v - &du_u);
                 if den.sign() == num_bigint::Sign::Minus {
                     den = -den;
                     num = -num;
@@ -255,8 +282,8 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
         debug_assert!(!pts.is_empty() && pts.len() <= 2);
         pts
     };
-    let pts1 = endpoints(0, s1, &h1);
-    let pts2 = endpoints(1, s2, &h2);
+    let pts1 = endpoints(0, s1);
+    let pts2 = endpoints(1, s2);
 
     // Per-triangle interval, first-encountered point winning ties (matching
     // the old interval_along).
