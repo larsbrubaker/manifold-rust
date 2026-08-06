@@ -24,7 +24,7 @@ Pure Rust port of [Manifold](https://github.com/elalish/manifold) — a geometry
 > Part of the [rust-apps](https://github.com/larsbrubaker/rust-apps) suite — a collection of Rust graphics and geometry libraries by Lars Brubaker.
 
 > **Status: Port complete.** All 18 phases of the C++ engine (v3.5.0) are implemented and
-> every C++ test is ported or covered — 628 tests passing, 0 failing (the handful of
+> every C++ test is ported or covered — 630 tests passing, 0 failing (the handful of
 > `#[ignore]`d tests are debug-build-speed only and pass in release). Heavy boolean/CSG
 > workloads run at parity with the sequential C++ build, and the optional `parallel`
 > feature roughly doubles them. See [PORTING_PLAN.md](PORTING_PLAN.md) for the full record.
