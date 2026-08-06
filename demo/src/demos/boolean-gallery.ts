@@ -112,6 +112,7 @@ export function init(container: HTMLElement): () => void {
   let offsetY = loadSetting(DEMO, 'offsetY', 0.0);
   let offsetZ = loadSetting(DEMO, 'offsetZ', 0.0);
   let wireframe = loadSetting(DEMO, 'wireframe', false);
+  let xray = loadSetting(DEMO, 'xray', false);
   let animate = loadSetting(DEMO, 'animate', true);
   let animating = false;
   let animId = 0;
@@ -430,6 +431,7 @@ export function init(container: HTMLElement): () => void {
   const animateBox = createCheckbox('Animate', animate, toggleAnimate);
   controlsEl.appendChild(animateBox);
   controlsEl.appendChild(createCheckbox('Wireframe', wireframe, v => { saveSetting(DEMO, 'wireframe', v); viewer.setWireframe(v); }));
+  controlsEl.appendChild(createCheckbox('X-Ray (depth peeled)', xray, v => { xray = v; saveSetting(DEMO, 'xray', v); viewer.setXRay(v); }));
   const copyBtn = createButton('Copy Debug Info', () => { copyDebugInfo(); });
   controlsEl.appendChild(copyBtn);
   const useBtn = createButton('Use Debug Info', () => { useDebugInfo(); });
@@ -583,6 +585,7 @@ export function init(container: HTMLElement): () => void {
     update();
   }
   if (wireframe) viewer.setWireframe(true);
+  if (xray) viewer.setXRay(true);
   toggleAnimate(animate);
 
   return () => {

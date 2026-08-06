@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import type { MeshData } from './wasm.ts';
+import { DepthPeeler, DepthPeelStandardMaterial } from './depth-peeling.ts';
 
 export class ThreeViewer {
   private renderer: THREE.WebGLRenderer;
@@ -16,6 +17,14 @@ export class ThreeViewer {
   private animId = 0;
   private disposed = false;
   private hasFramed = false;
+  // X-Ray: the result rendered with depth-peeled uniform transparency, so
+  // every internal wall of a boolean output is visible in correct order.
+  private peeler = new DepthPeeler();
+  private xray = false;
+  private xrayOpacity = 0.45;
+  private xrayGroup = new THREE.Group();
+  private xrayMesh: THREE.Mesh | null = null;
+  private meshColor = 0x4488cc;
 
   constructor(container: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -45,6 +54,7 @@ export class ThreeViewer {
     // Grid helper
     const grid = new THREE.GridHelper(4, 20, 0xcccccc, 0xe0e0e0);
     this.scene.add(grid);
+    this.scene.add(this.xrayGroup);
 
     // Resize handling
     const ro = new ResizeObserver(() => this.resize());
@@ -62,13 +72,52 @@ export class ThreeViewer {
     this.renderer.setSize(w, h);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
+    const size = new THREE.Vector2();
+    this.renderer.getDrawingBufferSize(size);
+    this.peeler.setSize(size.x, size.y);
   }
 
   private animate() {
     if (this.disposed) return;
     this.animId = requestAnimationFrame(() => this.animate());
     this.controls.update();
-    this.renderer.render(this.scene, this.camera);
+    if (this.xray && this.xrayMesh) {
+      this.peeler.render(this.renderer, this.scene, this.camera, this.xrayGroup);
+    } else {
+      this.renderer.render(this.scene, this.camera);
+    }
+  }
+
+  /** Toggle depth-peeled X-Ray display of the current mesh. */
+  setXRay(on: boolean, opacity = 0.45) {
+    this.xray = on;
+    this.xrayOpacity = opacity;
+    this.refreshXRayMesh();
+  }
+
+  private refreshXRayMesh() {
+    if (this.xrayMesh) {
+      this.xrayGroup.remove(this.xrayMesh);
+      (this.xrayMesh.material as THREE.Material).dispose();
+      this.xrayMesh = null;
+    }
+    const src = this.frontMesh ?? this.backMesh;
+    const show = !this.xray;
+    if (this.backMesh) this.backMesh.visible = show;
+    if (this.frontMesh) this.frontMesh.visible = show;
+    if (!this.xray || !src) return;
+    const hasColors = !!src.geometry.getAttribute('color');
+    const mat = new DepthPeelStandardMaterial();
+    mat.color.set(hasColors ? 0xffffff : this.meshColor);
+    mat.vertexColors = hasColors;
+    mat.roughness = 0.5;
+    mat.metalness = 0.1;
+    mat.side = THREE.DoubleSide;
+    mat.flatShading = true;
+    mat.transparent = true;
+    mat.opacity = this.xrayOpacity;
+    this.xrayMesh = new THREE.Mesh(src.geometry, mat);
+    this.xrayGroup.add(this.xrayMesh);
   }
 
   setMesh(data: MeshData) {
@@ -174,6 +223,8 @@ export class ThreeViewer {
       this.addWireframe(geom);
     }
 
+    this.refreshXRayMesh();
+
     if (!this.hasFramed) {
       this.frameCamera(geom);
       this.hasFramed = true;
@@ -201,8 +252,15 @@ export class ThreeViewer {
   }
 
   setColor(color: number) {
+    this.meshColor = color;
     if (this.frontMesh) {
       const mat = this.frontMesh.material as THREE.MeshStandardMaterial;
+      if (!mat.vertexColors) {
+        mat.color.set(color);
+      }
+    }
+    if (this.xrayMesh) {
+      const mat = this.xrayMesh.material as THREE.MeshStandardMaterial;
       if (!mat.vertexColors) {
         mat.color.set(color);
       }
@@ -210,6 +268,12 @@ export class ThreeViewer {
   }
 
   private clearMesh() {
+    if (this.xrayMesh) {
+      this.xrayGroup.remove(this.xrayMesh);
+      (this.xrayMesh.material as THREE.Material).dispose();
+      // Geometry is shared with front/back mesh; disposed below.
+      this.xrayMesh = null;
+    }
     const sharedGeom = this.backMesh && this.frontMesh && this.backMesh.geometry === this.frontMesh.geometry;
     if (this.backMesh) {
       this.scene.remove(this.backMesh);
@@ -250,6 +314,7 @@ export class ThreeViewer {
     this.disposed = true;
     cancelAnimationFrame(this.animId);
     this.clearMesh();
+    this.peeler.dispose();
     this.controls.dispose();
     this.renderer.dispose();
     this.renderer.domElement.remove();
