@@ -67,6 +67,50 @@ pub fn orient2d_h(a: &Homog2, b: &Homog2, c: &Homog2) -> Sign {
     sign_of_int(&(ux * vy - uy * vx))
 }
 
+/// `incircle_r` over pre-homogenized points — identical sign (same row
+/// scaling argument), computed without re-clearing any denominators.
+pub fn incircle_h(a: &Homog2, b: &Homog2, c: &Homog2, d: &Homog2) -> Sign {
+    let row = |p: &Homog2| -> (BigInt, BigInt, BigInt) {
+        let nx = &p.0 * &d.2 - &d.0 * &p.2;
+        let ny = &p.1 * &d.2 - &d.1 * &p.2;
+        let s = &p.2 * &d.2;
+        let lift = &nx * &nx + &ny * &ny;
+        (nx * &s, ny * &s, lift)
+    };
+    let (ux, uy, ul) = row(a);
+    let (vx, vy, vl) = row(b);
+    let (wx, wy, wl) = row(c);
+    let det = ul * (&vx * &wy - &vy * &wx)
+        + vl * (&wx * &uy - &wy * &ux)
+        + wl * (&ux * &vy - &uy * &vx);
+    sign_of_int(&det)
+}
+
+/// `point_in_tri_2d` over pre-homogenized points.
+pub fn point_in_tri_2d_h(p: &Homog2, a: &Homog2, b: &Homog2, c: &Homog2) -> TriLoc {
+    let orient = orient2d_h(a, b, c);
+    if orient == Sign::Zero {
+        return TriLoc::Outside;
+    }
+    let normalize = |s: Sign| if orient == Sign::Pos { s } else { s.flip() };
+    let s0 = normalize(orient2d_h(a, b, p));
+    let s1 = normalize(orient2d_h(b, c, p));
+    let s2 = normalize(orient2d_h(c, a, p));
+    if s0 == Sign::Neg || s1 == Sign::Neg || s2 == Sign::Neg {
+        return TriLoc::Outside;
+    }
+    match (s0 == Sign::Zero, s1 == Sign::Zero, s2 == Sign::Zero) {
+        (false, false, false) => TriLoc::Inside,
+        (true, false, false) => TriLoc::OnEdge(0),
+        (false, true, false) => TriLoc::OnEdge(1),
+        (false, false, true) => TriLoc::OnEdge(2),
+        (true, false, true) => TriLoc::OnVertex(0),
+        (true, true, false) => TriLoc::OnVertex(1),
+        (false, true, true) => TriLoc::OnVertex(2),
+        (true, true, true) => TriLoc::Outside,
+    }
+}
+
 #[inline]
 fn sign_of_int(v: &BigInt) -> Sign {
     if v.is_positive() {

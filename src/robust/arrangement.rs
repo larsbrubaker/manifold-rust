@@ -17,7 +17,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use num_rational::BigRational;
-use num_traits::Zero;
+use num_traits::{Signed, Zero};
 
 use crate::linalg::Vec3;
 
@@ -157,25 +157,33 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
     // consecutive point pairs become constraint edges carrying provenance.
     let mut constraints: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
     for seg in &segs {
-        let pa = &points2[seg.a];
-        let pb = &points2[seg.b];
         let (ha, hb) = (&homogs[seg.a], &homogs[seg.b]);
-        let dir = pb.sub(pa);
-        let len2 = dir.dot(&dir);
-        let mut on_seg: Vec<(BigRational, usize)> = Vec::new();
-        for (idx, p) in points2.iter().enumerate() {
-            if orient2d_h(ha, hb, &homogs[idx]) != Sign::Zero {
+        // Segment direction cleared of denominators: v = (pb−pa)·(Bw·Aw).
+        let vx = &hb.0 * &ha.2 - &ha.0 * &hb.2;
+        let vy = &hb.1 * &ha.2 - &ha.1 * &hb.2;
+        let vv = &vx * &vx + &vy * &vy;
+        // Parameters as unreduced fractions: for point P (homog (Px,Py,Pw)),
+        // u = (p−pa)·(Pw·Aw) and t ∝ (u·v)/Pw — ordered and range-checked by
+        // cross-multiplication with the positive denominators, no canonical
+        // rationals anywhere.
+        let mut on_seg: Vec<(num_bigint::BigInt, num_bigint::BigInt, usize)> = Vec::new();
+        for (idx, hp) in homogs.iter().enumerate() {
+            if orient2d_h(ha, hb, hp) != Sign::Zero {
                 continue;
             }
-            let t = p.sub(pa).dot(&dir);
-            if t >= BigRational::zero() && t <= len2 {
-                on_seg.push((t, idx));
+            let ux = &hp.0 * &ha.2 - &ha.0 * &hp.2;
+            let uy = &hp.1 * &ha.2 - &ha.1 * &hp.2;
+            let uv = &ux * &vx + &uy * &vy;
+            // 0 ≤ t  ⇔  0 ≤ u·v;   t ≤ |dir|²  ⇔  (u·v)·Bw ≤ (v·v)·Pw.
+            if !uv.is_negative() && &uv * &hb.2 <= &vv * &hp.2 {
+                on_seg.push((uv, hp.2.clone(), idx));
             }
         }
-        on_seg.sort();
+        // t_i < t_j  ⇔  uv_i·Pw_j < uv_j·Pw_i (denominators positive).
+        on_seg.sort_by(|a, b| (&a.0 * &b.1).cmp(&(&b.0 * &a.1)));
         debug_assert!(on_seg.len() >= 2, "segment lost its own endpoints");
         for w in on_seg.windows(2) {
-            let (u, v) = (w[0].1, w[1].1);
+            let (u, v) = (w[0].2, w[1].2);
             debug_assert_ne!(u, v, "duplicate points on segment");
             let key = (u.min(v), u.max(v));
             let provs = constraints.entry(key).or_default();

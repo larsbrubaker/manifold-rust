@@ -14,7 +14,9 @@
 // O(n²) scans (linear point location, fixpoint legalization) over
 // sophisticated locality structures.
 
-use super::exact::predicates::{incircle_r, orient2d_r, point_in_tri_2d, TriLoc};
+use super::exact::predicates::{
+    homog2_of, incircle_h, orient2d_h, point_in_tri_2d_h, Homog2, TriLoc,
+};
 use super::exact::rational::R2;
 use super::exact::Sign;
 
@@ -29,9 +31,12 @@ struct Tri {
     alive: bool,
 }
 
-struct Cdt<'a> {
-    pts: &'a [R2],
+struct Cdt {
+    /// Homogenized once per triangulation; every predicate reuses these.
+    pts: Vec<Homog2>,
     tris: Vec<Tri>,
+    /// Suspect triangles for queue-based Lawson legalization.
+    suspects: Vec<usize>,
 }
 
 /// Constrained Delaunay triangulation of `points` inside the triangle formed
@@ -42,8 +47,9 @@ struct Cdt<'a> {
 /// three. Returns CCW index triangles exactly covering the input triangle.
 pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize; 3]> {
     assert!(points.len() >= 3, "need the three corner points");
+    let hom: Vec<Homog2> = points.iter().map(homog2_of).collect();
     let mut corners = [0usize, 1, 2];
-    let orient = orient2d_r(&points[0], &points[1], &points[2]);
+    let orient = orient2d_h(&hom[0], &hom[1], &hom[2]);
     assert!(
         orient != Sign::Zero,
         "degenerate base triangle in CDT input"
@@ -53,24 +59,29 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
     }
 
     let mut cdt = Cdt {
-        pts: points,
+        pts: hom,
         tris: vec![Tri {
             v: corners,
             adj: [-1, -1, -1],
             con: [false, false, false],
             alive: true,
         }],
+        suspects: Vec::new(),
     };
 
-    for p in 3..points.len() {
+    for p in 3..cdt.pts.len() {
+        let first_new = cdt.tris.len();
         cdt.insert_point(p);
-        cdt.legalize_all();
+        cdt.seed_suspects(first_new);
+        cdt.legalize_suspects();
     }
     for &(a, b) in constraints {
         debug_assert_ne!(a, b, "zero-length constraint");
+        let first_new = cdt.tris.len();
         cdt.insert_constraint(a, b);
+        cdt.seed_suspects(first_new);
+        cdt.legalize_suspects();
     }
-    cdt.legalize_all();
 
     cdt.tris
         .iter()
@@ -79,7 +90,7 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
         .collect()
 }
 
-impl<'a> Cdt<'a> {
+impl Cdt {
     /// Index of `t`'s edge shared with triangle `n` (panics if not adjacent —
     /// an internal-consistency violation, not an input condition).
     fn shared_edge(&self, t: usize, n: usize) -> usize {
@@ -110,11 +121,50 @@ impl<'a> Cdt<'a> {
     }
 
     fn locate(&self, p: usize) -> (usize, TriLoc) {
+        // Visibility walk from the most recent live triangle: step across any
+        // edge whose line strictly separates the point (points are inserted
+        // before constraints, so the triangulation is Delaunay here and the
+        // walk terminates — Edelsbrunner). The step cap is a safety net; on
+        // overrun the exhaustive scan below still answers.
+        if let Some(start) = (0..self.tris.len()).rev().find(|&i| self.tris[i].alive) {
+            let mut cur = start;
+            let mut steps = 0usize;
+            let cap = 4 * self.tris.len() + 16;
+            'walk: while steps < cap {
+                steps += 1;
+                let t = &self.tris[cur];
+                let loc = point_in_tri_2d_h(
+                    &self.pts[p],
+                    &self.pts[t.v[0]],
+                    &self.pts[t.v[1]],
+                    &self.pts[t.v[2]],
+                );
+                if loc != TriLoc::Outside {
+                    return (cur, loc);
+                }
+                for e in 0..3 {
+                    // CCW triangle: strictly outside edge e ⇔ orient2d neg.
+                    if orient2d_h(
+                        &self.pts[t.v[e]],
+                        &self.pts[t.v[(e + 1) % 3]],
+                        &self.pts[p],
+                    ) == Sign::Neg
+                    {
+                        let n = t.adj[e];
+                        if n >= 0 {
+                            cur = n as usize;
+                            continue 'walk;
+                        }
+                    }
+                }
+                break; // no separating edge with a neighbor — fall through
+            }
+        }
         for (i, t) in self.tris.iter().enumerate() {
             if !t.alive {
                 continue;
             }
-            let loc = point_in_tri_2d(
+            let loc = point_in_tri_2d_h(
                 &self.pts[p],
                 &self.pts[t.v[0]],
                 &self.pts[t.v[1]],
@@ -232,25 +282,35 @@ impl<'a> Cdt<'a> {
         }
     }
 
-    /// Lawson fixpoint: flip every non-constrained, strictly non-Delaunay,
-    /// flippable edge until none remain. Exact incircle ties (cocircular
-    /// quads) never flip, which guarantees termination.
-    fn legalize_all(&mut self) {
-        loop {
-            let mut flipped = false;
-            for t in 0..self.tris.len() {
-                if !self.tris[t].alive {
-                    continue;
-                }
-                for e in 0..3 {
-                    if self.try_flip(t, e) {
-                        flipped = true;
-                        break; // t was replaced; move on
-                    }
-                }
+    /// Enqueue every triangle from `first_new` onward (the ones an insert or
+    /// constraint pass just created) as legalization suspects.
+    fn seed_suspects(&mut self, first_new: usize) {
+        for t in first_new..self.tris.len() {
+            self.suspects.push(t);
+        }
+    }
+
+    /// Queue-based Lawson legalization: flip every non-constrained, strictly
+    /// non-Delaunay, flippable edge reachable from the suspect set. A flip
+    /// enqueues the two replacement triangles, and their neighbors get
+    /// re-tested through the shared edges when those triangles are examined,
+    /// so the worklist reaches everything the old global fixpoint rescan
+    /// reached. Exact incircle ties (cocircular quads) never flip, which
+    /// guarantees termination.
+    fn legalize_suspects(&mut self) {
+        while let Some(t) = self.suspects.pop() {
+            if t >= self.tris.len() || !self.tris[t].alive {
+                continue;
             }
-            if !flipped {
-                return;
+            for e in 0..3 {
+                if self.try_flip(t, e) {
+                    // t is dead; its replacements are the last two triangles,
+                    // and the flipped neighbor's replacement edges are on them.
+                    let n = self.tris.len();
+                    self.suspects.push(n - 2);
+                    self.suspects.push(n - 1);
+                    break;
+                }
             }
         }
     }
@@ -275,12 +335,12 @@ impl<'a> Cdt<'a> {
         );
         let d = self.tris[n].v[(ne + 2) % 3];
         // Strict Delaunay violation?
-        if !is_strictly_non_delaunay(self.pts, self.tris[t].v, d) {
+        if !is_strictly_non_delaunay_h(&self.pts, self.tris[t].v, d) {
             return false;
         }
         // Strictly convex quad a-d-b-c (new triangles must be CCW)?
-        if orient2d_r(&self.pts[a], &self.pts[d], &self.pts[c]) != Sign::Pos
-            || orient2d_r(&self.pts[d], &self.pts[b], &self.pts[c]) != Sign::Pos
+        if orient2d_h(&self.pts[a], &self.pts[d], &self.pts[c]) != Sign::Pos
+            || orient2d_h(&self.pts[d], &self.pts[b], &self.pts[c]) != Sign::Pos
         {
             return false;
         }
@@ -396,13 +456,13 @@ impl<'a> Cdt<'a> {
                 let pu = &self.pts[u];
                 let pv = &self.pts[v];
                 // Strict crossing test.
-                let su = orient2d_r(pa, pb, pu);
-                let sv = orient2d_r(pa, pb, pv);
+                let su = orient2d_h(pa, pb, pu);
+                let sv = orient2d_h(pa, pb, pv);
                 if su == Sign::Zero || sv == Sign::Zero || su == sv {
                     continue;
                 }
-                let sa = orient2d_r(pu, pv, pa);
-                let sb = orient2d_r(pu, pv, pb);
+                let sa = orient2d_h(pu, pv, pa);
+                let sb = orient2d_h(pu, pv, pb);
                 if sa == Sign::Zero || sb == Sign::Zero || sa == sb {
                     continue;
                 }
@@ -418,8 +478,8 @@ impl<'a> Cdt<'a> {
                 let ne = self.shared_edge(n as usize, t);
                 let c = self.tris[t].v[(e + 2) % 3];
                 let d = self.tris[n as usize].v[(ne + 2) % 3];
-                if orient2d_r(&self.pts[u], &self.pts[d], &self.pts[c]) == Sign::Pos
-                    && orient2d_r(&self.pts[d], &self.pts[v], &self.pts[c]) == Sign::Pos
+                if orient2d_h(&self.pts[u], &self.pts[d], &self.pts[c]) == Sign::Pos
+                    && orient2d_h(&self.pts[d], &self.pts[v], &self.pts[c]) == Sign::Pos
                 {
                     return Some((t, e));
                 }
@@ -432,7 +492,17 @@ impl<'a> Cdt<'a> {
 /// Delaunay test used by `try_flip`: is the fourth point strictly inside the
 /// circumcircle of the (CCW) triangle? Split out so tests can call it too.
 pub(super) fn is_strictly_non_delaunay(pts: &[R2], tri: [usize; 3], d: usize) -> bool {
-    incircle_r(&pts[tri[0]], &pts[tri[1]], &pts[tri[2]], &pts[d]) == Sign::Pos
+    incircle_h(
+        &homog2_of(&pts[tri[0]]),
+        &homog2_of(&pts[tri[1]]),
+        &homog2_of(&pts[tri[2]]),
+        &homog2_of(&pts[d]),
+    ) == Sign::Pos
+}
+
+/// Internal Delaunay test on the cached homogenized points.
+fn is_strictly_non_delaunay_h(pts: &[Homog2], tri: [usize; 3], d: usize) -> bool {
+    incircle_h(&pts[tri[0]], &pts[tri[1]], &pts[tri[2]], &pts[d]) == Sign::Pos
 }
 
 #[cfg(test)]
