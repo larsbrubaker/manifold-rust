@@ -226,7 +226,7 @@ fn identical_cubes_share_every_face_once_per_output() {
     let full_surface2 = BigRational::from_integer(48.into()); // 6 faces × area 4 × 2
     let mut union_area2 = BigRational::zero();
     let mut inter_area2 = BigRational::zero();
-    for (pi, piece) in graph.pieces.iter().enumerate() {
+    for (pi, _piece) in graph.pieces.iter().enumerate() {
         match tags[pi].expect("all pieces must be tagged for identical cubes") {
             Tag::Union => union_area2 = &union_area2 + piece_area2(graph.piece_verts(pi)),
             Tag::Inter => inter_area2 = &inter_area2 + piece_area2(graph.piece_verts(pi)),
