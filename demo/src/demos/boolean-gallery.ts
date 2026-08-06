@@ -99,7 +99,7 @@ const TROUBLE_CASES: {
   },
   {
     value: '1075458-91115',
-    text: '1075458 − 91115 — wasm panic (open bug)',
+    text: '1075458 − 91115 — CDT constraint recovery (fixed)',
     a: 1075458, b: 91115, op: 'difference', engine: 'robust',
     offset: [0.7, -0.2, 0.4], rot: [311, 55, 345], pairKind: 'mn',
   },
