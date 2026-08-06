@@ -22,7 +22,7 @@ use crate::linalg::Vec3;
 
 use super::cdt;
 use super::exact::approx::orient2d_a;
-use super::exact::predicates::{homog2_of, line_line_intersect_2d, orient2d_h, orient2d_r, point_in_tri_2d, tri_normal_r, Homog2, TriLoc};
+use super::exact::predicates::{homog2_of, line_line_intersect_2d, orient2d_h, point_in_tri_2d, tri_normal_r, Homog2, TriLoc};
 use super::exact::rational::{rat_to_f64, R2, R3};
 use super::exact::Sign;
 use super::tri_tri::{dominant_axis, lift_to_plane};
@@ -262,23 +262,45 @@ pub fn candidate_points(tri: [Vec3; 3], input: &ArrangementInput) -> Vec<R3> {
         add(a.clone(), &mut out, &mut seen);
         add(b.clone(), &mut out, &mut seen);
     }
+    // Same filtered predicate stack as build(): correctly rounded f64
+    // approximations certify almost every non-crossing pair, homogenized
+    // exact signs only on near-degeneracies — the all-rational version made
+    // this sweep a dominant pipeline stage on segment-heavy meshes.
     let segs2: Vec<(R2, R2)> = input
         .segments
         .iter()
         .map(|(a, b, _)| (a.project_drop(axis), b.project_drop(axis)))
         .collect();
+    let homogs: Vec<(Homog2, Homog2)> = segs2
+        .iter()
+        .map(|(a, b)| (homog2_of(a), homog2_of(b)))
+        .collect();
+    let approx = |p: &R2| -> [f64; 2] { [rat_to_f64(&p.x), rat_to_f64(&p.y)] };
+    let apts: Vec<([f64; 2], [f64; 2])> = segs2
+        .iter()
+        .map(|(a, b)| (approx(a), approx(b)))
+        .collect();
+    let o2 = |a: ([f64; 2], &Homog2), b: ([f64; 2], &Homog2), c: ([f64; 2], &Homog2)| -> Sign {
+        orient2d_a(a.0, b.0, c.0).unwrap_or_else(|| orient2d_h(a.1, b.1, c.1))
+    };
     for i in 0..segs2.len() {
         for j in (i + 1)..segs2.len() {
-            let (a, b) = (&segs2[i].0, &segs2[i].1);
-            let (c, d) = (&segs2[j].0, &segs2[j].1);
-            let sc = orient2d_r(a, b, c);
-            let sd = orient2d_r(a, b, d);
-            let sa = orient2d_r(c, d, a);
-            let sb = orient2d_r(c, d, b);
+            let (a, b) = (
+                (apts[i].0, &homogs[i].0),
+                (apts[i].1, &homogs[i].1),
+            );
+            let (c, d) = (
+                (apts[j].0, &homogs[j].0),
+                (apts[j].1, &homogs[j].1),
+            );
+            let sc = o2(a, b, c);
+            let sd = o2(a, b, d);
+            let sa = o2(c, d, a);
+            let sb = o2(c, d, b);
             if sc != Sign::Zero && sd != Sign::Zero && sc != sd
                 && sa != Sign::Zero && sb != Sign::Zero && sa != sb
             {
-                let x2 = line_line_intersect_2d(a, b, c, d)
+                let x2 = line_line_intersect_2d(&segs2[i].0, &segs2[i].1, &segs2[j].0, &segs2[j].1)
                     .expect("properly crossing segments are not parallel");
                 add(
                     lift_to_plane(&x2, axis, &corners[0], &normal),
