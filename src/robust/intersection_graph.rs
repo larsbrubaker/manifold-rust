@@ -412,12 +412,6 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
         let mut cands: Vec<usize> = Vec::new();
         let mut n_pairs = 0usize;
         let mut n_cut = 0usize;
-        // Exact planes, built lazily once per triangle: coplanar-adjacency
-        // answers on dense/doubled meshes are true zeros the float filter
-        // cannot certify, and the generic rational orient3d per pair was
-        // the dominant cost of an all-benign narrow phase.
-        let mut planes: Vec<Option<TriPlane>> = Vec::new();
-        planes.resize_with(tris.len(), || None);
         let mut stats = SelfCutStats::default();
         for i in 0..tris.len() {
             if !live[m][i] {
@@ -433,8 +427,7 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
                     continue;
                 }
                 n_pairs += 1;
-                let plane_i = planes[i].get_or_insert_with(|| tri_plane(&tris[i]));
-                let Some(segs) = real_self_contact(tris[i], tris[j], plane_i, &mut stats) else {
+                let Some(segs) = real_self_contact(tris[i], tris[j], &mut stats) else {
                     continue;
                 };
                 n_cut += 1;
@@ -679,35 +672,11 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
 /// else is a genuine self-intersection whose segments must cut the surface,
 /// so that every emitted piece lies on a single sheet level of its own mesh
 /// (robust/mod.rs classifies own-mesh winding per component).
-/// Exact plane of an f64 triangle, cached for repeated point-side tests.
-/// `n` is the integer-scaled CCW normal (tri_normal_int), `na_num/na_den`
-/// the unreduced n·a with positive denominator. One plane serves every
-/// vertex-side query against its triangle — the self-cut narrow phase asks
-/// dozens per triangle on dense meshes, and doubled/coplanar scans make the
-/// answers true zeros the float filter can never certify.
-struct TriPlane {
-    n: [num_bigint::BigInt; 3],
-    na_num: num_bigint::BigInt,
-    na_den: num_bigint::BigInt,
-}
-
-fn tri_plane(t: &[Vec3; 3]) -> TriPlane {
-    use super::exact::predicates::{dot_point_raw, tri_normal_int};
-    let ra = R3::from_vec3(t[0]);
-    let rb = R3::from_vec3(t[1]);
-    let rc = R3::from_vec3(t[2]);
-    let n = tri_normal_int(&ra, &rb, &rc);
-    let (na_num, na_den) = dot_point_raw(&n, &ra);
-    TriPlane { n, na_num, na_den }
-}
-
-/// orient3d(t[0], t[1], t[2], v) with the triangle's cached exact plane:
-/// float filter first, then sign(n·v − n·a) via two cross-multiplied
-/// unreduced fractions — a fraction of the cost of the generic 4-point
-/// rational orient3d, and the plane part is amortized across every query
-/// against this triangle.
-fn orient3d_plane(t: &[Vec3; 3], plane: &TriPlane, v: Vec3) -> Sign {
-    use num_traits::Signed;
+/// orient3d(t[0], t[1], t[2], v): float filter first, exact integer
+/// determinant on escalation. This replaced a cached exact-plane structure
+/// (TriPlane) — with intpred's division-free fallback, building planes
+/// eagerly per triangle cost more than it ever saved.
+fn orient3d_plane(t: &[Vec3; 3], v: Vec3) -> Sign {
     if let Some(s) = super::exact::approx::orient3d_a(
         [t[0].x, t[0].y, t[0].z],
         [t[1].x, t[1].y, t[1].z],
@@ -716,16 +685,12 @@ fn orient3d_plane(t: &[Vec3; 3], plane: &TriPlane, v: Vec3) -> Sign {
     ) {
         return s;
     }
-    let (nv_num, nv_den) = super::exact::predicates::dot_point_raw(&plane.n, &R3::from_vec3(v));
-    // sign(nv/nv_den − na/na_den), both denominators positive.
-    let det = nv_num * &plane.na_den - &plane.na_num * nv_den;
-    if det.is_positive() {
-        Sign::Pos
-    } else if det.is_negative() {
-        Sign::Neg
-    } else {
-        Sign::Zero
-    }
+    super::exact::intpred::orient3d_i(
+        [t[0].x, t[0].y, t[0].z],
+        [t[1].x, t[1].y, t[1].z],
+        [t[2].x, t[2].y, t[2].z],
+        [v.x, v.y, v.z],
+    )
 }
 
 /// Axis of the largest |component| of the (f64) triangle normal. Only a
@@ -771,7 +736,6 @@ struct SelfCutStats {
 fn real_self_contact(
     t1: [Vec3; 3],
     t2: [Vec3; 3],
-    plane1: &TriPlane,
     stats: &mut SelfCutStats,
 ) -> Option<Vec<(R3, R3)>> {
     use super::exact::Sign;
@@ -803,7 +767,7 @@ fn real_self_contact(
     if shared_f.len() == 2 {
         if let Some(&opp) = t2.iter().find(|v| !t1.contains(v)) {
             // Non-coplanar edge-neighbors only meet along the shared edge.
-            if orient3d_plane(&t1, plane1, opp) != Sign::Zero {
+            if orient3d_plane(&t1, opp) != Sign::Zero {
                 stats.edge_benign += 1;
                 return None;
             }
@@ -831,7 +795,7 @@ fn real_self_contact(
         let others: Vec<(Vec3, Sign)> = t2
             .iter()
             .filter(|v| !t1.contains(v))
-            .map(|&v| (v, orient3d_plane(&t1, plane1, v)))
+            .map(|&v| (v, orient3d_plane(&t1, v)))
             .collect();
         if others.len() == 2 && others[0].1 != Sign::Zero && others[0].1 == others[1].1 {
             stats.vert_benign += 1;
