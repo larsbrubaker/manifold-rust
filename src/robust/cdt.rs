@@ -99,11 +99,7 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
         cdt.legalize_suspects();
     }
 
-    cdt.tris
-        .iter()
-        .filter(|t| t.alive)
-        .map(|t| t.v)
-        .collect()
+    cdt.tris.iter().filter(|t| t.alive).map(|t| t.v).collect()
 }
 
 impl Cdt {
@@ -497,24 +493,230 @@ impl Cdt {
         self.tris[n].alive = false;
     }
 
-    /// Recover constraint edge (a,b) by flipping away crossing edges
-    /// (Anglada's algorithm), then mark it constrained on both sides.
+    /// Recover constraint edge (a,b) by Anglada's cavity retriangulation:
+    /// walk the corridor of triangles the open segment pierces, delete them,
+    /// and re-triangulate the two pseudo-polygon halves flanking the segment
+    /// (each necessarily gains edge (a,b)). Edge-flip recovery — flipping
+    /// away crossing edges one at a time — is NOT used because it can cycle:
+    /// when a flipped diagonal still crosses the segment, the next search can
+    /// select it and flip it straight back (observed on Thingi10K 1075458 −
+    /// 91115, where two edges alternated forever and the triangle arena grew
+    /// without bound). The corridor walk is bounded by the live triangle
+    /// count and the retriangulation recursion by the chain length, so this
+    /// terminates unconditionally.
     /// Precondition (from robust/arrangement.rs): no vertex lies strictly
     /// inside segment (a,b) and no other constraint properly crosses it.
     fn insert_constraint(&mut self, a: usize, b: usize) {
-        let mut guard = 0usize;
-        while !self.mark_if_present(a, b) {
-            guard += 1;
+        if self.mark_if_present(a, b) {
+            return;
+        }
+        let (crossed, left, right) = self.collect_corridor(a, b);
+        self.retriangulate_corridor(a, b, &crossed, &left, &right);
+        assert!(
+            self.mark_if_present(a, b),
+            "cavity retriangulation did not produce constraint edge ({a},{b})"
+        );
+    }
+
+    /// The corridor of triangles pierced by open segment (a,b): the triangle
+    /// list in walk order plus the chains of corridor vertices strictly left
+    /// and strictly right of the directed line a→b, each ordered from a to b.
+    /// Chains may repeat a vertex (pseudo-polygon pinch); consecutive
+    /// duplicates cannot occur.
+    fn collect_corridor(&self, a: usize, b: usize) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+        // Entry: the incident triangle of `a` whose opposite edge the segment
+        // leaves through. No vertex lies strictly inside (a,b) and (a,b) is
+        // not an edge (mark_if_present said so), so the exit is a strict edge
+        // crossing.
+        let (t0, e0) = self
+            .rotate_around(a, |t| {
+                let ia = (0..3).position(|k| self.tris[t].v[k] == a).unwrap();
+                let e_opp = (ia + 1) % 3;
+                let u = self.tris[t].v[e_opp];
+                let v = self.tris[t].v[(e_opp + 1) % 3];
+                (u != b && v != b && self.strictly_crosses(a, b, u, v)).then_some((t, e_opp))
+            })
+            .expect("segment leaves its start vertex through a crossed edge");
+        // CCW triangle (a, u, v): u is strictly right of a→b, v strictly left.
+        let u = self.tris[t0].v[e0];
+        let v = self.tris[t0].v[(e0 + 1) % 3];
+        let mut crossed = vec![t0];
+        let mut left = vec![v];
+        let mut right = vec![u];
+        let (mut t, mut e) = (t0, e0);
+        loop {
             assert!(
-                guard <= 4 * self.tris.len() * self.tris.len() + 64,
-                "constraint recovery failed to converge — precondition violated"
+                crossed.len() <= self.tris.len(),
+                "corridor walk revisited a triangle — triangulation corrupt"
             );
-            let (t, e) = self
-                .find_flippable_crossing(a, b)
-                .expect("a crossing edge with a convex quad must exist");
-            let n = self.tris[t].adj[e] as usize;
+            let n = self.tris[t].adj[e];
+            assert!(
+                n >= 0,
+                "segment crossed the hull — point outside base triangle"
+            );
+            let n = n as usize;
             let ne = self.shared_edge(n, t);
-            self.flip(t, e, n, ne);
+            crossed.push(n);
+            let w = self.tris[n].v[(ne + 2) % 3];
+            if w == b {
+                return (crossed, left, right);
+            }
+            match self.o2(a, b, w) {
+                Sign::Pos => left.push(w),
+                Sign::Neg => right.push(w),
+                Sign::Zero => panic!(
+                    "vertex {w} lies on constraint segment ({a},{b}) — precondition violated"
+                ),
+            }
+            // The segment exits `n` through whichever remaining edge it
+            // strictly crosses (exactly one, since w is strictly off-line).
+            e = (1..3)
+                .map(|k| (ne + k) % 3)
+                .find(|&e2| {
+                    let p = self.tris[n].v[e2];
+                    let q = self.tris[n].v[(e2 + 1) % 3];
+                    self.strictly_crosses(a, b, p, q)
+                })
+                .expect("segment must exit the corridor triangle it entered");
+            t = n;
+        }
+    }
+
+    /// Is `v` strictly inside the circumcircle of triangle (a,b,c), whatever
+    /// its orientation? Collinear (a,b,c) has no circumcircle: false.
+    fn in_circumcircle(&self, a: usize, b: usize, c: usize, v: usize) -> bool {
+        match self.o2(a, b, c) {
+            Sign::Pos => self.nondelaunay([a, b, c], v),
+            Sign::Neg => self.nondelaunay([a, c, b], v),
+            Sign::Zero => false,
+        }
+    }
+
+    /// Anglada's pseudo-polygon triangulation: the region bounded by directed
+    /// base edge (a,b) and `chain` (the boundary path from a to b, region on
+    /// the left of a→b). Picks the Delaunay apex c — the chain vertex whose
+    /// circumcircle with the base is empty of chain vertices — emits CCW
+    /// triangle (a,b,c), and recurses on the two sub-chains.
+    fn triangulate_pseudo(&self, a: usize, b: usize, chain: &[usize], out: &mut Vec<[usize; 3]>) {
+        if chain.is_empty() {
+            return;
+        }
+        let mut ci = 0usize;
+        for i in 1..chain.len() {
+            // A collinear "apex" has no circumcircle and can never be the
+            // Delaunay apex; any candidate supersedes it.
+            let replace = self.o2(a, b, chain[ci]) == Sign::Zero
+                || self.in_circumcircle(a, b, chain[ci], chain[i]);
+            if replace {
+                ci = i;
+            }
+        }
+        let c = chain[ci];
+        assert!(
+            self.o2(a, b, c) == Sign::Pos,
+            "pseudo-polygon apex must lie strictly left of its base"
+        );
+        self.triangulate_pseudo(a, c, &chain[..ci], out);
+        self.triangulate_pseudo(c, b, &chain[ci + 1..], out);
+        out.push([a, b, c]);
+    }
+
+    /// Replace the corridor triangles with the CDTs of the two pseudo-polygon
+    /// halves and wire the new patch into the surrounding triangulation.
+    fn retriangulate_corridor(
+        &mut self,
+        a: usize,
+        b: usize,
+        crossed: &[usize],
+        left: &[usize],
+        right: &[usize],
+    ) {
+        use std::collections::HashMap;
+        // Cavity boundary: edges of corridor triangles whose neighbor is
+        // outside the corridor. Keyed by undirected endpoints (each boundary
+        // edge has exactly one inside face, so keys are unique). Interior
+        // edges shared by two corridor triangles vanish; a constrained one
+        // (possible only at a pseudo-polygon pinch) must be re-marked after
+        // the rebuild.
+        let mut boundary: HashMap<(usize, usize), (i32, bool)> = HashMap::new();
+        let mut interior_con: Vec<(usize, usize)> = Vec::new();
+        for &t in crossed {
+            for e in 0..3 {
+                let n = self.tris[t].adj[e];
+                let u = self.tris[t].v[e];
+                let v = self.tris[t].v[(e + 1) % 3];
+                let key = (u.min(v), u.max(v));
+                if n < 0 || !crossed.contains(&(n as usize)) {
+                    boundary.insert(key, (n, self.tris[t].con[e]));
+                } else if self.tris[t].con[e] {
+                    interior_con.push(key);
+                }
+            }
+        }
+
+        // Left half: region left of a→b, chain ordered a to b. Right half:
+        // region left of b→a, so its chain must run b to a.
+        let mut new_tris: Vec<[usize; 3]> = Vec::new();
+        self.triangulate_pseudo(a, b, left, &mut new_tris);
+        let right_rev: Vec<usize> = right.iter().rev().copied().collect();
+        self.triangulate_pseudo(b, a, &right_rev, &mut new_tris);
+
+        // Push the patch, then wire adjacency: boundary edges reconnect to
+        // the outside; the rest pair up patch-internally (including (a,b)
+        // between the two halves).
+        let base = self.tris.len();
+        for &tv in &new_tris {
+            self.tris.push(Tri {
+                v: tv,
+                adj: [-1, -1, -1],
+                con: [false, false, false],
+                alive: true,
+            });
+        }
+        let mut open: HashMap<(usize, usize), (usize, usize)> = HashMap::new();
+        for t in base..self.tris.len() {
+            for e in 0..3 {
+                let u = self.tris[t].v[e];
+                let v = self.tris[t].v[(e + 1) % 3];
+                let key = (u.min(v), u.max(v));
+                if let Some(&(bn, bcon)) = boundary.get(&key) {
+                    self.tris[t].adj[e] = bn;
+                    self.tris[t].con[e] = bcon;
+                    if bn >= 0 {
+                        let n = bn as usize;
+                        let ne = (0..3)
+                            .find(|&k| {
+                                let nu = self.tris[n].v[k];
+                                let nv = self.tris[n].v[(k + 1) % 3];
+                                (nu.min(nv), nu.max(nv)) == key
+                            })
+                            .expect("cavity boundary neighbor lost its edge");
+                        self.tris[n].adj[ne] = t as i32;
+                    }
+                } else if let Some((t2, e2)) = open.remove(&key) {
+                    self.tris[t].adj[e] = t2 as i32;
+                    self.tris[t2].adj[e2] = t as i32;
+                } else {
+                    open.insert(key, (t, e));
+                }
+            }
+        }
+        assert!(
+            open.is_empty(),
+            "cavity retriangulation left unmatched patch edges"
+        );
+        // vert_tri invariant: record replacements before killing the corridor.
+        for t in base..self.tris.len() {
+            self.record(t);
+        }
+        for &t in crossed {
+            self.tris[t].alive = false;
+        }
+        for (u, v) in interior_con {
+            assert!(
+                self.mark_if_present(u, v),
+                "constrained pinch edge ({u},{v}) was not reproduced by the rebuild"
+            );
         }
     }
 
@@ -553,104 +755,6 @@ impl Cdt {
         let sa = self.o2(u, v, a);
         let sb = self.o2(u, v, b);
         sa != Sign::Zero && sb != Sign::Zero && sa != sb
-    }
-
-    /// Is the internal edge `e` of `t` flippable (strictly convex quad)?
-    fn flippable(&self, t: usize, e: usize) -> bool {
-        let n = self.tris[t].adj[e];
-        if n < 0 {
-            return false;
-        }
-        let ne = self.shared_edge(n as usize, t);
-        let u = self.tris[t].v[e];
-        let v = self.tris[t].v[(e + 1) % 3];
-        let c = self.tris[t].v[(e + 2) % 3];
-        let d = self.tris[n as usize].v[(ne + 2) % 3];
-        self.o2(u, d, c) == Sign::Pos && self.o2(d, v, c) == Sign::Pos
-    }
-
-    /// Find an edge strictly crossing segment (a,b) whose quad is strictly
-    /// convex (flippable). Anglada's lemma guarantees one exists while any
-    /// crossing remains.
-    /// Walk the triangles pierced by segment (a,b), returning the first
-    /// crossing edge whose quad is strictly convex (flippable). Anglada's
-    /// lemma guarantees one exists while any crossing remains; the walk
-    /// visits exactly the crossing edges — O(crossings), not O(triangles).
-    fn find_flippable_crossing(&self, a: usize, b: usize) -> Option<(usize, usize)> {
-        // Entry: the incident triangle of `a` whose opposite edge the
-        // segment leaves through. (No vertex lies strictly inside (a,b) —
-        // arrangement precondition — so the exit is a strict edge crossing.)
-        let entry = self.rotate_around(a, |t| {
-            let ia = (0..3).position(|k| self.tris[t].v[k] == a).unwrap();
-            let e_opp = (ia + 1) % 3;
-            let u = self.tris[t].v[e_opp];
-            let v = self.tris[t].v[(e_opp + 1) % 3];
-            (u != b && v != b && self.strictly_crosses(a, b, u, v)).then_some((t, e_opp))
-        });
-        let Some((mut t, mut e)) = entry else {
-            return self.find_flippable_crossing_scan(a, b);
-        };
-        loop {
-            debug_assert!(
-                !self.tris[t].con[e],
-                "constraint crosses an existing constraint — arrangement bug"
-            );
-            if self.flippable(t, e) {
-                return Some((t, e));
-            }
-            // March into the neighbor; the segment exits it through one of
-            // the two remaining edges (or ends at b).
-            let n = self.tris[t].adj[e];
-            if n < 0 {
-                return self.find_flippable_crossing_scan(a, b);
-            }
-            let n = n as usize;
-            let ne = self.shared_edge(n, t);
-            let mut next = None;
-            for k in 1..3 {
-                let e2 = (ne + k) % 3;
-                let u = self.tris[n].v[e2];
-                let v = self.tris[n].v[(e2 + 1) % 3];
-                if u == a || u == b || v == a || v == b {
-                    continue;
-                }
-                if self.strictly_crosses(a, b, u, v) {
-                    next = Some(e2);
-                    break;
-                }
-            }
-            match next {
-                Some(e2) => {
-                    t = n;
-                    e = e2;
-                }
-                // Walk exhausted without a flippable edge (collinear corner
-                // cases can end it early) — the global scan is the slow but
-                // complete answer, and behaves exactly like the pre-walk code.
-                None => return self.find_flippable_crossing_scan(a, b),
-            }
-        }
-    }
-
-    /// The original exhaustive search — fallback when the segment walk
-    /// terminates without an answer.
-    fn find_flippable_crossing_scan(&self, a: usize, b: usize) -> Option<(usize, usize)> {
-        for t in 0..self.tris.len() {
-            if !self.tris[t].alive {
-                continue;
-            }
-            for e in 0..3 {
-                let u = self.tris[t].v[e];
-                let v = self.tris[t].v[(e + 1) % 3];
-                if u == a || u == b || v == a || v == b {
-                    continue;
-                }
-                if self.strictly_crosses(a, b, u, v) && self.flippable(t, e) {
-                    return Some((t, e));
-                }
-            }
-        }
-        None
     }
 }
 

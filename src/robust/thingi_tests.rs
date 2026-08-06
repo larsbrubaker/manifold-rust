@@ -117,6 +117,8 @@ const TENTACLE_939888: &[u8] = include_bytes!("testdata/939888.stl");
 const PICKAXE_93557: &[u8] = include_bytes!("testdata/93557.stl");
 const MODEL_92068: &[u8] = include_bytes!("testdata/92068.stl");
 const MODEL_39926: &[u8] = include_bytes!("testdata/39926.stl");
+const FRAME_1075458: &[u8] = include_bytes!("testdata/1075458.stl");
+const TOWER_91115: &[u8] = include_bytes!("testdata/91115.stl");
 
 /// Thingi10K #92068 union #39926 (demo repro): both operands import as
 /// closed manifolds; the robust union returned NotClosed. Reproduces with no
@@ -135,6 +137,27 @@ fn thingi_92068_union_39926_is_closed() {
     assert_eq!(result.status(), Error::NoError, "robust union status");
     assert!(!result.is_empty(), "robust union should be non-empty");
     assert!(result.volume() > 0.0, "union volume must be positive");
+}
+
+/// Thingi10K #1075458 ("frame 1 n") minus #91115 ("castle corner tower"),
+/// demo repro: both operands import cleanly, yet the robust difference
+/// panicked (surfacing as `RuntimeError: unreachable` in WASM) with B
+/// rotated (311, 55, 345) and translated (0.7, -0.2, 0.4).
+#[test]
+fn thingi_1075458_minus_91115_is_valid() {
+    let a = import_stl_like_demo(FRAME_1075458);
+    assert_eq!(a.status(), Error::NoError, "operand A import");
+
+    let b = import_stl_like_demo(TOWER_91115)
+        .rotate(311.0, 55.0, 345.0)
+        .translate(Vec3::new(0.7, -0.2, 0.4));
+    assert_eq!(b.status(), Error::NoError, "operand B import");
+
+    let result = a.boolean_with_engine(&b, crate::types::OpType::Subtract, BooleanEngine::Robust);
+    assert_eq!(result.status(), Error::NoError, "robust difference status");
+    let volume = result.volume();
+    assert!(volume.is_finite(), "difference volume must be finite");
+    assert!(volume > 0.0, "difference volume must be positive");
 }
 
 /// Thingi10K #939888 union #93557 (demo repro): both operands import as
