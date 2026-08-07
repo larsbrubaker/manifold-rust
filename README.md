@@ -93,7 +93,7 @@ only determinism-preserving sites are parallelized):
 
 ```toml
 [dependencies]
-manifold-rust = { version = "0.10", features = ["parallel"] }
+manifold-rust = { version = "0.11", features = ["parallel"] }
 ```
 
 ### Robust booleans on non-manifold input
