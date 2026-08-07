@@ -8,6 +8,7 @@
 use super::*;
 use crate::linalg::Vec3;
 use crate::robust::intersection_graph::build_graph;
+use crate::types::{Error, OpType};
 
 /// An axis-aligned box as 12 outward-oriented triangles.
 fn cube(lo: Vec3, hi: Vec3) -> Vec<[Vec3; 3]> {
@@ -131,6 +132,57 @@ fn overlapping_cubes_wind_to_two_in_the_lens() {
         vec![[0, 0], [0, 1], [1, 0], [1, 1]],
         "outside, Q only, P only, and the overlap where both wind to one"
     );
+}
+
+/// Run one operation end to end through the cell complex and assemble it.
+fn boolean_via_cells(p: &[[Vec3; 3]], q: &[[Vec3; 3]], op: OpType) -> crate::manifold::Manifold {
+    let graph = build_graph(p, q);
+    let complex = build_cells(&graph);
+    let wind = all_windings(&graph, &complex, p, q);
+    let pieces = extract(&graph, &complex, &wind, op);
+    crate::robust::assemble::assemble(&pieces, &graph.verts, &graph.verts_f64, |_| true, None)
+}
+
+/// Two 2³ cubes overlapping in a 1³ corner: union 15, intersection 1,
+/// difference 7. Each result must also be a closed manifold — that is the
+/// property derived orientation is supposed to guarantee.
+#[test]
+fn extracted_booleans_have_correct_volume() {
+    let p = cube(Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 2.0, 2.0));
+    let q = cube(Vec3::new(1.0, 1.0, 1.0), Vec3::new(3.0, 3.0, 3.0));
+
+    for (op, want) in [
+        (OpType::Add, 15.0),
+        (OpType::Intersect, 1.0),
+        (OpType::Subtract, 7.0),
+    ] {
+        let m = boolean_via_cells(&p, &q, op);
+        assert_eq!(m.status(), Error::NoError, "{op:?} status");
+        assert!(!m.as_impl().is_soup, "{op:?} must close into a manifold");
+        assert!(
+            (m.volume() - want).abs() < 1e-9,
+            "{op:?} volume {}, want {want}",
+            m.volume()
+        );
+    }
+}
+
+/// Inverting one operand's winding must not change the result: the cell
+/// labels decide orientation, so a reversed input shell still yields the
+/// same solid. This is the property that fixes the inverted-orientation
+/// class of NotClosed failures.
+#[test]
+fn inverted_operand_yields_the_same_union() {
+    let p = cube(Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 2.0, 2.0));
+    let q = cube(Vec3::new(1.0, 1.0, 1.0), Vec3::new(3.0, 3.0, 3.0));
+    let flipped: Vec<[Vec3; 3]> = q.iter().map(|t| [t[0], t[2], t[1]]).collect();
+
+    let m = boolean_via_cells(&p, &flipped, OpType::Add);
+    assert_eq!(m.status(), Error::NoError, "inverted-operand union status");
+    // The reversed shell bounds {w <= -1}, so it contributes no material;
+    // the union is P alone, and critically the result still closes.
+    assert!(!m.as_impl().is_soup, "result must still be a manifold");
+    assert!((m.volume() - 8.0).abs() < 1e-9, "volume {}", m.volume());
 }
 
 /// A doubled shell must step the winding by two, not one — this is the

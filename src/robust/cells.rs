@@ -37,7 +37,8 @@ use crate::linalg::Vec3;
 
 use super::classify::angle_cmp;
 use super::exact::rational::R3;
-use super::intersection_graph::{edge_key, EdgeKey, IntersectionGraph};
+use super::intersection_graph::{edge_key, EdgeKey, IntersectionGraph, Piece};
+use crate::types::OpType;
 
 /// Side of a piece: `NORMAL` is the half-space its outward normal points
 /// into, `ANTI` the one behind it (inside the solid its operand bounds).
@@ -355,22 +356,8 @@ fn cell_adjacency(
     graph: &IntersectionGraph,
     complex: &CellComplex,
 ) -> Vec<Vec<(usize, [i32; 2])>> {
-    // One wall per distinct triangle. Pieces occupying the same triangle are
-    // the coincident stack whose contributions add; two different triangles
-    // between the same pair of cells are alternative crossings of one
-    // boundary, and must not be summed.
-    let mut walls: HashMap<[u32; 3], (usize, bool, [i32; 2])> = HashMap::new();
-    for (pi, piece) in graph.pieces.iter().enumerate() {
-        let (key, parity) = canonical(piece.vi);
-        let m = piece.mesh as usize;
-        let entry = walls.entry(key).or_insert((pi, parity, [0; 2]));
-        // Opposite winding means this piece's normal side is the
-        // representative's anti side, so it steps the other way.
-        entry.2[m] += if parity == entry.1 { 1 } else { -1 };
-    }
-
     let mut agg: HashMap<(usize, usize), [i32; 2]> = HashMap::new();
-    for (_, (rep, _, delta)) in walls {
+    for Wall { rep, delta, .. } in walls(graph) {
         let (cn, ca) = (complex.cell(rep, NORMAL), complex.cell(rep, ANTI));
         if cn == ca {
             continue; // both sides in one cell: the sheet bounds nothing
@@ -385,6 +372,97 @@ fn cell_adjacency(
         adj[hi].push((lo, [-d[0], -d[1]]));
     }
     adj
+}
+
+/// Does a cell with this winding vector lie inside the operation's result?
+///
+/// Each operand's solid is `{w ≥ 1}` — a negative winding is inverted
+/// geometry, never material. Expressing every operation as one predicate on
+/// the winding vector is what lets subtraction drop its operand-flip trick:
+/// P − Q is just "inside P and not inside Q".
+pub fn in_result(op: OpType, w: [i32; 2]) -> bool {
+    let (a, b) = (w[0] >= 1, w[1] >= 1);
+    match op {
+        OpType::Add => a || b,
+        OpType::Intersect => a && b,
+        OpType::Subtract => a && !b,
+    }
+}
+
+/// The boundary of the result: every wall whose two cells disagree about
+/// containment, wound so its normal points out of the solid.
+///
+/// Orientation is *derived* from the cell labels rather than inherited from
+/// the input face. That is what makes the output closed and consistently
+/// oriented no matter how the input was wound — an inverted region of a
+/// self-intersecting scan still lands in the right cells, and its emitted
+/// orientation is corrected on the way out. One representative per wall is
+/// emitted, so a coincident stack contributes a single face.
+pub fn extract(
+    graph: &IntersectionGraph,
+    complex: &CellComplex,
+    wind: &Windings,
+    op: OpType,
+) -> Vec<Piece> {
+    let mut out = Vec::new();
+    for Wall { rep, .. } in walls(graph) {
+        let (cn, ca) = (complex.cell(rep, NORMAL), complex.cell(rep, ANTI));
+        if cn == ca || !wind.known[cn] || !wind.known[ca] {
+            continue;
+        }
+        let (in_n, in_a) = (in_result(op, wind.w[cn]), in_result(op, wind.w[ca]));
+        if in_n == in_a {
+            continue; // same material both sides: not a boundary
+        }
+        let piece = &graph.pieces[rep];
+        // The representative's normal points from its anti side toward its
+        // normal side. Material belongs behind the emitted normal, so the
+        // winding reverses when the solid is on the normal side instead.
+        let vi = if in_a {
+            piece.vi
+        } else {
+            [piece.vi[0], piece.vi[2], piece.vi[1]]
+        };
+        out.push(Piece {
+            mesh: piece.mesh,
+            tri: piece.tri,
+            vi,
+        });
+    }
+    out
+}
+
+/// One distinct triangle of the arrangement, with the coincident stack that
+/// occupies it collapsed into a single winding step.
+pub struct Wall {
+    /// Representative piece; its winding fixes the wall's normal side.
+    pub rep: usize,
+    /// Winding change per operand, crossing the representative's normal side
+    /// to its anti side.
+    pub delta: [i32; 2],
+}
+
+/// Group pieces into walls by exact triangle identity.
+///
+/// Pieces occupying the same triangle are a coincident stack whose
+/// contributions add — a doubled sheet steps by two, a fold cancels to zero.
+/// Two *different* triangles between the same pair of cells are alternative
+/// crossings of one boundary and are never summed; that distinction is why
+/// aggregation keys on the triangle rather than the cell pair.
+fn walls(graph: &IntersectionGraph) -> Vec<Wall> {
+    let mut by_tri: HashMap<[u32; 3], (usize, bool, [i32; 2])> = HashMap::new();
+    for (pi, piece) in graph.pieces.iter().enumerate() {
+        let (key, parity) = canonical(piece.vi);
+        let m = piece.mesh as usize;
+        let entry = by_tri.entry(key).or_insert((pi, parity, [0; 2]));
+        // Opposite winding means this piece's normal side is the
+        // representative's anti side, so it steps the other way.
+        entry.2[m] += if parity == entry.1 { 1 } else { -1 };
+    }
+    by_tri
+        .into_values()
+        .map(|(rep, _, delta)| Wall { rep, delta })
+        .collect()
 }
 
 /// Canonical key for a triangle (sorted vertex ids) plus the parity of the
