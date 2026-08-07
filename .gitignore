@@ -7,3 +7,5 @@
 .DS_Store
 .claude/worktrees/
 thingi_sweep.db
+thingi_sweep_log.txt
+thingi_sweep_err.txt
