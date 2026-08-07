@@ -26,6 +26,51 @@ pub(crate) fn start() -> Option<Instant> {
     }
 }
 
+/// Platform-safe stopwatch for ALWAYS-ON aggregate instrumentation (hot-path
+/// counters that accumulate into atomics). `std::time::Instant::now()`
+/// PANICS on wasm32-unknown-unknown ("time not implemented on this
+/// platform"), so any unconditional timing in library code must go through
+/// this type — on wasm it measures nothing and reports zero.
+#[derive(Clone, Copy)]
+pub(crate) struct Stopwatch {
+    #[cfg(not(target_arch = "wasm32"))]
+    t0: Instant,
+}
+
+impl Stopwatch {
+    #[inline]
+    pub fn start() -> Self {
+        Stopwatch {
+            #[cfg(not(target_arch = "wasm32"))]
+            t0: Instant::now(),
+        }
+    }
+
+    #[inline]
+    pub fn elapsed_ns(self) -> u64 {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.t0.elapsed().as_nanos() as u64
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            0
+        }
+    }
+
+    #[inline]
+    pub fn elapsed_secs(self) -> f64 {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.t0.elapsed().as_secs_f64()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            0.0
+        }
+    }
+}
+
 /// Optional memory reporter, registered by profiling harnesses (e.g. the
 /// mem_profile example's counting allocator). Returns (current bytes, peak
 /// bytes since the previous call) — the implementation resets its peak

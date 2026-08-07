@@ -858,9 +858,9 @@ fn real_self_contact(
     }
 
     stats.full += 1;
-    let t_full = std::time::Instant::now();
+    let t_full = crate::timing::Stopwatch::start();
     let isect = tri_tri_intersect(t1, t2);
-    stats.full_secs += t_full.elapsed().as_secs_f64();
+    stats.full_secs += t_full.elapsed_secs();
     match isect {
         TriTriIsect::None => {
             stats.full_none += 1;

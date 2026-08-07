@@ -96,7 +96,7 @@ pub mod stats {
 /// vertices). Symmetric: swapping the arguments yields the same set.
 pub fn tri_tri_intersect(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
     use std::sync::atomic::Ordering::Relaxed;
-    let t_signs = std::time::Instant::now();
+    let t_signs = crate::timing::Stopwatch::start();
     // Signs of t2's vertices against t1's plane.
     let s2 = [
         orient3d(t1[0], t1[1], t1[2], t2[0]),
@@ -105,13 +105,13 @@ pub fn tri_tri_intersect(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
     ];
     if all_same_strict(&s2) {
         stats::PLANE_REJECT.fetch_add(1, Relaxed);
-        stats::PLANE_NS.fetch_add(t_signs.elapsed().as_nanos() as u64, Relaxed);
+        stats::PLANE_NS.fetch_add(t_signs.elapsed_ns(), Relaxed);
         return TriTriIsect::None;
     }
     if s2.iter().all(|s| *s == Sign::Zero) {
         stats::COPLANAR.fetch_add(1, Relaxed);
         let out = coplanar_overlap(t1, t2);
-        stats::COPLANAR_NS.fetch_add(t_signs.elapsed().as_nanos() as u64, Relaxed);
+        stats::COPLANAR_NS.fetch_add(t_signs.elapsed_ns(), Relaxed);
         return out;
     }
     // Signs of t1's vertices against t2's plane.
@@ -122,10 +122,10 @@ pub fn tri_tri_intersect(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
     ];
     if all_same_strict(&s1) {
         stats::PLANE_REJECT.fetch_add(1, Relaxed);
-        stats::PLANE_NS.fetch_add(t_signs.elapsed().as_nanos() as u64, Relaxed);
+        stats::PLANE_NS.fetch_add(t_signs.elapsed_ns(), Relaxed);
         return TriTriIsect::None;
     }
-    stats::PLANE_NS.fetch_add(t_signs.elapsed().as_nanos() as u64, Relaxed);
+    stats::PLANE_NS.fetch_add(t_signs.elapsed_ns(), Relaxed);
     debug_assert!(
         !s1.iter().all(|s| *s == Sign::Zero),
         "t1 coplanar with t2's plane implies t2 coplanar with t1's — handled above"
@@ -152,7 +152,7 @@ pub fn tri_tri_intersect(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
         }
     }
     stats::INTERVAL.fetch_add(1, Relaxed);
-    let t_interval = std::time::Instant::now();
+    let t_interval = crate::timing::Stopwatch::start();
 
     // Both triangles meet the common line L of the two planes. Overlap the
     // two 1- or 2-point intervals along L entirely in scaled integer
@@ -164,7 +164,7 @@ pub fn tri_tri_intersect(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
     // rational computation exactly. Endpoints stay symbolic; only the 1–2
     // points of the final answer are constructed rationally.
     let out = interval_overlap(t1, t2, &s1, &s2);
-    stats::INTERVAL_NS.fetch_add(t_interval.elapsed().as_nanos() as u64, Relaxed);
+    stats::INTERVAL_NS.fetch_add(t_interval.elapsed_ns(), Relaxed);
     out
 }
 

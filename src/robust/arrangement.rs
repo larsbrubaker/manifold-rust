@@ -96,7 +96,7 @@ pub mod stats {
 /// coordinates on its plane.
 pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
     use std::sync::atomic::Ordering::Relaxed;
-    let t0 = std::time::Instant::now();
+    let t0 = crate::timing::Stopwatch::start();
     stats::CALLS.fetch_add(1, Relaxed);
     stats::SEGS.fetch_add(input.segments.len() as u64, Relaxed);
     stats::PTS.fetch_add(input.points.len() as u64, Relaxed);
@@ -108,7 +108,7 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
     let normal = tri_normal_r(&corners[0], &corners[1], &corners[2]);
     debug_assert!(!normal.is_zero(), "degenerate triangle in arrangement");
     let axis = dominant_axis(&normal);
-    stats::NORM_NS.fetch_add(t0.elapsed().as_nanos() as u64, Relaxed);
+    stats::NORM_NS.fetch_add(t0.elapsed_ns(), Relaxed);
 
     let mut points3: Vec<R3> = Vec::new();
     let mut points2: Vec<R2> = Vec::new();
@@ -158,8 +158,8 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
         add_point(p3.clone(), &mut points3, &mut points2);
     }
 
-    stats::SETUP_NS.fetch_add(t0.elapsed().as_nanos() as u64, Relaxed);
-    let t0 = std::time::Instant::now();
+    stats::SETUP_NS.fetch_add(t0.elapsed_ns(), Relaxed);
+    let t0 = crate::timing::Stopwatch::start();
 
     // Mutual proper crossings between segments become new points. Points are
     // homogenized once (Homog2) for the exact fallback, and approximated
@@ -209,8 +209,8 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
         point_in_tri_2d(p, &points2[0], &points2[1], &points2[2]) != TriLoc::Outside
     }), "arrangement primitive escapes its triangle");
 
-    stats::CROSS_NS.fetch_add(t0.elapsed().as_nanos() as u64, Relaxed);
-    let t0 = std::time::Instant::now();
+    stats::CROSS_NS.fetch_add(t0.elapsed_ns(), Relaxed);
+    let t0 = crate::timing::Stopwatch::start();
 
     // Subdivide each segment at every registered point lying exactly on it;
     // consecutive point pairs become constraint edges carrying provenance.
@@ -258,12 +258,12 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
         }
     }
 
-    stats::ONSEG_NS.fetch_add(t0.elapsed().as_nanos() as u64, Relaxed);
-    let t0 = std::time::Instant::now();
+    stats::ONSEG_NS.fetch_add(t0.elapsed_ns(), Relaxed);
+    let t0 = crate::timing::Stopwatch::start();
 
     let constraint_pairs: Vec<(usize, usize)> = constraints.keys().copied().collect();
     let tris = cdt::triangulate(&points2, &constraint_pairs);
-    stats::CDT_NS.fetch_add(t0.elapsed().as_nanos() as u64, Relaxed);
+    stats::CDT_NS.fetch_add(t0.elapsed_ns(), Relaxed);
 
     let axis_comp = match axis {
         0 => &normal.x,

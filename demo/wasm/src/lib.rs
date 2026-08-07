@@ -11,6 +11,13 @@ use js_sys::{Float32Array, Uint32Array};
 mod soup;
 pub use soup::*;
 
+/// Runs once when the wasm module loads: route panic messages (with file and
+/// line) to console.error instead of the bare "RuntimeError: unreachable".
+#[wasm_bindgen(start)]
+pub fn wasm_start() {
+    console_error_panic_hook::set_once();
+}
+
 #[wasm_bindgen]
 pub struct MeshSummary {
     num_vert: u32,
