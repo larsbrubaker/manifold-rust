@@ -53,7 +53,10 @@ struct Incident {
 }
 
 /// CCW angular comparison of two nonzero direction vectors.
-fn angle_cmp(a: (&BigRational, &BigRational), b: (&BigRational, &BigRational)) -> Ordering {
+pub(super) fn angle_cmp(
+    a: (&BigRational, &BigRational),
+    b: (&BigRational, &BigRational),
+) -> Ordering {
     fn quadrant(du: &BigRational, dv: &BigRational) -> u8 {
         let (su, sv) = (Sign::of_rat(du), Sign::of_rat(dv));
         debug_assert!(!(su == Sign::Zero && sv == Sign::Zero), "zero direction");

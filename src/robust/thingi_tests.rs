@@ -113,12 +113,32 @@ fn import_stl_like_demo(stl: &[u8]) -> Manifold {
     Manifold::from_mesh_gl_robust(&mesh)
 }
 
+const CASTLE_STAIRS_59082: &[u8] = include_bytes!("testdata/59082.stl");
+const GROUND_1313535: &[u8] = include_bytes!("testdata/1313535.stl");
 const TENTACLE_939888: &[u8] = include_bytes!("testdata/939888.stl");
 const PICKAXE_93557: &[u8] = include_bytes!("testdata/93557.stl");
 const MODEL_92068: &[u8] = include_bytes!("testdata/92068.stl");
 const MODEL_39926: &[u8] = include_bytes!("testdata/39926.stl");
 const FRAME_1075458: &[u8] = include_bytes!("testdata/1075458.stl");
 const TOWER_91115: &[u8] = include_bytes!("testdata/91115.stl");
+const MODEL_74660: &[u8] = include_bytes!("testdata/74660.stl");
+const MODEL_1147177: &[u8] = include_bytes!("testdata/1147177.stl");
+
+/// Thingi10K #74660 union #1147177 (second demo repro of the same
+/// NotClosed family): the demo's default translate(0.3, 0, 0), no rotation.
+#[test]
+fn thingi_74660_union_1147177_is_closed() {
+    let a = import_stl_like_demo(MODEL_74660);
+    assert_eq!(a.status(), Error::NoError, "operand A import");
+
+    let b = import_stl_like_demo(MODEL_1147177).translate(Vec3::new(0.3, 0.0, 0.0));
+    assert_eq!(b.status(), Error::NoError, "operand B import");
+
+    let result = a.union_with_engine(&b, BooleanEngine::Robust);
+    assert_eq!(result.status(), Error::NoError, "robust union status");
+    assert!(!result.is_empty(), "robust union should be non-empty");
+    assert!(result.volume() > 0.0, "union volume must be positive");
+}
 
 /// Thingi10K #92068 union #39926 (demo repro): both operands import as
 /// closed manifolds; the robust union returned NotClosed. Reproduces with no
@@ -158,6 +178,27 @@ fn thingi_1075458_minus_91115_is_valid() {
     let volume = result.volume();
     assert!(volume.is_finite(), "difference volume must be finite");
     assert!(volume > 0.0, "difference volume must be positive");
+}
+
+/// Thingi10K #59082 union #1313535 (demo repro): both operands import
+/// cleanly, yet the robust union returns NotClosed with an empty result.
+/// Surfaced in the browser as `RuntimeError: unreachable` — that part was the
+/// wasm-only `Instant::now()` panic (fixed separately); underneath it the
+/// boolean itself still fails, which is what this test pins.
+#[test]
+fn thingi_59082_union_1313535_is_closed() {
+    let a = import_stl_like_demo(CASTLE_STAIRS_59082);
+    assert_eq!(a.status(), Error::NoError, "operand A import");
+
+    let b = import_stl_like_demo(GROUND_1313535)
+        .rotate(162.0, 156.0, 337.0)
+        .translate(Vec3::new(0.3, 0.0, 0.0));
+    assert_eq!(b.status(), Error::NoError, "operand B import");
+
+    let result = a.union_with_engine(&b, BooleanEngine::Robust);
+    assert_eq!(result.status(), Error::NoError, "robust union status");
+    assert!(!result.is_empty(), "robust union should be non-empty");
+    assert!(result.volume() > 0.0, "union volume must be positive");
 }
 
 /// Thingi10K #939888 union #93557 (demo repro): both operands import as

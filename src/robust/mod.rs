@@ -35,6 +35,7 @@
 pub mod arrangement;
 pub mod assemble;
 pub mod cdt;
+pub mod cells;
 pub mod classify;
 pub mod exact;
 pub mod intersection_graph;
@@ -225,11 +226,23 @@ pub fn boolean(
         };
         let pv = graph.piece_verts(rep);
         let w = ray_shoot::winding_number_indexed(&piece_centroid(pv), other, other_index);
-        let inside = if other_is_complement { w == 0 } else { w != 0 };
+        // Solid = {winding ≥ 1}. A negative winding is inverted geometry —
+        // a self-intersecting soup whose local orientation is reversed —
+        // and is never material; `w != 0` would wrongly read it as inside.
+        // The subtraction-flipped operand carries a negated winding, so its
+        // complement {w_Q ≤ 0} reads as {w ≥ 0} on the working copy.
+        let inside = if other_is_complement { w >= 0 } else { w >= 1 };
         let tag = if inside { Tag::Inter } else { Tag::Union };
         let own_f64: &[[Vec3; 3]] = if mesh == 0 { &p_tris } else { &q_tris };
-        let component_tag =
-            on_own_boundary(pv, &own_rational[mesh], own_f64, &own_boxes[mesh]).then_some(tag);
+        let own_flipped = complement && mesh == 1;
+        let component_tag = on_own_boundary(
+            pv,
+            &own_rational[mesh],
+            own_f64,
+            &own_boxes[mesh],
+            own_flipped,
+        )
+        .then_some(tag);
         for pi in 0..graph.pieces.len() {
             if !cls.discarded[pi] && prop.component[pi] == root {
                 tags[pi] = component_tag;
@@ -267,19 +280,26 @@ pub fn boolean(
 /// Is this piece on the boundary of the solid its own operand bounds, or an
 /// interior wall (a sheet with material on both sides)?
 ///
-/// With the solid defined as `{winding ≠ 0}` (and its complement, for the
-/// orientation-flipped subtraction operand, as `{winding == 0}`), membership
-/// changes across the piece exactly when the winding just off its outward
-/// side is 0 or −1: crossing the piece adds 1 to the winding, and only the
-/// 0↔1 and −1↔0 steps change either membership predicate. Anything else —
-/// e.g. a 1↔2 step inside a self-overlapping operand, or the inner of two
-/// nested same-orientation shells — is an interior wall that no regularized
-/// boolean output may contain.
+/// With the solid defined as `{winding ≥ 1}`, crossing a piece inward adds 1
+/// to the winding, so the piece bounds material exactly when the winding just
+/// off its outward side is 0 (the 0↔1 step). Anything else — a 1↔2 step
+/// inside a self-overlapping operand, the inner of two nested
+/// same-orientation shells, or a negative winding from a region whose
+/// orientation is inverted — is an interior wall that no regularized boolean
+/// output may contain.
+///
+/// `flipped` marks the subtraction operand, whose winding is negated on the
+/// working copy: its boundary pieces read −1 just off their (now reversed)
+/// outward side. Accepting both 0 and −1 for either operand — as this once
+/// did — lets an inverted-orientation piece pass as boundary and be emitted
+/// with backwards winding, which breaks orientability of the assembled
+/// surface (a non-orientable pair across a shared intersection segment).
 fn on_own_boundary(
     pv: [&R3; 3],
     own: &[[R3; 3]],
     own_f64: &[[Vec3; 3]],
     own_boxes: &[crate::types::Box],
+    flipped: bool,
 ) -> bool {
     let normal = pv[1].sub(pv[0]).cross(&pv[2].sub(pv[0]));
     let w = ray_shoot::winding_off_surface(
@@ -289,7 +309,11 @@ fn on_own_boundary(
         own_f64,
         own_boxes,
     );
-    w == 0 || w == -1
+    if flipped {
+        w == -1
+    } else {
+        w == 0
+    }
 }
 
 /// Import a raw triangle list as a boolean result (used by

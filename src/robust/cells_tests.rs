@@ -1,0 +1,154 @@
+// robust/cells_tests.rs — Cell complex and winding propagation tests.
+//
+// The invariants under test are the ones that make the arrangement
+// formulation robust: the number of cells matches the geometry, every cell
+// reachable from the outside gets a winding, and the winding in each region
+// equals how many operands actually contain it.
+
+use super::*;
+use crate::linalg::Vec3;
+use crate::robust::intersection_graph::build_graph;
+
+/// An axis-aligned box as 12 outward-oriented triangles.
+fn cube(lo: Vec3, hi: Vec3) -> Vec<[Vec3; 3]> {
+    let v = [
+        Vec3::new(lo.x, lo.y, lo.z),
+        Vec3::new(hi.x, lo.y, lo.z),
+        Vec3::new(hi.x, hi.y, lo.z),
+        Vec3::new(lo.x, hi.y, lo.z),
+        Vec3::new(lo.x, lo.y, hi.z),
+        Vec3::new(hi.x, lo.y, hi.z),
+        Vec3::new(hi.x, hi.y, hi.z),
+        Vec3::new(lo.x, hi.y, hi.z),
+    ];
+    let idx = [
+        [0, 3, 2],
+        [0, 2, 1], // −z
+        [4, 5, 6],
+        [4, 6, 7], // +z
+        [0, 1, 5],
+        [0, 5, 4], // −y
+        [3, 7, 6],
+        [3, 6, 2], // +y
+        [0, 4, 7],
+        [0, 7, 3], // −x
+        [1, 2, 6],
+        [1, 6, 5], // +x
+    ];
+    idx.iter().map(|t| [v[t[0]], v[t[1]], v[t[2]]]).collect()
+}
+
+fn to_rational(tris: &[[Vec3; 3]]) -> Vec<[R3; 3]> {
+    tris.iter()
+        .map(|t| [R3::from_vec3(t[0]), R3::from_vec3(t[1]), R3::from_vec3(t[2])])
+        .collect()
+}
+
+fn to_boxes(tris: &[[Vec3; 3]]) -> Vec<crate::types::Box> {
+    tris.iter()
+        .map(|t| {
+            let mut b = crate::types::Box::from_points(t[0], t[1]);
+            b.union_point(t[2]);
+            b
+        })
+        .collect()
+}
+
+/// Winding numbers for every cell, seeding disconnected components by query.
+fn all_windings(
+    graph: &IntersectionGraph,
+    complex: &CellComplex,
+    p: &[[Vec3; 3]],
+    q: &[[Vec3; 3]],
+) -> Windings {
+    let (pr, qr) = (to_rational(p), to_rational(q));
+    let (pb, qb) = (to_boxes(p), to_boxes(q));
+    propagate_all(graph, complex, [p, q], [&pr, &qr], [&pb, &qb])
+}
+
+/// Winding of the region just inside `mesh`'s surface, by looking at the
+/// anti side of any piece belonging to it.
+fn inside_winding(
+    graph: &IntersectionGraph,
+    complex: &CellComplex,
+    wind: &Windings,
+    mesh: u8,
+) -> Vec<[i32; 2]> {
+    let mut seen = Vec::new();
+    for (pi, piece) in graph.pieces.iter().enumerate() {
+        if piece.mesh != mesh {
+            continue;
+        }
+        let c = complex.cell(pi, ANTI);
+        if wind.known[c] && !seen.contains(&wind.w[c]) {
+            seen.push(wind.w[c]);
+        }
+    }
+    seen
+}
+
+#[test]
+fn disjoint_cubes_have_three_cells() {
+    let p = cube(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 1.0));
+    let q = cube(Vec3::new(2.0, 0.0, 0.0), Vec3::new(3.0, 1.0, 1.0));
+    let graph = build_graph(&p, &q);
+    let complex = build_cells(&graph);
+
+    // Each shell bounds its own inside/outside pair. The two outer cells are
+    // one region in space, but nothing connects them combinatorially — that
+    // is exactly what the per-component seeding resolves.
+    assert_eq!(complex.num_cells, 4, "two disjoint shells, two cells each");
+
+    let outer = outer_cell(&graph, &complex).expect("outer cell");
+    let wind = all_windings(&graph, &complex, &p, &q);
+    assert!(wind.known.iter().all(|&k| k), "seeding reaches every cell");
+    assert_eq!(wind.w[outer], [0, 0], "outside is outside both");
+    assert_eq!(inside_winding(&graph, &complex, &wind, 0), vec![[1, 0]]);
+    assert_eq!(inside_winding(&graph, &complex, &wind, 1), vec![[0, 1]]);
+}
+
+#[test]
+fn overlapping_cubes_wind_to_two_in_the_lens() {
+    let p = cube(Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 2.0, 2.0));
+    let q = cube(Vec3::new(1.0, 1.0, 1.0), Vec3::new(3.0, 3.0, 3.0));
+    let graph = build_graph(&p, &q);
+    let complex = build_cells(&graph);
+
+    let outer = outer_cell(&graph, &complex).expect("outer cell");
+    let wind = propagate_windings(&graph, &complex, outer, [0, 0]);
+    assert_eq!(wind.w[outer], [0, 0]);
+
+    // The three material regions: P only, Q only, and the shared lens.
+    let mut regions: Vec<[i32; 2]> = Vec::new();
+    for c in 0..complex.num_cells {
+        if wind.known[c] && !regions.contains(&wind.w[c]) {
+            regions.push(wind.w[c]);
+        }
+    }
+    regions.sort();
+    assert_eq!(
+        regions,
+        vec![[0, 0], [0, 1], [1, 0], [1, 1]],
+        "outside, Q only, P only, and the overlap where both wind to one"
+    );
+}
+
+/// A doubled shell must step the winding by two, not one — this is the
+/// multiplicity behaviour that lets self-overlapping scans classify
+/// correctly without an explicit regularization pass.
+#[test]
+fn doubled_shell_steps_winding_by_two() {
+    let mut p = cube(Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 1.0));
+    let dup = p.clone();
+    p.extend(dup); // every facet present twice, same orientation
+    let q = cube(Vec3::new(5.0, 0.0, 0.0), Vec3::new(6.0, 1.0, 1.0));
+    let graph = build_graph(&p, &q);
+    let complex = build_cells(&graph);
+
+    let wind = all_windings(&graph, &complex, &p, &q);
+    assert_eq!(
+        inside_winding(&graph, &complex, &wind, 0),
+        vec![[2, 0]],
+        "a double cover winds to two inside"
+    );
+}
