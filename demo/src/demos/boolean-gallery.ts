@@ -8,10 +8,8 @@
 
 import { ThreeViewer } from '../three-viewer.ts';
 import { createSlider, createDropdown, createCheckbox, createButton, createNumberInput, createReadout, updateReadout } from '../controls.ts';
-import {
-  booleanGalleryMeshEngine, importTriangleSoup, importedBoolean,
-  type MeshData, type ImportedMesh, type BooleanEngine,
-} from '../wasm.ts';
+import { type MeshData, type BooleanEngine } from '../wasm.ts';
+import { BooleanRunner, type ImportInfo, type OperandArrays, type RunParams } from '../boolean-runner.ts';
 import { loadSetting, saveSetting } from '../settings.ts';
 import { pickRandomModel, pairOperandKinds, fetchMesh, meshZipUrl, findModelById, type ThingiModel, type PairKind } from '../thingi.ts';
 
@@ -131,7 +129,10 @@ const SHAPE_NAMES = ['cube', 'sphere', 'cylinder', 'spiky-dodecahedron'];
 
 interface ThingiOperand {
   model: ThingiModel;
-  handle: ImportedMesh;
+  /** Raw parsed soup, kept so a cancelled worker can be re-fed. */
+  arrays: OperandArrays;
+  /** Import result reported by the worker's wasm instance. */
+  info: ImportInfo;
   normalization: { center: [number, number, number]; scale: number };
 }
 
@@ -181,6 +182,7 @@ export function init(container: HTMLElement): () => void {
   let pairMode = loadSetting(DEMO, 'pairMode', pairKind) as PairMode;
   let pickA = loadSetting(DEMO, 'pickA', 0);
   let pickB = loadSetting(DEMO, 'pickB', 0);
+  let troubleCase = loadSetting(DEMO, 'troubleCase', '');
   let thingiA: ThingiOperand | null = null;
   let thingiB: ThingiOperand | null = null;
   let skippedImports: { id: number; status: string }[] = [];
@@ -213,7 +215,7 @@ export function init(container: HTMLElement): () => void {
       faces: o.model.faces,
       edge_manifold: o.model.edge_manifold,
       vertex_manifold: o.model.vertex_manifold,
-      imported: { num_tri: o.handle.num_tri, is_soup: o.handle.is_soup, status: o.handle.status },
+      imported: { num_tri: o.info.num_tri, is_soup: o.info.is_soup, status: o.info.status },
       normalization: o.normalization,
     };
   }
@@ -265,61 +267,80 @@ export function init(container: HTMLElement): () => void {
     updateReadout(readout, rows);
   }
 
+  // ---- Worker-driven evaluation: the boolean runs off the main thread ----
+
+  const runner = new BooleanRunner();
+
   function update(silent = false) {
-    if (source === 'thingi' && !inThingi()) return; // pair still loading
+    if (source === 'thingi' && (!inThingi() || loadingPair)) return; // pair still loading
     const info = captureDebugInfo();
-    try {
-      let data: MeshData;
-      const t0 = performance.now();
-      if (inThingi()) {
-        data = importedBoolean(thingiA!.handle, thingiB!.handle, op, engine, offsetX, offsetY, offsetZ, rotX, rotY, rotZ);
-      } else {
-        data = booleanGalleryMeshEngine(shapeA, shapeB, op, offsetX, offsetY, offsetZ, rotX, rotY, rotZ, engine);
-      }
-      lastFrameMs = performance.now() - t0;
-      info.elapsed_ms = Math.round(lastFrameMs * 10) / 10;
-      info.result = { num_tri: data.num_tri, num_vert: data.num_vert, volume: data.volume };
-      try { localStorage.setItem('boolean-gallery-debug', JSON.stringify(info)); } catch { /* ignore */ }
-      viewer.setMesh(data);
-      viewer.setColor(OP_COLORS[op] || 0x4488cc);
-      errorBox.style.display = 'none';
-      showReadout(data);
-    } catch (e) {
-      info.error = String(e);
-      try { localStorage.setItem('boolean-gallery-debug', JSON.stringify(info)); } catch { /* ignore */ }
-      console.error('Boolean op failed:', info, e);
-      if (!silent) {
-        errorBox.style.display = 'block';
-        errorBox.innerHTML = `<strong>Boolean operation failed:</strong> ${String(e)}<br>` +
-          `Use <em>Copy Debug Info</em> to capture the inputs for a bug report.`;
-        updateReadout(readout, []);
-      }
-    }
+    const params: RunParams = inThingi()
+      ? {
+          source: 'thingi', op, engine,
+          ox: offsetX, oy: offsetY, oz: offsetZ, rx: rotX, ry: rotY, rz: rotZ,
+          tag: { info, silent },
+        }
+      : {
+          source: 'builtin', shapeA, shapeB, op, engine,
+          ox: offsetX, oy: offsetY, oz: offsetZ, rx: rotX, ry: rotY, rz: rotZ,
+          tag: { info, silent },
+        };
+    runner.requestRun(params);
   }
 
-  // Booleans run synchronously on the main thread; animating a pair whose
-  // boolean takes seconds per frame would freeze the tab. Auto-pause when a
-  // frame blows this budget — the user can re-enable Animate any time.
+  runner.onResult = ({ data, elapsedMs }, params) => {
+    const { info } = params.tag;
+    lastFrameMs = elapsedMs;
+    info.elapsed_ms = Math.round(elapsedMs * 10) / 10;
+    info.result = { num_tri: data.num_tri, num_vert: data.num_vert, volume: data.volume };
+    try { localStorage.setItem('boolean-gallery-debug', JSON.stringify(info)); } catch { /* ignore */ }
+    viewer.setMesh(data as MeshData);
+    viewer.setColor(OP_COLORS[params.op] || 0x4488cc);
+    errorBox.style.display = 'none';
+    showReadout(data as MeshData);
+    scheduleNextAnimateFrame(elapsedMs);
+  };
+
+  runner.onError = (error, params) => {
+    const { info, silent } = params.tag;
+    info.error = error;
+    try { localStorage.setItem('boolean-gallery-debug', JSON.stringify(info)); } catch { /* ignore */ }
+    console.error('Boolean op failed:', info, error);
+    if (!silent) {
+      errorBox.style.display = 'block';
+      errorBox.innerHTML = `<strong>Boolean operation failed:</strong> ${error}<br>` +
+        `Use <em>Copy Debug Info</em> to capture the inputs for a bug report.`;
+      updateReadout(readout, []);
+    }
+    scheduleNextAnimateFrame(0);
+  };
+
+  // With the boolean off the main thread the tab never freezes, but pairs
+  // that take seconds per frame still make a useless slideshow — auto-pause
+  // and let the user re-enable Animate if they really want it.
   const ANIMATE_BUDGET_MS = 1500;
+
+  function scheduleNextAnimateFrame(elapsedMs: number) {
+    if (!animating) return;
+    if (elapsedMs > ANIMATE_BUDGET_MS) {
+      toggleAnimate(false);
+      const box = animateBox.querySelector('input') as HTMLInputElement | null;
+      if (box) box.checked = false;
+      errorBox.style.display = 'block';
+      errorBox.innerHTML = `<strong>Animation paused:</strong> this boolean takes ` +
+        `${(elapsedMs / 1000).toFixed(1)} s per frame. Re-check Animate to continue anyway.`;
+      return;
+    }
+    animId = requestAnimationFrame(animateStep);
+  }
 
   function animateStep() {
     if (!animating) return;
     rotX = (rotX + ROT_SPEED_X) % 360;
     rotY = (rotY + ROT_SPEED_Y) % 360;
     rotZ = (rotZ + ROT_SPEED_Z) % 360;
-    const t0 = performance.now();
+    // The next frame is scheduled when this one's result arrives.
     update(true);
-    const dt = performance.now() - t0;
-    if (dt > ANIMATE_BUDGET_MS) {
-      toggleAnimate(false);
-      const box = animateBox.querySelector('input') as HTMLInputElement | null;
-      if (box) box.checked = false;
-      errorBox.style.display = 'block';
-      errorBox.innerHTML = `<strong>Animation paused:</strong> this boolean takes ` +
-        `${(dt / 1000).toFixed(1)} s per frame. Re-check Animate to continue anyway.`;
-      return;
-    }
-    animId = requestAnimationFrame(animateStep);
   }
 
   function toggleAnimate(on: boolean) {
@@ -337,10 +358,18 @@ export function init(container: HTMLElement): () => void {
     }
   }
 
+  // The worker owns the wasm-side meshes; the main thread only drops its
+  // references. A stale worker slot is overwritten by the next import.
   function freeThingiPair() {
-    thingiA?.handle.free();
-    thingiB?.handle.free();
     thingiA = thingiB = null;
+  }
+
+  /// Re-feed the committed pair to the worker — after a failed load attempt
+  /// or a cancel replaced worker slots with candidate meshes, this restores
+  /// the state the on-screen labels describe.
+  function restoreWorkerOperands() {
+    if (thingiA) runner.importOperand('a', thingiA.arrays);
+    if (thingiB) runner.importOperand('b', thingiB.arrays);
   }
 
   function setThingiInfo(html: string | null) {
@@ -356,26 +385,26 @@ export function init(container: HTMLElement): () => void {
     // Topological kind per the dataset flags (what the pools guarantee);
     // "soup" marks the rare case where even welding could not pair it.
     let kind = o.model.edge_manifold && o.model.vertex_manifold ? 'manifold' : 'non-manifold';
-    if (o.handle.is_soup) kind += ', soup';
+    if (o.info.is_soup) kind += ', soup';
     return `#${o.model.id} &ldquo;${o.model.name}&rdquo; (${o.model.faces} tris, ${kind})`;
   }
 
   // Some dataset models flagged "closed" still fail the robust importer's
   // stricter closed check — skip those and re-roll, keeping a record of the
   // skips for the debug info.
-  async function loadOperand(kind: 'm' | 'n', exclude?: ThingiModel): Promise<ThingiOperand> {
+  async function loadOperand(kind: 'm' | 'n', slot: 'a' | 'b', exclude?: ThingiModel): Promise<ThingiOperand> {
     const MAX_ATTEMPTS = 5;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const model = await pickRandomModel(kind, exclude);
       setThingiInfo(`Fetching #${model.id} &ldquo;${model.name}&rdquo;…`);
       const parsed = await fetchMesh(model);
       if (disposed) throw new Error('demo closed');
-      const handle = importTriangleSoup(parsed.positions, parsed.indices);
-      if (handle.ok) {
-        return { model, handle, normalization: { center: parsed.center, scale: parsed.scale } };
+      const arrays: OperandArrays = { positions: parsed.positions, indices: parsed.indices };
+      const info = await runner.importOperand(slot, arrays);
+      if (info.ok) {
+        return { model, arrays, info, normalization: { center: parsed.center, scale: parsed.scale } };
       }
-      skippedImports.push({ id: model.id, status: handle.status });
-      handle.free();
+      skippedImports.push({ id: model.id, status: info.status });
     }
     throw new Error(`No importable ${kind === 'm' ? 'manifold' : 'non-manifold'} mesh found in ` +
       `${MAX_ATTEMPTS} attempts (skipped: ${skippedImports.map(s => `#${s.id} ${s.status}`).join(', ')})`);
@@ -390,14 +419,8 @@ export function init(container: HTMLElement): () => void {
     skippedImports = [];
     try {
       const [kindA, kindB] = pairOperandKinds(pairKind);
-      const a = await loadOperand(kindA);
-      let b: ThingiOperand;
-      try {
-        b = await loadOperand(kindB, kindA === kindB ? a.model : undefined);
-      } catch (e) {
-        a.handle.free();
-        throw e;
-      }
+      const a = await loadOperand(kindA, 'a');
+      const b = await loadOperand(kindB, 'b', kindA === kindB ? a.model : undefined);
       freeThingiPair();
       thingiA = a;
       thingiB = b;
@@ -408,10 +431,10 @@ export function init(container: HTMLElement): () => void {
       rotZ = Math.floor(Math.random() * 360);
       setThingiInfo(`A: ${operandLabel(thingiA)}<br>B: ${operandLabel(thingiB)}<br>` +
         `Loaded rotation: [${rotX}, ${rotY}, ${rotZ}]&deg;`);
-      update();
     } catch (e) {
       console.error('Thingi10K pair load failed:', e);
-      setThingiInfo(null);
+      restoreWorkerOperands();
+      setThingiInfo(inThingi() ? `A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}` : null);
       errorBox.style.display = 'block';
       errorBox.innerHTML = `<strong>Failed to load Thingi10K pair:</strong> ${String(e)}`;
     } finally {
@@ -419,13 +442,25 @@ export function init(container: HTMLElement): () => void {
       loadBtn.disabled = false;
       loadBtn.textContent = 'Load Random Pair';
     }
+    // After loadingPair clears — update() is a no-op while a pair loads.
+    if (inThingi()) update();
   }
 
-  /// First pair for a fresh Thingi session: honor a saved Pick Models pair
-  /// if there is one, otherwise roll a random pair of the saved kind.
+  /// First pair for a fresh Thingi session, honoring the saved Pair Type:
+  /// a saved Pick Models pair, the saved Trouble Case, or a random roll of
+  /// the saved kind. Never silently rolls a random pair while the visible
+  /// mode says otherwise.
   function loadInitialPair() {
     if (pairMode === 'pick' && pickA && pickB) {
       loadPickedModels();
+    } else if (pairMode === 'trouble') {
+      if (troubleCase && TROUBLE_CASES.some(c => c.value === troubleCase)) {
+        loadTroubleCase(troubleCase);
+      } else {
+        setThingiInfo('Pick a known case from the <em>Trouble Cases</em> list.');
+      }
+    } else if (pairMode === 'pick') {
+      setThingiInfo('Enter two model ids and press <em>Load These Models</em>.');
     } else {
       loadRandomPair();
     }
@@ -471,7 +506,13 @@ export function init(container: HTMLElement): () => void {
   /// Switch the Thingi10K pair mode, showing only that mode's sub-control:
   /// Load Random Pair for the three random kinds, the curated list for
   /// Trouble Cases, the id inputs for Pick Models.
-  function setPairMode(mode: PairMode) {
+  ///
+  /// `userInitiated` marks a change made through the dropdown: picking a
+  /// random kind then immediately rolls a pair of that kind, so the display
+  /// always matches what the Pair Type says (previously the old pair — of a
+  /// different kind — stayed on screen until Load Random Pair was pressed).
+  function setPairMode(mode: PairMode, userInitiated = false) {
+    const changed = mode !== pairMode;
     pairMode = mode;
     saveSetting(DEMO, 'pairMode', mode);
     const random = isRandomMode(mode);
@@ -482,6 +523,13 @@ export function init(container: HTMLElement): () => void {
     loadBtn.style.display = random ? '' : 'none';
     troubleCtl.style.display = mode === 'trouble' ? '' : 'none';
     pickSection.style.display = mode === 'pick' ? '' : 'none';
+    if (userInitiated && changed && source === 'thingi') {
+      if (random) {
+        loadRandomPair();
+      } else if (mode === 'trouble' && troubleCase && TROUBLE_CASES.some(c => c.value === troubleCase)) {
+        loadTroubleCase(troubleCase);
+      }
+    }
   }
 
   const sourceCtl = createDropdown('Source', SOURCES, source, v => setSource(v as 'builtin' | 'thingi'));
@@ -495,14 +543,20 @@ export function init(container: HTMLElement): () => void {
   controlsEl.appendChild(builtinSection);
 
   const thingiSection = document.createElement('div');
-  const pairModeCtl = createDropdown('Pair Type', PAIR_MODES, pairMode, v => setPairMode(v as PairMode));
+  const pairModeCtl = createDropdown('Pair Type', PAIR_MODES, pairMode, v => setPairMode(v as PairMode, true));
   thingiSection.appendChild(pairModeCtl);
   const loadBtn = createButton('Load Random Pair', () => { loadRandomPair(); });
+  loadBtn.style.marginTop = '10px';
   thingiSection.appendChild(loadBtn);
   const troubleOptions = [{ value: '', text: 'Pick a known case…' }]
     .concat(TROUBLE_CASES.map(c => ({ value: c.value, text: c.text })));
-  const troubleCtl = createDropdown('Trouble Cases', troubleOptions, '', v => {
-    if (v) loadTroubleCase(v);
+  const troubleCtl = createDropdown('Trouble Cases', troubleOptions,
+    TROUBLE_CASES.some(c => c.value === troubleCase) ? troubleCase : '', v => {
+    if (v) {
+      troubleCase = v;
+      saveSetting(DEMO, 'troubleCase', v);
+      loadTroubleCase(v);
+    }
   });
   thingiSection.appendChild(troubleCtl);
   const pickSection = document.createElement('div');
@@ -543,6 +597,30 @@ export function init(container: HTMLElement): () => void {
   controlsEl.appendChild(copyBtn);
   const useBtn = createButton('Use Debug Info', () => { useDebugInfo(); });
   controlsEl.appendChild(useBtn);
+
+  // Cancel appears only when a boolean has been computing for a moment
+  // (avoids flicker on fast frames). Cancelling kills the worker outright —
+  // the runner respawns it and re-imports the operands.
+  const cancelBtn = createButton('Cancel Computation', () => {
+    runner.cancel();
+  });
+  cancelBtn.style.display = 'none';
+  cancelBtn.style.marginTop = '10px';
+  controlsEl.appendChild(cancelBtn);
+  let cancelShowTimer = 0;
+  runner.onBusyChange = busy => {
+    clearTimeout(cancelShowTimer);
+    if (busy) {
+      cancelShowTimer = window.setTimeout(() => { cancelBtn.style.display = ''; }, 400);
+    } else {
+      cancelBtn.style.display = 'none';
+    }
+  };
+  runner.onCancelled = () => {
+    errorBox.style.display = 'block';
+    errorBox.innerHTML = '<strong>Computation cancelled.</strong> The previous result stays on screen.';
+  };
+
   controlsEl.appendChild(errorBox);
   controlsEl.appendChild(readout);
 
@@ -576,18 +654,17 @@ export function init(container: HTMLElement): () => void {
     errorBox.innerHTML = `<strong>Use Debug Info:</strong> ${msg}`;
   }
 
-  async function loadOperandFromRecord(rec: any): Promise<ThingiOperand> {
+  async function loadOperandFromRecord(rec: any, slot: 'a' | 'b'): Promise<ThingiOperand> {
     const model = modelFromDebugRecord(rec);
     setThingiInfo(`Fetching #${model.id} &ldquo;${model.name}&rdquo;…`);
     const parsed = await fetchMesh(model);
     if (disposed) throw new Error('demo closed');
-    const handle = importTriangleSoup(parsed.positions, parsed.indices);
-    if (!handle.ok) {
-      const status = handle.status;
-      handle.free();
-      throw new Error(`#${model.id} failed to import: ${status}`);
+    const arrays: OperandArrays = { positions: parsed.positions, indices: parsed.indices };
+    const info = await runner.importOperand(slot, arrays);
+    if (!info.ok) {
+      throw new Error(`#${model.id} failed to import: ${info.status}`);
     }
-    return { model, handle, normalization: { center: parsed.center, scale: parsed.scale } };
+    return { model, arrays, info, normalization: { center: parsed.center, scale: parsed.scale } };
   }
 
   async function useDebugInfo() {
@@ -746,21 +823,15 @@ export function init(container: HTMLElement): () => void {
       useBtn.textContent = 'Loading pair…';
       skippedImports = [];
       try {
-        const a = await loadOperandFromRecord(info.model_a);
-        let b: ThingiOperand;
-        try {
-          b = await loadOperandFromRecord(info.model_b);
-        } catch (e) {
-          a.handle.free();
-          throw e;
-        }
+        const a = await loadOperandFromRecord(info.model_a, 'a');
+        const b = await loadOperandFromRecord(info.model_b, 'b');
         freeThingiPair();
         thingiA = a;
         thingiB = b;
         setThingiInfo(`A: ${operandLabel(thingiA)}<br>B: ${operandLabel(thingiB)}<br>` +
           `Restored rotation: [${rotX}, ${rotY}, ${rotZ}]&deg;`);
-        update();
       } catch (e) {
+        restoreWorkerOperands();
         setThingiInfo(inThingi() ? `A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}` : null);
         showUseError(`failed to load the captured pair: ${String(e)}`);
       } finally {
@@ -769,6 +840,8 @@ export function init(container: HTMLElement): () => void {
         useBtn.disabled = false;
         useBtn.textContent = 'Use Debug Info';
       }
+      // After loadingPair clears — update() is a no-op while a pair loads.
+      if (inThingi()) update();
     } else {
       source = 'builtin';
       saveSetting(DEMO, 'source', source);
@@ -801,6 +874,7 @@ export function init(container: HTMLElement): () => void {
     animating = false;
     cancelAnimationFrame(animId);
     freeThingiPair();
+    runner.dispose();
     viewer.dispose();
   };
 }

@@ -33,6 +33,26 @@ if (!result.success) {
 
 console.log(`  ${result.outputs.length} files generated`);
 
+// 1b. Bundle the boolean web worker as its own entrypoint. Bun.build does
+// not rewrite `new Worker(new URL(...))` references, so boolean-runner.ts
+// loads it by the fixed name boolean-worker.js next to main.js.
+console.log("Bundling boolean worker...");
+const workerResult = await Bun.build({
+  entrypoints: [join(ROOT, "src/boolean-worker.ts")],
+  outdir: DIST,
+  target: "browser",
+  format: "esm",
+  minify: true,
+  naming: "[name].[ext]",
+});
+if (!workerResult.success) {
+  console.error("Worker build failed:");
+  for (const msg of workerResult.logs) {
+    console.error(msg);
+  }
+  process.exit(1);
+}
+
 // 2. Copy index.html with script tag pointing to bundled JS
 console.log("Copying index.html...");
 let html = readFileSync(join(ROOT, "index.html"), "utf-8");

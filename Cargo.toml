@@ -48,6 +48,9 @@ codegen-units = 1
 
 [dev-dependencies]
 criterion = "0.5"
+# Thingi10K sweep harness (examples/thingi_sweep.rs) only.
+rusqlite = { version = "0.32", features = ["bundled"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [[bench]]
 name = "manifold_bench"
