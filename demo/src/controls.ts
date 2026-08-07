@@ -57,6 +57,37 @@ export function createDropdown(
   return group;
 }
 
+/// Numeric text entry (e.g. a Thingi10K model id), for values a slider's
+/// bounded range cannot express. `onCommit` fires on Enter or blur rather
+/// than per keystroke, so a half-typed id never kicks off a fetch. An empty
+/// field commits `null` — the caller decides whether that is an error.
+export function createNumberInput(
+  label: string, value: number | null,
+  onCommit: (val: number | null) => void,
+): HTMLElement {
+  const group = document.createElement('div');
+  group.className = 'control-group';
+  const lbl = document.createElement('label');
+  lbl.textContent = label;
+
+  const input = document.createElement('input');
+  input.type = 'number';
+  input.value = value === null ? '' : String(value);
+  const commit = () => {
+    const raw = input.value.trim();
+    const parsed = raw === '' ? NaN : parseInt(raw, 10);
+    onCommit(Number.isFinite(parsed) ? parsed : null);
+  };
+  input.addEventListener('change', commit);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+  });
+
+  group.appendChild(lbl);
+  group.appendChild(input);
+  return group;
+}
+
 export function createCheckbox(
   label: string, checked: boolean,
   onChange: (val: boolean) => void,

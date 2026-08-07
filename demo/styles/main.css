@@ -429,7 +429,8 @@ input[type="range"]::-webkit-slider-thumb {
   cursor: pointer;
 }
 
-select {
+select,
+input[type="number"] {
   width: 100%;
   padding: 6px 8px;
   border: 1px solid var(--border);
@@ -437,6 +438,14 @@ select {
   background: #fff;
   font-size: 0.9rem;
   color: var(--text);
+}
+
+/* A group of controls revealed by a parent selection (e.g. the Pick Models
+   id inputs under Pair Type) — same vertical rhythm as the control column. */
+.control-substack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 .control-checkbox {

@@ -7,7 +7,7 @@
 // report.
 
 import { ThreeViewer } from '../three-viewer.ts';
-import { createSlider, createDropdown, createCheckbox, createButton, createReadout, updateReadout } from '../controls.ts';
+import { createSlider, createDropdown, createCheckbox, createButton, createNumberInput, createReadout, updateReadout } from '../controls.ts';
 import {
   booleanGalleryMeshEngine, importTriangleSoup, importedBoolean,
   type MeshData, type ImportedMesh, type BooleanEngine,
@@ -70,6 +70,19 @@ const PAIR_KINDS = [
   { value: 'mn', text: 'Manifold + Non-manifold' },
   { value: 'nn', text: 'Non-manifold + Non-manifold' },
 ];
+
+/// Pair Type is really a mode selector: the three kinds above roll a random
+/// pair, while the two below reveal a sub-control that names an exact pair
+/// instead — a curated trouble case, or model ids typed in by hand.
+type PairMode = PairKind | 'trouble' | 'pick';
+
+const PAIR_MODES = PAIR_KINDS.concat([
+  { value: 'trouble', text: 'Trouble Cases…' },
+  { value: 'pick', text: 'Pick Models…' },
+]);
+
+const isRandomMode = (m: PairMode): m is PairKind =>
+  m === 'mm' || m === 'mn' || m === 'nn';
 
 /// Known Thingi10K trouble cases — the pairs the perf and bug hunts keep
 /// returning to. Selecting one loads the exact configuration (models by id,
@@ -163,6 +176,11 @@ export function init(container: HTMLElement): () => void {
 
   // Thingi10K state
   let pairKind = loadSetting(DEMO, 'pairKind', 'mn') as PairKind;
+  // Mode defaults to the saved random kind, so existing users land where they
+  // left off. Pick Models ids: 0 means "empty".
+  let pairMode = loadSetting(DEMO, 'pairMode', pairKind) as PairMode;
+  let pickA = loadSetting(DEMO, 'pickA', 0);
+  let pickB = loadSetting(DEMO, 'pickB', 0);
   let thingiA: ThingiOperand | null = null;
   let thingiB: ThingiOperand | null = null;
   let skippedImports: { id: number; status: string }[] = [];
@@ -403,6 +421,16 @@ export function init(container: HTMLElement): () => void {
     }
   }
 
+  /// First pair for a fresh Thingi session: honor a saved Pick Models pair
+  /// if there is one, otherwise roll a random pair of the saved kind.
+  function loadInitialPair() {
+    if (pairMode === 'pick' && pickA && pickB) {
+      loadPickedModels();
+    } else {
+      loadRandomPair();
+    }
+  }
+
   async function copyDebugInfo() {
     const text = JSON.stringify(lastDebugInfo ?? { note: 'no operation recorded yet' }, null, 2);
     try {
@@ -433,11 +461,27 @@ export function init(container: HTMLElement): () => void {
         setThingiInfo(`A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}`);
         update();
       } else {
-        loadRandomPair();
+        loadInitialPair();
       }
     } else {
       update();
     }
+  }
+
+  /// Switch the Thingi10K pair mode, showing only that mode's sub-control:
+  /// Load Random Pair for the three random kinds, the curated list for
+  /// Trouble Cases, the id inputs for Pick Models.
+  function setPairMode(mode: PairMode) {
+    pairMode = mode;
+    saveSetting(DEMO, 'pairMode', mode);
+    const random = isRandomMode(mode);
+    if (random) {
+      pairKind = mode;
+      saveSetting(DEMO, 'pairKind', pairKind);
+    }
+    loadBtn.style.display = random ? '' : 'none';
+    troubleCtl.style.display = mode === 'trouble' ? '' : 'none';
+    pickSection.style.display = mode === 'pick' ? '' : 'none';
   }
 
   const sourceCtl = createDropdown('Source', SOURCES, source, v => setSource(v as 'builtin' | 'thingi'));
@@ -451,8 +495,8 @@ export function init(container: HTMLElement): () => void {
   controlsEl.appendChild(builtinSection);
 
   const thingiSection = document.createElement('div');
-  const pairKindCtl = createDropdown('Pair Type', PAIR_KINDS, pairKind, v => { pairKind = v as PairKind; saveSetting(DEMO, 'pairKind', pairKind); });
-  thingiSection.appendChild(pairKindCtl);
+  const pairModeCtl = createDropdown('Pair Type', PAIR_MODES, pairMode, v => setPairMode(v as PairMode));
+  thingiSection.appendChild(pairModeCtl);
   const loadBtn = createButton('Load Random Pair', () => { loadRandomPair(); });
   thingiSection.appendChild(loadBtn);
   const troubleOptions = [{ value: '', text: 'Pick a known case…' }]
@@ -461,16 +505,33 @@ export function init(container: HTMLElement): () => void {
     if (v) loadTroubleCase(v);
   });
   thingiSection.appendChild(troubleCtl);
+  const pickSection = document.createElement('div');
+  pickSection.className = 'control-substack';
+  const pickACtl = createNumberInput('Model A id', pickA || null, v => {
+    pickA = v ?? 0;
+    saveSetting(DEMO, 'pickA', pickA);
+  });
+  const pickBCtl = createNumberInput('Model B id', pickB || null, v => {
+    pickB = v ?? 0;
+    saveSetting(DEMO, 'pickB', pickB);
+  });
+  const pickBtn = createButton('Load These Models', () => { loadPickedModels(); });
+  pickSection.appendChild(pickACtl);
+  pickSection.appendChild(pickBCtl);
+  pickSection.appendChild(pickBtn);
+  thingiSection.appendChild(pickSection);
   thingiSection.appendChild(thingiInfo);
   controlsEl.appendChild(thingiSection);
 
-  const opCtl = createDropdown('Operation', OPS, String(op), v => { op = parseInt(v); saveSetting(DEMO, 'op', op); update(); });
+  // Engine first: it is the major choice (which pipeline runs at all), and
+  // the operation is a detail within it.
   const engineCtl = createDropdown('Engine', ENGINES, String(engine), v => { engine = parseInt(v) as BooleanEngine; saveSetting(DEMO, 'engine', engine); update(); });
+  const opCtl = createDropdown('Operation', OPS, String(op), v => { op = parseInt(v); saveSetting(DEMO, 'op', op); update(); });
   const offXCtl = createSlider('Offset X ', -1.5, 1.5, offsetX, 0.1, v => { offsetX = v; saveSetting(DEMO, 'offsetX', v); update(); });
   const offYCtl = createSlider('Offset Y ', -1.5, 1.5, offsetY, 0.1, v => { offsetY = v; saveSetting(DEMO, 'offsetY', v); update(); });
   const offZCtl = createSlider('Offset Z ', -1.5, 1.5, offsetZ, 0.1, v => { offsetZ = v; saveSetting(DEMO, 'offsetZ', v); update(); });
-  controlsEl.appendChild(opCtl);
   controlsEl.appendChild(engineCtl);
+  controlsEl.appendChild(opCtl);
   controlsEl.appendChild(offXCtl);
   controlsEl.appendChild(offYCtl);
   controlsEl.appendChild(offZCtl);
@@ -497,6 +558,11 @@ export function init(container: HTMLElement): () => void {
     if (input) input.value = String(v);
     const span = ctl.querySelector('.slider-value');
     if (span) span.textContent = String(v);
+  }
+
+  function setNumberValue(ctl: HTMLElement, v: number) {
+    const input = ctl.querySelector('input');
+    if (input) input.value = v ? String(v) : '';
   }
 
   function forceAnimateOff() {
@@ -554,22 +620,33 @@ export function init(container: HTMLElement): () => void {
     await applyDebugInfo(info);
   }
 
-  async function loadTroubleCase(value: string) {
-    const c = TROUBLE_CASES.find(tc => tc.value === value);
-    if (!c || loadingPair) return;
+  /// Resolve two model ids in the metadata index and restore the gallery to
+  /// that pair through the shared debug-info path. Backs both the Trouble
+  /// Cases list and the Pick Models id inputs.
+  async function loadPairByIds(
+    aId: number, bId: number,
+    cfg: {
+      op: string; engine: string;
+      offset: [number, number, number]; rot: [number, number, number];
+      pairKind?: PairKind;
+    },
+    modeAfter: PairMode,
+  ) {
+    if (loadingPair) return;
     errorBox.style.display = 'none';
-    // Resolve both models in the metadata index (gives repo/name/format for
-    // the shared restore path).
+    // The index gives repo/name/format, which the shared restore path needs
+    // to build a fetchable URL.
     let ma: ThingiModel | null = null;
     let mb: ThingiModel | null = null;
     try {
-      [ma, mb] = await Promise.all([findModelById(c.a), findModelById(c.b)]);
+      [ma, mb] = await Promise.all([findModelById(aId), findModelById(bId)]);
     } catch (e) {
       showUseError(`could not load the Thingi10K index: ${String(e)}`);
       return;
     }
     if (!ma || !mb) {
-      showUseError(`model #${!ma ? c.a : c.b} is not in the Thingi10K index.`);
+      showUseError(`model #${!ma ? aId : bId} is not in the Thingi10K index ` +
+        `(it must be an STL entry of the Thingi10K subset this demo mirrors).`);
       return;
     }
     const rec = (m: ThingiModel) => ({
@@ -578,19 +655,51 @@ export function init(container: HTMLElement): () => void {
     });
     await applyDebugInfo({
       demo: DEMO,
-      op: c.op,
-      engine: c.engine,
-      offset: c.offset,
-      rotation_degrees: c.rot,
-      pair_kind: c.pairKind,
+      op: cfg.op,
+      engine: cfg.engine,
+      offset: cfg.offset,
+      rotation_degrees: cfg.rot,
+      pair_kind: cfg.pairKind,
       model_a: rec(ma),
       model_b: rec(mb),
-    });
+    }, modeAfter);
+  }
+
+  async function loadTroubleCase(value: string) {
+    const c = TROUBLE_CASES.find(tc => tc.value === value);
+    if (!c) return;
+    await loadPairByIds(
+      c.a, c.b,
+      { op: c.op, engine: c.engine, offset: c.offset, rot: c.rot, pairKind: c.pairKind },
+      'trouble',
+    );
+  }
+
+  /// Load the two ids typed into Pick Models, keeping the current op, engine,
+  /// offsets and rotation — so a pair can be swapped under a fixed setup.
+  async function loadPickedModels() {
+    if (!pickA || !pickB) {
+      showUseError('enter both a Model A id and a Model B id first.');
+      return;
+    }
+    await loadPairByIds(
+      pickA, pickB,
+      {
+        op: OP_NAMES[op] || String(op),
+        engine: ENGINE_NAMES[engine],
+        offset: [offsetX, offsetY, offsetZ],
+        rot: [rotX, rotY, rotZ],
+      },
+      'pick',
+    );
   }
 
   /// Restore the gallery to the exact state a debug-info record describes.
-  /// Shared by Use Debug Info (clipboard) and the Trouble Cases dropdown.
-  async function applyDebugInfo(info: any) {
+  /// Shared by Use Debug Info (clipboard), the Trouble Cases dropdown and the
+  /// Pick Models inputs. `modeAfter` is the Pair Type the restored state
+  /// belongs to: a pasted report lands in Pick Models (its ids are now the
+  /// typed-in pair), while the curated list stays on Trouble Cases.
+  async function applyDebugInfo(info: any, modeAfter: PairMode = 'pick') {
     // Land exactly on the captured frame: freeze animation first.
     forceAnimateOff();
 
@@ -613,11 +722,24 @@ export function init(container: HTMLElement): () => void {
       setDropdownValue(sourceCtl, source);
       builtinSection.style.display = 'none';
       thingiSection.style.display = '';
-      if (typeof info.pair_kind === 'string') {
+      // Keep the random-pair kind in sync when the record names one, but the
+      // visible mode is whatever brought us here.
+      if (typeof info.pair_kind === 'string' && isRandomMode(info.pair_kind as PairMode)) {
         pairKind = info.pair_kind as PairKind;
         saveSetting(DEMO, 'pairKind', pairKind);
-        setDropdownValue(pairKindCtl, pairKind);
       }
+      // Surface the restored pair in the Pick Models inputs so it can be
+      // re-run, tweaked one id at a time, or read off at a glance.
+      if (typeof info.model_a.id === 'number' && typeof info.model_b.id === 'number') {
+        pickA = info.model_a.id;
+        pickB = info.model_b.id;
+        saveSetting(DEMO, 'pickA', pickA);
+        saveSetting(DEMO, 'pickB', pickB);
+        setNumberValue(pickACtl, pickA);
+        setNumberValue(pickBCtl, pickB);
+      }
+      setPairMode(modeAfter);
+      setDropdownValue(pairModeCtl, modeAfter);
       loadingPair = true;
       loadBtn.disabled = true;
       useBtn.disabled = true;
@@ -663,9 +785,10 @@ export function init(container: HTMLElement): () => void {
 
   builtinSection.style.display = source === 'builtin' ? '' : 'none';
   thingiSection.style.display = source === 'thingi' ? '' : 'none';
+  setPairMode(pairMode);
 
   if (source === 'thingi') {
-    loadRandomPair();
+    loadInitialPair();
   } else {
     update();
   }
