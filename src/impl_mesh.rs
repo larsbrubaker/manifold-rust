@@ -879,7 +879,13 @@ impl ManifoldImpl {
         // Impl::Transform: an axis-aligned transform maps the existing tree's
         // boxes directly; otherwise recompute leaf boxes on the transformed
         // mesh and refit the same tree topology.
-        if !result.is_empty() {
+        // Soup impls never went through sort_geometry, which is where the
+        // collider is built, so they carry a zero-leaf tree. There is no
+        // topology to refit in that case — cloning the empty tree and
+        // refitting it against real face boxes indexes out of bounds, and
+        // update_boxes' debug_assert is compiled out in release. Leave the
+        // default collider, exactly as the untransformed soup carried.
+        if !result.is_empty() && self.collider.num_leaves() == self.num_tri() {
             if crate::collider::Collider::is_axis_aligned(t) {
                 result.collider = self.collider.clone();
                 result.collider.transform(t);

@@ -85,7 +85,7 @@ impl Collider {
         collider
     }
 
-    fn num_leaves(&self) -> usize {
+    pub(crate) fn num_leaves(&self) -> usize {
         if self.node_bbox.is_empty() {
             0
         } else {

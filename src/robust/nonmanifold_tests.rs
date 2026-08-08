@@ -185,6 +185,21 @@ fn doubled_cover_operand() {
     assert_vol(&d, 7.0, "doubled cube − cube");
 }
 
+/// Rotating a soup import must not panic. `soupify` skips `sort_geometry`,
+/// which is where the face collider is built, so a soup impl carries a
+/// zero-leaf tree; a non-axis-aligned transform used to clone that empty
+/// tree and refit it against real face boxes, indexing out of bounds. The
+/// debug_assert guarding it is compiled out in release, so this only ever
+/// surfaced as a hard crash.
+#[test]
+fn soup_survives_non_axis_aligned_rotation() {
+    let soup = edge_kissing_cubes();
+    assert!(soup.as_impl().is_soup, "fixture must import as a soup");
+    let rotated = soup.rotate(30.0, 45.0, 60.0);
+    assert_eq!(rotated.status(), Error::NoError, "rotated soup status");
+    assert_vol(&rotated, 16.0, "rotated soup");
+}
+
 #[test]
 fn soup_op_soup() {
     // Both operands non-manifold: edge-kissing pairs crossing each other.
