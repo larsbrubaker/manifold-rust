@@ -19,18 +19,26 @@
 //   arrangement        — per-triangle 2D arrangement of intersection prims
 //   cdt                — exact constrained Delaunay triangulation
 //   intersection_graph — broad phase, prim distribution, piece emission
-//   classify           — ring regularization, coincident-piece binding
-//   propagate          — per-mesh component flood fill between cuts
-//   ray_shoot          — exact winding numbers (component tags, wall tests)
+//   cells              — arrangement cell complex + winding propagation
+//   ray_shoot          — exact winding numbers (residual component seeds)
 //   soup               — triangle-soup import (closed/orientable validation)
 //
-// Classification is winding-number based: each surface component (bounded
-// by intersection cuts) is inside or outside the other operand uniformly,
-// decided by one exact query; pieces that are interior walls of their own
-// operand (self-overlapping or nested sheets, where the winding exceeds 1)
-// are detected with an own-mesh query just off the piece's outward side and
-// dropped from both outputs — the regularized boolean's boundary only ever
-// lies where the total winding steps between 0 and 1.
+// Classification follows the mesh-arrangement formulation (Zhou, Grinspun,
+// Zorin, Jacobson 2016 — what libigl's mesh_boolean uses), which subsumes
+// both the paper's local Prop 2/3 ring walk and the per-component winding
+// queries this engine used before. The arrangement's cells carry a winding
+// number per operand, propagated combinatorially from the unbounded cell, so
+// adjacent regions cannot disagree; each operand's solid is {w ≥ 1}, so a
+// negative winding (an inverted region of a self-intersecting scan) is never
+// material. The output keeps a wall exactly where the operation's predicate
+// differs across it, wound from the cell labels rather than from the input
+// face — which is what makes the result closed and consistently oriented no
+// matter how the input was wound.
+//
+// `classify` and `propagate` are retained for the ring regularization and
+// flood-fill they still provide to other callers; the boolean path no longer
+// needs either, since thin material now cancels arithmetically in the
+// winding sum instead of being discarded up front.
 
 pub mod arrangement;
 pub mod assemble;
@@ -49,9 +57,9 @@ use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::Vec3;
 use crate::types::{Error, OpType};
 
-use classify::Tag;
+
 use exact::rational::R3;
-use ray_shoot::piece_centroid;
+
 
 fn is_cancelled(token: Option<&CancelToken>) -> bool {
     token.is_some_and(|t| t.is_cancelled())
@@ -64,14 +72,12 @@ fn cancelled_impl() -> ManifoldImpl {
 }
 
 /// Robust boolean of two impls (manifold or soup). Same observable contract
-/// as `boolean3::boolean_with_token`, computed by the Barki 2015 pipeline:
-/// intersect exactly, arrange + retriangulate, classify pieces into
-/// union/intersection sets by exact winding numbers, assemble the requested
-/// one.
+/// as `boolean3::boolean_with_token`: intersect exactly, arrange +
+/// retriangulate, build the arrangement's cell complex, propagate winding
+/// numbers, and keep the walls the operation's predicate separates.
 ///
-/// `Subtract` uses the identity P − Q = P ∩ Q^c: Q's winding is flipped on
-/// the working copy and the intersection set is assembled; the winding
-/// queries interpret the flipped operand as its (unbounded) complement.
+/// Every operation is one predicate on a cell's winding vector, so `Subtract`
+/// needs no operand flip — it is simply "inside P and not inside Q".
 pub fn boolean(
     a: &ManifoldImpl,
     b: &ManifoldImpl,
@@ -95,9 +101,9 @@ pub fn boolean(
         };
     }
     let p_tris = soup::impl_to_tris(a);
-    let mut q_tris = soup::impl_to_tris(b);
+    let q_tris = soup::impl_to_tris(b);
     let p_props = soup::impl_to_corner_props(a);
-    let mut q_props = soup::impl_to_corner_props(b);
+    let q_props = soup::impl_to_corner_props(b);
 
     if !a.bbox.does_overlap_box(&b.bbox) {
         match op {
@@ -141,124 +147,60 @@ pub fn boolean(
         }
     }
 
-    let complement = op == OpType::Subtract;
-    if complement {
-        let nq = b.num_prop;
-        for (ti, t) in q_tris.iter_mut().enumerate() {
-            t.swap(1, 2);
-            if nq > 0 {
-                // Keep the corner-property alignment in step with the swap.
-                let base = 3 * ti * nq;
-                for k in 0..nq {
-                    q_props.swap(base + nq + k, base + 2 * nq + k);
-                }
-            }
-        }
-    }
-
+    // Subtraction needs no operand flip: the cell predicate expresses it
+    // directly as "inside P and not inside Q", so both operands keep their
+    // own winding and their corner properties stay in their original order.
     let graph = intersection_graph::build_graph(&p_tris, &q_tris);
     if is_cancelled(token) {
         return cancelled_impl();
     }
-    let t_cls = crate::timing::start();
-    let cls = classify::classify_rings(&graph);
-    crate::timing::print("robust: classify_rings", t_cls);
+    let t_cells = crate::timing::start();
+    let complex = cells::build_cells(&graph);
+    crate::timing::print("robust: cell complex", t_cells);
     if is_cancelled(token) {
         return cancelled_impl();
     }
-    let t_prop = crate::timing::start();
-    let prop = propagate::propagate(&graph, &cls);
-    crate::timing::print("robust: propagate", t_prop);
-    let mut tags = prop.tags;
 
-    // Winding-based classification of every component the coincident-piece
-    // binding did not decide. Both windings are constant per component:
-    // components never cross an intersection cut, and the graph cuts each
-    // mesh along its own self-intersections as well as along the other
-    // operand's surface. So per component, one query against the other
-    // operand decides ∪ vs ∩, and one query against the component's own
-    // operand decides whether it is real boundary or an interior wall.
-    // Whole-soup rational tables only exist when winding queries actually
-    // run — a pass-through boolean (everything decided by rings/binding)
-    // never converts an input triangle to rationals at all.
-    let to_rational = |tris: &[[Vec3; 3]]| -> Vec<[R3; 3]> {
-        tris.iter()
-            .map(|t| [R3::from_vec3(t[0]), R3::from_vec3(t[1]), R3::from_vec3(t[2])])
-            .collect()
-    };
-    let need_windings = !prop.untagged.is_empty();
-    let own_rational: [Vec<[R3; 3]>; 2] = if need_windings {
-        [to_rational(&p_tris), to_rational(&q_tris)]
-    } else {
-        [Vec::new(), Vec::new()]
-    };
-    let tri_boxes = |tris: &[[Vec3; 3]]| -> Vec<crate::types::Box> {
-        tris.iter()
-            .map(|t| {
-                let mut b = crate::types::Box::from_points(t[0], t[1]);
-                b.union_point(t[2]);
-                b
-            })
-            .collect()
-    };
-    let own_boxes: [Vec<crate::types::Box>; 2] = if need_windings {
-        [tri_boxes(&p_tris), tri_boxes(&q_tris)]
-    } else {
-        [Vec::new(), Vec::new()]
-    };
-
+    // Winding numbers propagate cell to cell from the unbounded one. A
+    // single connected arrangement — the common case — resolves entirely
+    // combinatorially, with no point queries and no rational tables built.
     let t_winding = crate::timing::start();
-    // BVH per operand, built once for the whole query batch (components can
-    // number in the thousands on self-intersecting scans).
-    let winding_indexes: Option<[ray_shoot::WindingIndex; 2]> = (!prop.untagged.is_empty())
-        .then(|| [ray_shoot::WindingIndex::new(&p_tris), ray_shoot::WindingIndex::new(&q_tris)]);
-    for &(root, rep) in &prop.untagged {
-        if is_cancelled(token) {
-            return cancelled_impl();
-        }
-        let piece = &graph.pieces[rep];
-        let mesh = piece.mesh as usize;
-        let indexes = winding_indexes.as_ref().expect("built when untagged is non-empty");
-        let (other, other_index, other_is_complement): (&[[Vec3; 3]], _, bool) = if mesh == 0 {
-            (&q_tris, &indexes[1], complement)
-        } else {
-            (&p_tris, &indexes[0], false)
+    let mut wind = cells::propagate_from_outer(&graph, &complex);
+    if !wind.complete() {
+        // Only disjoint or nested components need seeding, and only then is
+        // an input triangle converted to rationals at all.
+        let to_rational = |tris: &[[Vec3; 3]]| -> Vec<[R3; 3]> {
+            tris.iter()
+                .map(|t| [R3::from_vec3(t[0]), R3::from_vec3(t[1]), R3::from_vec3(t[2])])
+                .collect()
         };
-        let pv = graph.piece_verts(rep);
-        let w = ray_shoot::winding_number_indexed(&piece_centroid(pv), other, other_index);
-        // Solid = {winding ≥ 1}. A negative winding is inverted geometry —
-        // a self-intersecting soup whose local orientation is reversed —
-        // and is never material; `w != 0` would wrongly read it as inside.
-        // The subtraction-flipped operand carries a negated winding, so its
-        // complement {w_Q ≤ 0} reads as {w ≥ 0} on the working copy.
-        let inside = if other_is_complement { w >= 0 } else { w >= 1 };
-        let tag = if inside { Tag::Inter } else { Tag::Union };
-        let own_f64: &[[Vec3; 3]] = if mesh == 0 { &p_tris } else { &q_tris };
-        let own_flipped = complement && mesh == 1;
-        let component_tag = on_own_boundary(
-            pv,
-            &own_rational[mesh],
-            own_f64,
-            &own_boxes[mesh],
-            own_flipped,
-        )
-        .then_some(tag);
-        for pi in 0..graph.pieces.len() {
-            if !cls.discarded[pi] && prop.component[pi] == root {
-                tags[pi] = component_tag;
-            }
-        }
+        let tri_boxes = |tris: &[[Vec3; 3]]| -> Vec<crate::types::Box> {
+            tris.iter()
+                .map(|t| {
+                    let mut b = crate::types::Box::from_points(t[0], t[1]);
+                    b.union_point(t[2]);
+                    b
+                })
+                .collect()
+        };
+        let rat = [to_rational(&p_tris), to_rational(&q_tris)];
+        let bx = [tri_boxes(&p_tris), tri_boxes(&q_tris)];
+        cells::seed_unreached(
+            &graph,
+            &complex,
+            &mut wind,
+            [&p_tris, &q_tris],
+            [&rat[0], &rat[1]],
+            [&bx[0], &bx[1]],
+        );
+    }
+    crate::timing::print("robust: winding propagation", t_winding);
+    if is_cancelled(token) {
+        return cancelled_impl();
     }
 
-    crate::timing::print(
-        &format!("robust: winding queries ({} components)", prop.untagged.len()),
-        t_winding,
-    );
-
-    let want = match op {
-        OpType::Add => Tag::Union,
-        OpType::Subtract | OpType::Intersect => Tag::Inter,
-    };
+    // Boundary of the result, wound from the cell labels.
+    let pieces = cells::extract(&graph, &complex, &wind, op);
     let ctx = assemble::PropCtx {
         num_prop: [a.num_prop, b.num_prop],
         tris: [&p_tris, &q_tris],
@@ -266,54 +208,9 @@ pub fn boolean(
     };
     let props = (ctx.out_num_prop() > 0).then_some(&ctx);
     let t_asm = crate::timing::start();
-    let out = assemble::assemble(
-        &graph.pieces,
-        &graph.verts,
-        &graph.verts_f64,
-        |pi| !cls.discarded[pi] && tags[pi] == Some(want),
-        props,
-    );
+    let out = assemble::assemble(&pieces, &graph.verts, &graph.verts_f64, |_| true, props);
     crate::timing::print("robust: assemble+import", t_asm);
     out.into_impl()
-}
-
-/// Is this piece on the boundary of the solid its own operand bounds, or an
-/// interior wall (a sheet with material on both sides)?
-///
-/// With the solid defined as `{winding ≥ 1}`, crossing a piece inward adds 1
-/// to the winding, so the piece bounds material exactly when the winding just
-/// off its outward side is 0 (the 0↔1 step). Anything else — a 1↔2 step
-/// inside a self-overlapping operand, the inner of two nested
-/// same-orientation shells, or a negative winding from a region whose
-/// orientation is inverted — is an interior wall that no regularized boolean
-/// output may contain.
-///
-/// `flipped` marks the subtraction operand, whose winding is negated on the
-/// working copy: its boundary pieces read −1 just off their (now reversed)
-/// outward side. Accepting both 0 and −1 for either operand — as this once
-/// did — lets an inverted-orientation piece pass as boundary and be emitted
-/// with backwards winding, which breaks orientability of the assembled
-/// surface (a non-orientable pair across a shared intersection segment).
-fn on_own_boundary(
-    pv: [&R3; 3],
-    own: &[[R3; 3]],
-    own_f64: &[[Vec3; 3]],
-    own_boxes: &[crate::types::Box],
-    flipped: bool,
-) -> bool {
-    let normal = pv[1].sub(pv[0]).cross(&pv[2].sub(pv[0]));
-    let w = ray_shoot::winding_off_surface(
-        &piece_centroid(pv),
-        &normal,
-        own,
-        own_f64,
-        own_boxes,
-    );
-    if flipped {
-        w == -1
-    } else {
-        w == 0
-    }
 }
 
 /// Import a raw triangle list as a boolean result (used by

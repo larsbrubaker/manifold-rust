@@ -250,6 +250,13 @@ pub struct Windings {
     pub known: Vec<bool>,
 }
 
+impl Windings {
+    /// Every cell resolved — no residual point queries needed.
+    pub fn complete(&self) -> bool {
+        self.known.iter().all(|&k| k)
+    }
+}
+
 /// Propagate winding numbers outward from `seed` (whose winding is
 /// `seed_w`), crossing one piece at a time.
 ///
@@ -288,11 +295,45 @@ pub fn propagate_all(
     tris_r: [&[[R3; 3]]; 2],
     boxes: [&[crate::types::Box]; 2],
 ) -> Windings {
+    let mut out = propagate_from_outer(graph, complex);
+    seed_unreached(graph, complex, &mut out, tris_f64, tris_r, boxes);
+    out
+}
+
+/// Winding numbers for every cell reachable from the unbounded one by
+/// crossing walls. A single connected arrangement — the common case — is
+/// fully resolved here, with no point queries and no rational tables.
+pub fn propagate_from_outer(graph: &IntersectionGraph, complex: &CellComplex) -> Windings {
     let adj = cell_adjacency(graph, complex);
     let mut out = Windings {
         w: vec![[0i32; 2]; complex.num_cells],
         known: vec![false; complex.num_cells],
     };
+    if let Some(outer) = outer_cell(graph, complex) {
+        seed(&mut out, outer, [0, 0]);
+        bfs(&adj, &mut out, outer);
+    }
+    out
+}
+
+/// Resolve whatever the outer traversal could not reach — disjoint or nested
+/// components — with one exact query pair each.
+///
+/// Returns immediately when everything is already known, so callers can hold
+/// off building the rational and bounding-box tables until this says it
+/// needs them.
+pub fn seed_unreached(
+    graph: &IntersectionGraph,
+    complex: &CellComplex,
+    out: &mut Windings,
+    tris_f64: [&[[Vec3; 3]]; 2],
+    tris_r: [&[[R3; 3]]; 2],
+    boxes: [&[crate::types::Box]; 2],
+) {
+    if out.complete() {
+        return;
+    }
+    let adj = cell_adjacency(graph, complex);
 
     // A representative (piece, side) per cell, for seeding by point query.
     let mut rep: Vec<Option<(usize, usize)>> = vec![None; complex.num_cells];
@@ -305,11 +346,6 @@ pub fn propagate_all(
         }
     }
 
-    if let Some(outer) = outer_cell(graph, complex) {
-        seed(&mut out, outer, [0, 0]);
-        bfs(&adj, &mut out, outer);
-    }
-    // Any component the traversal could not reach gets its own exact query.
     for c in 0..complex.num_cells {
         if out.known[c] {
             continue;
@@ -333,10 +369,9 @@ pub fn propagate_all(
                 boxes[m],
             );
         }
-        seed(&mut out, c, w);
-        bfs(&adj, &mut out, c);
+        seed(out, c, w);
+        bfs(&adj, out, c);
     }
-    out
 }
 
 fn seed(out: &mut Windings, cell: usize, w: [i32; 2]) {
@@ -356,22 +391,50 @@ fn cell_adjacency(
     graph: &IntersectionGraph,
     complex: &CellComplex,
 ) -> Vec<Vec<(usize, [i32; 2])>> {
-    let mut agg: HashMap<(usize, usize), [i32; 2]> = HashMap::new();
-    for Wall { rep, delta, .. } in walls(graph) {
+    let mut adj: Vec<Vec<(usize, [i32; 2])>> = vec![Vec::new(); complex.num_cells];
+    for Wall { rep, delta } in walls(graph) {
         let (cn, ca) = (complex.cell(rep, NORMAL), complex.cell(rep, ANTI));
         if cn == ca {
             continue; // both sides in one cell: the sheet bounds nothing
         }
-        let (lo, hi, s) = if cn < ca { (cn, ca, 1) } else { (ca, cn, -1) };
-        agg.insert((lo, hi), [delta[0] * s, delta[1] * s]);
+        adj[cn].push((ca, delta));
+        adj[ca].push((cn, [-delta[0], -delta[1]]));
     }
-
-    let mut adj: Vec<Vec<(usize, [i32; 2])>> = vec![Vec::new(); complex.num_cells];
-    for ((lo, hi), d) in agg {
-        adj[lo].push((hi, d));
-        adj[hi].push((lo, [-d[0], -d[1]]));
+    // Every wall stays its own edge — collapsing them by cell pair would let
+    // an arbitrary one win, which is both order-dependent and lossy. Sorting
+    // makes the traversal deterministic regardless of hash iteration order.
+    for a in adj.iter_mut() {
+        a.sort_unstable();
+        a.dedup();
     }
     adj
+}
+
+/// Walls whose winding step disagrees with the cells' resolved windings.
+///
+/// The difference between two cells is well defined, so a disagreement means
+/// the complex merged cells that the geometry keeps apart. Used by tests and
+/// diagnostics; a clean arrangement returns an empty list.
+pub fn inconsistent_walls(
+    graph: &IntersectionGraph,
+    complex: &CellComplex,
+    wind: &Windings,
+) -> Vec<(usize, [i32; 2], [i32; 2])> {
+    let mut bad = Vec::new();
+    for Wall { rep, delta } in walls(graph) {
+        let (cn, ca) = (complex.cell(rep, NORMAL), complex.cell(rep, ANTI));
+        if cn == ca || !wind.known[cn] || !wind.known[ca] {
+            continue;
+        }
+        let actual = [
+            wind.w[ca][0] - wind.w[cn][0],
+            wind.w[ca][1] - wind.w[cn][1],
+        ];
+        if actual != delta {
+            bad.push((rep, delta, actual));
+        }
+    }
+    bad
 }
 
 /// Does a cell with this winding vector lie inside the operation's result?
@@ -459,10 +522,14 @@ fn walls(graph: &IntersectionGraph) -> Vec<Wall> {
         // representative's anti side, so it steps the other way.
         entry.2[m] += if parity == entry.1 { 1 } else { -1 };
     }
-    by_tri
+    let mut out: Vec<Wall> = by_tri
         .into_values()
         .map(|(rep, _, delta)| Wall { rep, delta })
-        .collect()
+        .collect();
+    // Hash iteration order must not reach the output: sort so extraction
+    // emits triangles in a stable order across runs.
+    out.sort_unstable_by_key(|w| w.rep);
+    out
 }
 
 /// Canonical key for a triangle (sorted vertex ids) plus the parity of the
