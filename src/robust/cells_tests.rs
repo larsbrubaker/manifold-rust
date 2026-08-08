@@ -39,32 +39,15 @@ fn cube(lo: Vec3, hi: Vec3) -> Vec<[Vec3; 3]> {
     idx.iter().map(|t| [v[t[0]], v[t[1]], v[t[2]]]).collect()
 }
 
-fn to_rational(tris: &[[Vec3; 3]]) -> Vec<[R3; 3]> {
-    tris.iter()
-        .map(|t| [R3::from_vec3(t[0]), R3::from_vec3(t[1]), R3::from_vec3(t[2])])
-        .collect()
-}
-
-fn to_boxes(tris: &[[Vec3; 3]]) -> Vec<crate::types::Box> {
-    tris.iter()
-        .map(|t| {
-            let mut b = crate::types::Box::from_points(t[0], t[1]);
-            b.union_point(t[2]);
-            b
-        })
-        .collect()
-}
-
-/// Winding numbers for every cell, seeding disconnected components by query.
+/// Winding numbers for every cell, each component anchored by an exact
+/// query.
 fn all_windings(
     graph: &IntersectionGraph,
     complex: &CellComplex,
     p: &[[Vec3; 3]],
     q: &[[Vec3; 3]],
 ) -> Windings {
-    let (pr, qr) = (to_rational(p), to_rational(q));
-    let (pb, qb) = (to_boxes(p), to_boxes(q));
-    propagate_all(graph, complex, [p, q], [&pr, &qr], [&pb, &qb])
+    windings(graph, complex, [p, q])
 }
 
 /// Winding of the region just inside `mesh`'s surface, by looking at the
@@ -100,10 +83,12 @@ fn disjoint_cubes_have_three_cells() {
     // is exactly what the per-component seeding resolves.
     assert_eq!(complex.num_cells, 4, "two disjoint shells, two cells each");
 
-    let outer = outer_cell(&graph, &complex).expect("outer cell");
     let wind = all_windings(&graph, &complex, &p, &q);
     assert!(wind.known.iter().all(|&k| k), "seeding reaches every cell");
-    assert_eq!(wind.w[outer], [0, 0], "outside is outside both");
+    assert!(
+        wind.w.iter().any(|&w| w == [0, 0]),
+        "the region outside both must be present"
+    );
     assert_eq!(inside_winding(&graph, &complex, &wind, 0), vec![[1, 0]]);
     assert_eq!(inside_winding(&graph, &complex, &wind, 1), vec![[0, 1]]);
 }
@@ -115,9 +100,7 @@ fn overlapping_cubes_wind_to_two_in_the_lens() {
     let graph = build_graph(&p, &q);
     let complex = build_cells(&graph);
 
-    let outer = outer_cell(&graph, &complex).expect("outer cell");
-    let wind = propagate_windings(&graph, &complex, outer, [0, 0]);
-    assert_eq!(wind.w[outer], [0, 0]);
+    let wind = all_windings(&graph, &complex, &p, &q);
 
     // The three material regions: P only, Q only, and the shared lens.
     let mut regions: Vec<[i32; 2]> = Vec::new();

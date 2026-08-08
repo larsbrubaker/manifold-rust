@@ -307,63 +307,63 @@ impl Windings {
     }
 }
 
-/// Propagate winding numbers outward from `seed` (whose winding is
-/// `seed_w`), crossing one piece at a time.
-///
-/// Crossing a piece from its normal side to its anti side enters the solid
-/// its operand bounds, so that operand's winding gains one. Cells in other
-/// connected components of the arrangement stay `known == false`; the caller
-/// resolves those with one point query each.
-pub fn propagate_windings(
-    graph: &IntersectionGraph,
-    complex: &CellComplex,
-    seed: usize,
-    seed_w: [i32; 2],
-) -> Windings {
-    let adj = cell_adjacency(graph, complex);
-    let mut out = Windings {
-        w: vec![[0i32; 2]; complex.num_cells],
-        known: vec![false; complex.num_cells],
-    };
-    if seed < complex.num_cells {
-        self::seed(&mut out, seed, seed_w);
-        bfs(&adj, &mut out, seed);
-    }
-    out
-}
-
 /// Winding numbers for *every* cell.
 ///
 /// The combinatorial BFS only reaches cells connected through shared
 /// arrangement edges, so disjoint or nested components need a seed each:
 /// exactly the residual ray-shooting libigl's `propagate_winding_numbers`
 /// performs. One exact query pair per component, not per surface region.
-pub fn propagate_all(
+/// Winding numbers for every cell of the arrangement.
+///
+/// Each connected component is anchored by one exact point query and the
+/// rest of its cells follow combinatorially, so the expensive part scales
+/// with the number of components rather than the number of regions.
+///
+/// The anchor is deliberately measured rather than deduced. Identifying the
+/// unbounded cell combinatorially — take the lexicographically extreme
+/// vertex, pick the incident face most nearly perpendicular to x, call its
+/// outward side unbounded — is wrong whenever that face's outward side holds
+/// material, which happens on real scans (a thin shell whose rim reaches the
+/// extreme vertex). The failure is silent and total: anchoring an interior
+/// cell at zero shifts every winding by a constant, and `w ≥ 1` then
+/// excludes almost the whole model. Two Thingi10K unions collapsed from
+/// 51372 and 5856 triangles to 4 and 40 that way.
+pub fn windings(
     graph: &IntersectionGraph,
     complex: &CellComplex,
-    tris_f64: [&[[Vec3; 3]]; 2],
-    tris_r: [&[[R3; 3]]; 2],
-    boxes: [&[crate::types::Box]; 2],
+    tris: [&[[Vec3; 3]]; 2],
 ) -> Windings {
-    let mut out = propagate_from_outer(graph, complex);
-    seed_unreached(graph, complex, &mut out, tris_f64, tris_r, boxes);
-    out
-}
-
-/// Winding numbers for every cell reachable from the unbounded one by
-/// crossing walls. A single connected arrangement — the common case — is
-/// fully resolved here, with no point queries and no rational tables.
-pub fn propagate_from_outer(graph: &IntersectionGraph, complex: &CellComplex) -> Windings {
-    let adj = cell_adjacency(graph, complex);
+    let rat = [to_rational(tris[0]), to_rational(tris[1])];
+    let bx = [tri_boxes(tris[0]), tri_boxes(tris[1])];
     let mut out = Windings {
         w: vec![[0i32; 2]; complex.num_cells],
         known: vec![false; complex.num_cells],
     };
-    if let Some(outer) = outer_cell(graph, complex) {
-        seed(&mut out, outer, [0, 0]);
-        bfs(&adj, &mut out, outer);
-    }
+    seed_unreached(
+        graph,
+        complex,
+        &mut out,
+        tris,
+        [&rat[0], &rat[1]],
+        [&bx[0], &bx[1]],
+    );
     out
+}
+
+fn to_rational(tris: &[[Vec3; 3]]) -> Vec<[R3; 3]> {
+    tris.iter()
+        .map(|t| [R3::from_vec3(t[0]), R3::from_vec3(t[1]), R3::from_vec3(t[2])])
+        .collect()
+}
+
+fn tri_boxes(tris: &[[Vec3; 3]]) -> Vec<crate::types::Box> {
+    tris.iter()
+        .map(|t| {
+            let mut b = crate::types::Box::from_points(t[0], t[1]);
+            b.union_point(t[2]);
+            b
+        })
+        .collect()
 }
 
 /// Resolve whatever the outer traversal could not reach — disjoint or nested
@@ -383,7 +383,7 @@ pub fn seed_unreached(
     if out.complete() {
         return;
     }
-    let adj = cell_adjacency(graph, complex);
+    let adj = cell_adjacency(complex);
 
     // A representative (piece, side) per cell, for seeding by point query.
     let mut rep: Vec<Option<(usize, usize)>> = vec![None; complex.num_cells];
@@ -437,10 +437,7 @@ fn seed(out: &mut Windings, cell: usize, w: [i32; 2]) {
 /// classifies correctly with no separate regularization pass. Treating the
 /// coincident pieces as independent adjacencies would apply only the first
 /// and silently lose the rest.
-fn cell_adjacency(
-    graph: &IntersectionGraph,
-    complex: &CellComplex,
-) -> Vec<Vec<(usize, [i32; 2])>> {
+fn cell_adjacency(complex: &CellComplex) -> Vec<Vec<(usize, [i32; 2])>> {
     let mut adj: Vec<Vec<(usize, [i32; 2])>> = vec![Vec::new(); complex.num_cells];
     for &Wall { rep, delta } in &complex.walls {
         let (cn, ca) = (complex.cell(rep, NORMAL), complex.cell(rep, ANTI));
@@ -466,7 +463,6 @@ fn cell_adjacency(
 /// the complex merged cells that the geometry keeps apart. Used by tests and
 /// diagnostics; a clean arrangement returns an empty list.
 pub fn inconsistent_walls(
-    graph: &IntersectionGraph,
     complex: &CellComplex,
     wind: &Windings,
 ) -> Vec<(usize, [i32; 2], [i32; 2])> {
@@ -608,77 +604,6 @@ fn bfs(adj: &[Vec<(usize, [i32; 2])>], out: &mut Windings, start: usize) {
     }
 }
 
-/// The unbounded cell, found via an outer facet: at the lexicographically
-/// largest vertex of the arrangement, the incident face whose normal is most
-/// nearly parallel to +x has unbounded space on its +x side.
-///
-/// Returns `None` when every incident face is parallel to x (a knife edge at
-/// the extreme vertex), leaving the caller to seed by point query instead.
-pub fn outer_cell(graph: &IntersectionGraph, complex: &CellComplex) -> Option<usize> {
-    let n = graph.pieces.len();
-    if n == 0 {
-        return None;
-    }
-    // Lexicographically largest vertex actually used by a piece.
-    let mut best_v: Option<u32> = None;
-    for piece in &graph.pieces {
-        for &v in &piece.vi {
-            let better = match best_v {
-                None => true,
-                Some(b) => lex_gt(&graph.verts[v as usize], &graph.verts[b as usize]),
-            };
-            if better {
-                best_v = Some(v);
-            }
-        }
-    }
-    let vmax = best_v?;
-
-    // Among faces at that vertex, maximize nx² / (n·n) — compared by
-    // cross-multiplication so no roots or divisions are needed.
-    let mut best: Option<(usize, BigRational, BigRational, BigRational)> = None;
-    for (pi, piece) in graph.pieces.iter().enumerate() {
-        if !piece.vi.contains(&vmax) {
-            continue;
-        }
-        let pv = graph.piece_verts(pi);
-        let nrm = pv[1].sub(pv[0]).cross(&pv[2].sub(pv[0]));
-        let nx2 = &nrm.x * &nrm.x;
-        let nn = &nrm.x * &nrm.x + &nrm.y * &nrm.y + &nrm.z * &nrm.z;
-        if nn.is_zero() {
-            continue;
-        }
-        let better = match &best {
-            None => true,
-            // nx2/nn > bx2/bn  ⇔  nx2·bn > bx2·nn   (nn, bn > 0)
-            Some((_, bx2, bn, _)) => &nx2 * bn > bx2 * &nn,
-        };
-        if better {
-            best = Some((pi, nx2, nn, nrm.x.clone()));
-        }
-    }
-    let (pi, nx2, _, nx) = best?;
-    if nx2.is_zero() {
-        return None;
-    }
-    // Unbounded space lies on whichever side the +x-facing normal points to.
-    let side = if nx.is_positive() { NORMAL } else { ANTI };
-    Some(complex.cell(pi, side))
-}
-
-fn lex_gt(a: &R3, b: &R3) -> bool {
-    match a.x.cmp(&b.x) {
-        Ordering::Greater => return true,
-        Ordering::Less => return false,
-        Ordering::Equal => {}
-    }
-    match a.y.cmp(&b.y) {
-        Ordering::Greater => return true,
-        Ordering::Less => return false,
-        Ordering::Equal => {}
-    }
-    a.z > b.z
-}
 
 #[cfg(test)]
 #[path = "cells_tests.rs"]

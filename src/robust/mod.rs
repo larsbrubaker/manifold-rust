@@ -58,7 +58,7 @@ use crate::linalg::Vec3;
 use crate::types::{Error, OpType};
 
 
-use exact::rational::R3;
+
 
 
 fn is_cancelled(token: Option<&CancelToken>) -> bool {
@@ -161,39 +161,10 @@ pub fn boolean(
         return cancelled_impl();
     }
 
-    // Winding numbers propagate cell to cell from the unbounded one. A
-    // single connected arrangement — the common case — resolves entirely
-    // combinatorially, with no point queries and no rational tables built.
+    // One exact query anchors each connected component; the rest of its
+    // cells follow combinatorially.
     let t_winding = crate::timing::start();
-    let mut wind = cells::propagate_from_outer(&graph, &complex);
-    if !wind.complete() {
-        // Only disjoint or nested components need seeding, and only then is
-        // an input triangle converted to rationals at all.
-        let to_rational = |tris: &[[Vec3; 3]]| -> Vec<[R3; 3]> {
-            tris.iter()
-                .map(|t| [R3::from_vec3(t[0]), R3::from_vec3(t[1]), R3::from_vec3(t[2])])
-                .collect()
-        };
-        let tri_boxes = |tris: &[[Vec3; 3]]| -> Vec<crate::types::Box> {
-            tris.iter()
-                .map(|t| {
-                    let mut b = crate::types::Box::from_points(t[0], t[1]);
-                    b.union_point(t[2]);
-                    b
-                })
-                .collect()
-        };
-        let rat = [to_rational(&p_tris), to_rational(&q_tris)];
-        let bx = [tri_boxes(&p_tris), tri_boxes(&q_tris)];
-        cells::seed_unreached(
-            &graph,
-            &complex,
-            &mut wind,
-            [&p_tris, &q_tris],
-            [&rat[0], &rat[1]],
-            [&bx[0], &bx[1]],
-        );
-    }
+    let wind = cells::windings(&graph, &complex, [&p_tris, &q_tris]);
     crate::timing::print("robust: winding propagation", t_winding);
     if is_cancelled(token) {
         return cancelled_impl();
