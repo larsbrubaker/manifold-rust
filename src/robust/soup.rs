@@ -155,6 +155,189 @@ pub fn soupify(
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Geometric self-intersection detection
+// ---------------------------------------------------------------------------
+
+/// Lazily-resolved "does this impl self-intersect" verdict, stored on
+/// [`ManifoldImpl`]. `OnceLock` because the robust engine queries impls from
+/// rayon workers under the `parallel` feature, so the cell must be
+/// thread-safe. `Clone` carries the settled value across, which is why every
+/// operation that clones an impl and then edits its geometry must call
+/// `ManifoldImpl::invalidate_self_intersects`.
+#[derive(Debug, Default)]
+pub struct SelfIntersectCache(std::sync::OnceLock<bool>);
+
+impl Clone for SelfIntersectCache {
+    fn clone(&self) -> Self {
+        let out = std::sync::OnceLock::new();
+        if let Some(&v) = self.0.get() {
+            let _ = out.set(v);
+        }
+        SelfIntersectCache(out)
+    }
+}
+
+impl SelfIntersectCache {
+    /// The settled verdict, if the detector has already run.
+    pub fn get(&self) -> Option<bool> {
+        self.0.get().copied()
+    }
+
+    /// Seed an already-known verdict (used when a transform carries the
+    /// answer forward). No-op once the cell is settled.
+    pub fn set(&self, value: bool) {
+        let _ = self.0.set(value);
+    }
+}
+
+/// True when two of `imp`'s own triangles genuinely intersect — they cross,
+/// they overlap, or they are coincident surface — as opposed to merely
+/// sharing an edge or a vertex as every closed mesh does.
+///
+/// Answers from the cache after the first call. The narrow phase is
+/// `intersection_graph::real_self_contact`, the same predicate the robust
+/// engine uses to decide which self-cuts it must make, plus the exact
+/// duplicate-triangle case that predicate deliberately passes over (see
+/// [`genuine_contact`]). Unlike the engine's phase 2b this stops at the
+/// first genuine contact and builds no graph.
+pub fn has_self_intersections(imp: &ManifoldImpl) -> bool {
+    has_self_intersections_with_token(imp, None)
+}
+
+/// [`has_self_intersections`] with cancellation, for the boolean dispatcher.
+///
+/// A cancelled scan answers `true` (route to the robust engine, which then
+/// reports `Error::Cancelled` itself) and caches nothing, so the verdict is
+/// recomputed properly if the impl is used again.
+pub fn has_self_intersections_with_token(
+    imp: &ManifoldImpl,
+    token: Option<&crate::cancel::CancelToken>,
+) -> bool {
+    if let Some(v) = imp.self_intersects.get() {
+        return v;
+    }
+    match compute_self_intersections(imp, token) {
+        Some(verdict) => {
+            imp.self_intersects.set(verdict);
+            verdict
+        }
+        None => true,
+    }
+}
+
+/// Do these two triangles of one mesh meet in anything beyond ordinary
+/// adjacency?
+///
+/// `real_self_contact` answers that for every case but one: it reports
+/// exactly duplicated triangles (all three vertices coincide, either
+/// winding) as benign, because the robust arrangement needs no cut there —
+/// both copies emit identical pieces and the winding arithmetic resolves
+/// them. They are still coincident surface, which is precisely what the
+/// exact engine cannot integrate (Thingi10K #92068's shells are triple-wound
+/// duplicates and nothing else), so the dispatch detector counts them.
+fn genuine_contact(
+    t1: [Vec3; 3],
+    t2: [Vec3; 3],
+    stats: &mut super::intersection_graph::SelfCutStats,
+) -> bool {
+    if t1.iter().all(|v| t2.contains(v)) {
+        return true;
+    }
+    super::intersection_graph::real_self_contact(t1, t2, stats).is_some()
+}
+
+/// Uncached detector: BVH broad phase over the impl's own triangles, exact
+/// narrow phase, early exit on the first genuine contact. `None` means the
+/// scan was cancelled before it could reach a verdict.
+///
+/// The broad phase reuses `imp.collider` — the face BVH `sort_geometry`
+/// already built, whose leaves are in face order — and only builds a private
+/// morton-ordered tree (as `intersection_graph::build_graph`'s self-cut
+/// phase does) when the impl carries no matching collider, which is the case
+/// for soup impls.
+fn compute_self_intersections(
+    imp: &ManifoldImpl,
+    token: Option<&crate::cancel::CancelToken>,
+) -> Option<bool> {
+    use super::intersection_graph::{is_degenerate as is_degenerate_tri, tri_box, SelfCutStats};
+    use crate::types::Box;
+
+    let tris = impl_to_tris(imp);
+    if tris.len() < 2 {
+        return Some(false);
+    }
+    // Non-finite positions (a warp to NaN/inf, which no import check
+    // rejects) have no exact rational form, so the narrow phase cannot run
+    // on them. "Self-intersecting" is the safe verdict: it routes the
+    // operand to the robust engine rather than letting the exact kernels
+    // integrate garbage.
+    if tris
+        .iter()
+        .flatten()
+        .any(|v| !v.x.is_finite() || !v.y.is_finite() || !v.z.is_finite())
+    {
+        return Some(true);
+    }
+
+    let boxes: Vec<Box> = tris.iter().map(tri_box).collect();
+    let live: Vec<bool> = tris.iter().map(|t| !is_degenerate_tri(t)).collect();
+
+    // Leaf index -> triangle index; empty when the cached face collider is
+    // used, whose leaves already are triangle indices.
+    let mut leaf_tri: Vec<usize> = Vec::new();
+    let owned;
+    let collider = if imp.collider.num_leaves() == tris.len() {
+        &imp.collider
+    } else {
+        let mut order: Vec<usize> = (0..tris.len()).filter(|&i| live[i]).collect();
+        if order.len() < 2 {
+            return Some(false);
+        }
+        let scene = boxes
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| live[*i])
+            .fold(Box::new(), |acc, (_, b)| acc.union_box(b));
+        order.sort_by_key(|&i| crate::sort::morton_code(boxes[i].center(), &scene));
+        owned = crate::collider::Collider::new(
+            order.iter().map(|&i| boxes[i]).collect(),
+            order
+                .iter()
+                .map(|&i| crate::sort::morton_code(boxes[i].center(), &scene))
+                .collect(),
+        );
+        leaf_tri = order;
+        &owned
+    };
+    let mapped = !leaf_tri.is_empty();
+
+    let mut stats = SelfCutStats::default();
+    let mut cands: Vec<usize> = Vec::new();
+    for i in 0..tris.len() {
+        if !live[i] {
+            continue;
+        }
+        if crate::cancel::is_cancelled(token) {
+            return None;
+        }
+        cands.clear();
+        collider.collisions_one(&boxes[i], i, |_, leaf| {
+            cands.push(if mapped { leaf_tri[leaf] } else { leaf });
+        });
+        cands.sort_unstable();
+        for &j in &cands {
+            if j <= i || !live[j] || !boxes[i].does_overlap_box(&boxes[j]) {
+                continue;
+            }
+            if genuine_contact(tris[i], tris[j], &mut stats) {
+                return Some(true);
+            }
+        }
+    }
+    Some(false)
+}
+
 #[cfg(test)]
 #[path = "soup_tests.rs"]
 mod tests;

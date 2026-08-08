@@ -127,6 +127,8 @@ impl Manifold {
             out.set_normals_and_coplanar();
             crate::edge_op::simplify_topology(&mut out, 0);
             out.sort_geometry();
+            // Collapsed edges move geometry; the cloned verdict is stale.
+            out.invalidate_self_intersects();
         } else {
             // Reducing tolerance: keep it at least epsilon.
             out.tolerance = out.epsilon.max(tolerance);
@@ -151,6 +153,8 @@ impl Manifold {
         }
         crate::edge_op::simplify_topology(&mut out, 0);
         out.sort_geometry();
+        // Collapsed edges move geometry; the cloned verdict is stale.
+        out.invalidate_self_intersects();
         out.tolerance = old_tolerance;
         Self::from_impl(out)
     }
@@ -163,6 +167,8 @@ impl Manifold {
         }
         let mut out = self.imp.clone();
         warp_fn(&mut out.vert_pos);
+        // Arbitrary deformation: nothing about the old verdict survives.
+        out.invalidate_self_intersects();
         out.calculate_bbox();
         out.sort_geometry();
         out.set_normals_and_coplanar();
@@ -250,6 +256,8 @@ impl Manifold {
         for v in out.vert_pos.iter_mut() {
             warp_fn(v);
         }
+        // Arbitrary deformation: nothing about the old verdict survives.
+        out.invalidate_self_intersects();
         out.calculate_bbox();
         out.sort_geometry();
         out.set_normals_and_coplanar();
@@ -350,6 +358,24 @@ impl Manifold {
         self.boolean_with_engine(other, op, crate::types::BooleanConfig::default_engine())
     }
 
+    /// True when two of this mesh's own triangles genuinely intersect —
+    /// they cross, they overlap, or they are coincident surface — rather
+    /// than merely sharing edges and vertices as every closed mesh does.
+    ///
+    /// Topologically manifold meshes can still be self-intersecting; those
+    /// inputs break the exact boolean engine's assumptions, so
+    /// [`crate::types::BooleanEngine::Auto`] routes them to the robust
+    /// engine. A mesh carrying non-finite positions (e.g. after a warp to
+    /// NaN) answers `true`, that being the safe verdict for geometry no
+    /// exact predicate can evaluate.
+    ///
+    /// The scan is a BVH self-query with an exact narrow phase; the verdict
+    /// is cached on the impl, so repeat queries (and the booleans that
+    /// consult it) are free until the geometry changes.
+    pub fn has_self_intersections(&self) -> bool {
+        crate::robust::soup::has_self_intersections(&self.imp)
+    }
+
     /// Repair the winding of inside-out shells so every body reads as solid
     /// material under the robust engine's {winding >= 1} semantics.
     ///
@@ -375,6 +401,9 @@ impl Manifold {
         }
         let mut out = self.imp.clone();
         crate::robust::repair::apply_flips(&mut out, &plan.flip);
+        // Winding-only edit, but it rewrites halfedges in place; re-deriving
+        // the verdict keeps the invalidate-on-in-place-edit rule absolute.
+        out.invalidate_self_intersects();
         Self::from_impl(out)
     }
 

@@ -6,11 +6,12 @@
 //   { type: 'init', pkgUrl }   — must be first; the page-relative wasm pkg
 //     URL is computed on the main thread (the worker's own location differs
 //     between the dev server and the GitHub Pages subpath).
-//   { type: 'import', slot: 'a'|'b', positions, indices }
+//   { type: 'import', slot: 'a'|'b', positions, indices, want_self_intersecting }
 //   { type: 'run', seq, source: 'thingi'|'builtin', shapeA?, shapeB?,
 //     op, engine, repair, ox, oy, oz, rx, ry, rz }
 // Replies (exactly one per import/run message, in order):
-//   { type: 'imported', slot, ok, status, is_soup, num_vert, num_tri }
+//   { type: 'imported', slot, ok, status, is_soup, self_intersecting,
+//     num_vert, num_tri }
 //   { type: 'result', seq, ok, data?, error?, elapsedMs }
 //
 // There is no cancel message: wasm computations cannot be preempted, so the
@@ -63,6 +64,9 @@ async function handleMessage(msg: any) {
       const reply = {
         type: 'imported', slot,
         ok: h.ok, status: h.status, is_soup: h.is_soup,
+        // The scan costs ~1us per triangle, so only run it when the caller
+        // asked (the Auto engine's dispatch, or the badge). null = unknown.
+        self_intersecting: msg.want_self_intersecting && h.ok ? h.self_intersecting : null,
         num_vert: h.num_vert, num_tri: h.num_tri,
       };
       if (h.ok) {
@@ -118,7 +122,8 @@ async function handleMessage(msg: any) {
     } else if (msg.type === 'import') {
       (self as any).postMessage({
         type: 'imported', slot: msg.slot,
-        ok: false, status: String(e), is_soup: false, num_vert: 0, num_tri: 0,
+        ok: false, status: String(e), is_soup: false, self_intersecting: null,
+        num_vert: 0, num_tri: 0,
       });
     }
   }

@@ -298,6 +298,35 @@ pub unsafe extern "C" fn manifold_rs_repair_orientation(m: *const ManifoldRs) ->
     })
 }
 
+/// 1 when two of `m`'s own triangles genuinely intersect — they cross, they
+/// overlap, or they are coincident surface (a doubled or multiply-wound
+/// sheet) — 0 when they merely share edges and vertices as every closed mesh
+/// does, -1 for a NULL handle or a panic. A mesh with non-finite positions
+/// answers 1, that being the safe verdict for geometry no exact predicate
+/// can evaluate.
+///
+/// A mesh can be topologically manifold and still answer 1; those inputs
+/// break the exact boolean engine's assumptions, which is why the `Auto`
+/// engine routes them to the robust engine. The verdict is cached on the
+/// mesh, so repeated calls (and the booleans that consult it) are free after
+/// the first.
+///
+/// # Safety
+/// `m` must be NULL or a live handle from this library.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_has_self_intersections(m: *const ManifoldRs) -> i32 {
+    guard(-1, || {
+        // SAFETY: caller contract; as_ref() handles the NULL case.
+        match unsafe { m.as_ref() } {
+            Some(handle) => i32::from(handle.inner.has_self_intersections()),
+            None => {
+                set_last_error("manifold_rs_has_self_intersections: null manifold");
+                -1
+            }
+        }
+    })
+}
+
 /// Copy of `m` re-tagged as an original mesh (a fresh mesh ID, no boolean
 /// history). NULL if `m` is NULL or the copy panics.
 ///

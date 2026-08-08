@@ -216,7 +216,12 @@ export function init(container: HTMLElement): () => void {
       faces: o.model.faces,
       edge_manifold: o.model.edge_manifold,
       vertex_manifold: o.model.vertex_manifold,
-      imported: { num_tri: o.info.num_tri, is_soup: o.info.is_soup, status: o.info.status },
+      imported: {
+        num_tri: o.info.num_tri,
+        is_soup: o.info.is_soup,
+        self_intersecting: o.info.self_intersecting,
+        status: o.info.status,
+      },
       normalization: o.normalization,
     };
   }
@@ -366,12 +371,35 @@ export function init(container: HTMLElement): () => void {
     thingiA = thingiB = null;
   }
 
+  /// The self-intersection scan is only worth its (~1us per triangle) cost
+  /// when the Auto engine will consult it — that is also when the operand
+  /// badge needs it to explain why Auto picked the robust engine.
+  function wantSelfIntersecting(): boolean {
+    return ENGINE_NAMES[engine] === 'auto';
+  }
+
   /// Re-feed the committed pair to the worker — after a failed load attempt
   /// or a cancel replaced worker slots with candidate meshes, this restores
   /// the state the on-screen labels describe.
   function restoreWorkerOperands() {
-    if (thingiA) runner.importOperand('a', thingiA.arrays);
-    if (thingiB) runner.importOperand('b', thingiB.arrays);
+    if (thingiA) runner.importOperand('a', thingiA.arrays, wantSelfIntersecting());
+    if (thingiB) runner.importOperand('b', thingiB.arrays, wantSelfIntersecting());
+  }
+
+  /// Switching to Auto is the moment the self-intersection verdict starts
+  /// mattering (it decides which engine runs), so re-feed the committed pair
+  /// with the scan requested and adopt the fresh ImportInfo, which is what
+  /// the operand labels read.
+  async function measureSelfIntersection() {
+    const pair: [ThingiOperand | null, 'a' | 'b'][] = [[thingiA, 'a'], [thingiB, 'b']];
+    for (const [o, slot] of pair) {
+      if (!o || o.info.self_intersecting !== null) continue;
+      const info = await runner.importOperand(slot, o.arrays, true);
+      if (info.ok && (slot === 'a' ? thingiA : thingiB) === o) o.info = info;
+    }
+    if (inThingi()) {
+      setThingiInfo(`A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}`);
+    }
   }
 
   function setThingiInfo(html: string | null) {
@@ -388,6 +416,9 @@ export function init(container: HTMLElement): () => void {
     // "soup" marks the rare case where even welding could not pair it.
     let kind = o.model.edge_manifold && o.model.vertex_manifold ? 'manifold' : 'non-manifold';
     if (o.info.is_soup) kind += ', soup';
+    // Self-intersecting operands force Auto onto the robust engine. Only
+    // known when the scan was requested (Auto); null means "not measured".
+    if (o.info.self_intersecting) kind += ', self-intersecting';
     return `#${o.model.id} &ldquo;${o.model.name}&rdquo; (${o.model.faces} tris, ${kind})`;
   }
 
@@ -402,7 +433,7 @@ export function init(container: HTMLElement): () => void {
       const parsed = await fetchMesh(model);
       if (disposed) throw new Error('demo closed');
       const arrays: OperandArrays = { positions: parsed.positions, indices: parsed.indices };
-      const info = await runner.importOperand(slot, arrays);
+      const info = await runner.importOperand(slot, arrays, wantSelfIntersecting());
       if (info.ok) {
         return { model, arrays, info, normalization: { center: parsed.center, scale: parsed.scale } };
       }
@@ -588,7 +619,14 @@ export function init(container: HTMLElement): () => void {
 
   // Engine first: it is the major choice (which pipeline runs at all), and
   // the operation is a detail within it.
-  const engineCtl = createDropdown('Engine', ENGINES, String(engine), v => { engine = parseInt(v) as BooleanEngine; saveSetting(DEMO, 'engine', engine); update(); });
+  const engineCtl = createDropdown('Engine', ENGINES, String(engine), v => {
+    engine = parseInt(v) as BooleanEngine;
+    saveSetting(DEMO, 'engine', engine);
+    // Switching to Auto is the moment the self-intersection verdict becomes
+    // meaningful, so re-feed the operands to have the worker measure it.
+    if (wantSelfIntersecting() && inThingi()) void measureSelfIntersection();
+    update();
+  });
   // Repair sits with the engine choice: it changes what the operands *mean*
   // (inside-out bodies become solid material) before any boolean runs.
   const repairBox = createCheckbox('Repair orientation', repairOrientation, v => {
@@ -682,7 +720,7 @@ export function init(container: HTMLElement): () => void {
     const parsed = await fetchMesh(model);
     if (disposed) throw new Error('demo closed');
     const arrays: OperandArrays = { positions: parsed.positions, indices: parsed.indices };
-    const info = await runner.importOperand(slot, arrays);
+    const info = await runner.importOperand(slot, arrays, wantSelfIntersecting());
     if (!info.ok) {
       throw new Error(`#${model.id} failed to import: ${info.status}`);
     }

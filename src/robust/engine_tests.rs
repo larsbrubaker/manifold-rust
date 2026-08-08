@@ -9,6 +9,12 @@ use crate::linalg::Vec3;
 use crate::manifold::Manifold;
 use crate::types::{BooleanConfig, BooleanEngine, Error, OpType};
 
+// STL fixture loading, shared with any other robust test module that wants
+// it; declared here so it needs no entry in `robust/mod.rs`.
+#[path = "stl_fixtures.rs"]
+mod stl_fixtures;
+use stl_fixtures::import_stl_like_demo;
+
 fn v(x: f64, y: f64, z: f64) -> Vec3 {
     Vec3::new(x, y, z)
 }
@@ -172,6 +178,36 @@ fn auto_dispatches_soup_operands_to_robust() {
     let diff2 = diff.boolean_with_engine(&cutter2, OpType::Subtract, BooleanEngine::Auto);
     assert_eq!(diff2.status(), Error::NoError);
     assert_close(diff2.volume(), 14.0, 1e-9, "chained difference volume");
+}
+
+/// Thingi10K #92068 welds into a topologically manifold mesh, but its shells
+/// are triple-wound duplicates of one another, so the exact engine
+/// mis-integrates the union: it reports 1.7699 where the Monte-Carlo ground
+/// truth is 1.5333 +/- 0.0111 and the robust engine gives 1.5259. `Auto`
+/// must therefore pick Robust on the strength of the self-intersection test
+/// alone — neither operand is a soup.
+#[test]
+fn auto_dispatches_self_intersecting_operands_to_robust() {
+    let a = import_stl_like_demo(include_bytes!("testdata/92068.stl"));
+    let b = import_stl_like_demo(include_bytes!("testdata/39926.stl"))
+        .translate(v(0.3, 0.0, 0.0));
+    assert_eq!(a.status(), Error::NoError, "operand A import");
+    assert_eq!(b.status(), Error::NoError, "operand B import");
+    assert!(!a.as_impl().is_soup, "operand A welds to a manifold");
+    assert!(!b.as_impl().is_soup, "operand B welds to a manifold");
+    assert!(
+        a.has_self_intersections(),
+        "92068's shells are coincident duplicates"
+    );
+
+    let auto = a.union_with_engine(&b, BooleanEngine::Auto);
+    let robust = a.union_with_engine(&b, BooleanEngine::Robust);
+    assert_eq!(auto.status(), Error::NoError, "auto union status");
+    assert_eq!(
+        auto.volume(),
+        robust.volume(),
+        "Auto must resolve to the robust engine"
+    );
 }
 
 #[test]

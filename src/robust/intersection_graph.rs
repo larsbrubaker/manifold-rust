@@ -184,13 +184,13 @@ struct TriPrims {
     segments: Vec<(R3, R3, usize)>,
 }
 
-fn tri_box(t: &[Vec3; 3]) -> Box {
+pub(super) fn tri_box(t: &[Vec3; 3]) -> Box {
     let mut b = Box::from_points(t[0], t[1]);
     b.union_point(t[2]);
     b
 }
 
-fn is_degenerate(t: &[Vec3; 3]) -> bool {
+pub(super) fn is_degenerate(t: &[Vec3; 3]) -> bool {
     // Certified-nonzero f64 cross first (magnitude-permanent bound, matching
     // exact/approx.rs conventions); only near-degenerate triangles pay for
     // the rational cross.
@@ -849,8 +849,8 @@ fn project_f64(v: Vec3, axis: usize) -> crate::linalg::Vec2 {
 /// Per-path counters for the self-cut narrow phase, printed under
 /// MANIFOLD_TIMING to show where box-pair time goes (shortcut hits vs full
 /// tri_tri calls and their outcomes).
-#[derive(Default)]
-struct SelfCutStats {
+#[derive(Default, Debug)]
+pub(super) struct SelfCutStats {
     identical: usize,
     edge_benign: usize,
     vert_benign: usize,
@@ -876,7 +876,12 @@ impl SelfCutStats {
     }
 }
 
-fn real_self_contact(
+/// The self-cut narrow phase: `Some(segments)` when `t1` and `t2` genuinely
+/// intersect (a crossing or a positive-area coplanar overlap), `None` when
+/// their only contact is ordinary adjacency — a shared edge, a shared
+/// vertex, an isolated point, or an exactly duplicated triangle. Also used
+/// by `soup::has_self_intersections` to decide engine dispatch.
+pub(super) fn real_self_contact(
     t1: [Vec3; 3],
     t2: [Vec3; 3],
     stats: &mut SelfCutStats,

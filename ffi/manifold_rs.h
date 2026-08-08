@@ -167,6 +167,20 @@ int32_t manifold_rs_get_boolean_engine(void);
 ManifoldRs* manifold_rs_repair_orientation(const ManifoldRs* m);
 
 /*
+ * 1 when two of m's own triangles genuinely intersect - they cross, they
+ * overlap, or they are coincident surface (a doubled or multiply-wound
+ * sheet) - 0 when they merely share edges and vertices as every closed mesh
+ * does, -1 if m is NULL or the scan panics. A mesh with non-finite positions
+ * answers 1, the safe verdict for geometry no exact predicate can evaluate.
+ *
+ * A mesh can be topologically manifold and still answer 1; those inputs break
+ * the exact boolean engine's assumptions, which is why MANIFOLD_RS_ENGINE_AUTO
+ * routes them to the robust engine. The verdict is cached on the mesh, so
+ * repeated calls are free after the first.
+ */
+int32_t manifold_rs_has_self_intersections(const ManifoldRs* m);
+
+/*
  * Copy of m re-tagged as an original mesh: it is given a fresh mesh ID and its
  * boolean history is dropped, so results derived from it report that ID in
  * their run_original_id. Returns NULL if m is NULL or the copy panics.

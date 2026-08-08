@@ -170,3 +170,49 @@ fn repair_orientation_rewinds_inverted_cube() {
         manifold_rs_destroy(broken);
     }
 }
+
+#[test]
+fn has_self_intersections_flags_doubled_surface() {
+    // A clean cube: only shared-edge/vertex contacts.
+    let (verts, tris) = cube_mesh([0.0; 3], 2.0);
+    let clean = unsafe {
+        manifold_rs_from_mesh(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3)
+    };
+    assert_eq!(unsafe { manifold_rs_status(clean) }, 0);
+    assert_eq!(unsafe { manifold_rs_has_self_intersections(clean) }, 0);
+
+    // The same cube with every triangle duplicated in reverse winding: a
+    // coincident (doubled) sheet, imported as soup since pairing fails.
+    let (soup_verts, soup_tris) = cube_soup([0.0; 3], 2.0);
+    let mut doubled_verts = soup_verts.clone();
+    let mut doubled_tris = soup_tris.clone();
+    let base = soup_tris.len() as u32;
+    for t in soup_tris.chunks_exact(3) {
+        for &i in &[t[0], t[2], t[1]] {
+            let o = 3 * i as usize;
+            doubled_verts.extend_from_slice(&soup_verts[o..o + 3]);
+        }
+    }
+    doubled_tris.extend(base..2 * base);
+    let doubled = unsafe {
+        manifold_rs_from_mesh_robust(
+            doubled_verts.as_ptr(),
+            doubled_verts.len(),
+            doubled_tris.as_ptr(),
+            doubled_tris.len(),
+            3,
+        )
+    };
+    assert_eq!(unsafe { manifold_rs_status(doubled) }, 0);
+    assert_eq!(unsafe { manifold_rs_has_self_intersections(doubled) }, 1);
+
+    // NULL contract.
+    assert_eq!(
+        unsafe { manifold_rs_has_self_intersections(std::ptr::null()) },
+        -1
+    );
+    unsafe {
+        manifold_rs_destroy(clean);
+        manifold_rs_destroy(doubled);
+    }
+}

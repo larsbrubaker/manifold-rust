@@ -17,6 +17,9 @@ export interface ImportInfo {
   ok: boolean;
   status: string;
   is_soup: boolean;
+  /** Own triangles genuinely intersect (crossing, overlap, or coincident
+   *  surface) — why Auto may pick Robust. null when it was not asked for. */
+  self_intersecting: boolean | null;
   num_vert: number;
   num_tri: number;
 }
@@ -100,13 +103,20 @@ export class BooleanRunner {
 
   /** Import one operand into the worker; the arrays are also cached so a
    *  cancel can re-import them into the replacement worker. */
-  importOperand(slot: 'a' | 'b', arrays: OperandArrays): Promise<ImportInfo> {
+  importOperand(
+    slot: 'a' | 'b',
+    arrays: OperandArrays,
+    wantSelfIntersecting = false,
+  ): Promise<ImportInfo> {
     this.operandCache[slot] = arrays;
     const w = this.ensureWorker();
     return new Promise<ImportInfo>(resolve => {
       this.importWaiters.push(resolve);
       // Structured clone (no transfer): the main thread keeps its copy.
-      w.postMessage({ type: 'import', slot, positions: arrays.positions, indices: arrays.indices });
+      w.postMessage({
+        type: 'import', slot, positions: arrays.positions, indices: arrays.indices,
+        want_self_intersecting: wantSelfIntersecting,
+      });
     });
   }
 
@@ -143,7 +153,7 @@ export class BooleanRunner {
     this.queuedRun = null;
     // Unblock any import awaiters with a failure status.
     for (const waiter of this.importWaiters.splice(0)) {
-      waiter({ ok: false, status: 'cancelled', is_soup: false, num_vert: 0, num_tri: 0 });
+      waiter({ ok: false, status: 'cancelled', is_soup: false, self_intersecting: null, num_vert: 0, num_tri: 0 });
     }
     this.onBusyChange(false);
     this.onCancelled();

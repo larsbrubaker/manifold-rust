@@ -82,6 +82,20 @@ pub struct ManifoldImpl {
     /// result with `Error::NotManifold`. Always false on the strict import
     /// path, so existing behavior is unchanged.
     pub is_soup: bool,
+    /// Lazily-resolved verdict of `robust::soup::has_self_intersections` —
+    /// whether this impl's own triangles genuinely intersect rather than
+    /// merely sharing edges/vertices. Computed at most once per impl (the
+    /// scan is a full BVH self-query) and consulted by `Auto` boolean
+    /// dispatch, which must route geometrically self-intersecting operands
+    /// to the robust engine even when their connectivity is manifold.
+    ///
+    /// `OnceLock`-backed so it can be filled through a shared `&ManifoldImpl`
+    /// from rayon workers under the `parallel` feature. Crate-private
+    /// deliberately: `Clone` copies the settled value, so **any** code that
+    /// clones an impl and then edits its geometry in place must call
+    /// [`ManifoldImpl::invalidate_self_intersects`]. Rebuilds that go through
+    /// `create_halfedges` or `make_empty` are covered automatically.
+    pub(crate) self_intersects: crate::robust::soup::SelfIntersectCache,
 }
 
 impl Default for ManifoldImpl {
@@ -101,6 +115,7 @@ impl Default for ManifoldImpl {
             mesh_relation: MeshRelationD::new(),
             collider: crate::collider::Collider::default(),
             is_soup: false,
+            self_intersects: Default::default(),
         }
     }
 }
@@ -157,6 +172,16 @@ impl ManifoldImpl {
         self.collider = crate::collider::Collider::default();
         self.status = status;
         self.is_soup = false;
+        // Geometry is gone; any cached self-intersection verdict is stale.
+        self.invalidate_self_intersects();
+    }
+
+    /// Drop any cached self-intersection verdict. Must be called by every
+    /// operation that edits `vert_pos` or `halfedge` in place on an impl it
+    /// cloned (the cache is copied by `Clone`); rebuilds through
+    /// `create_halfedges` and `make_empty` do it themselves.
+    pub fn invalidate_self_intersects(&mut self) {
+        self.self_intersects = Default::default();
     }
 
     // -----------------------------------------------------------------------
@@ -295,6 +320,9 @@ impl ManifoldImpl {
     /// When `tri_vert` is empty, `tri_prop` is used for both geometry and properties.
     /// When `tri_vert` is present, `tri_prop[i][j]` = `propVert`, `tri_vert[i][j]` = `startVert`.
     pub fn create_halfedges(&mut self, tri_prop: &[IVec3], tri_vert: &[IVec3]) {
+        // The triangle set is being (re)built, so any earlier verdict about
+        // self-intersection no longer describes this geometry.
+        self.invalidate_self_intersects();
         let num_tri = tri_prop.len();
         if num_tri == 0 {
             self.halfedge.clear();
@@ -785,6 +813,11 @@ impl ManifoldImpl {
         // Soup impls stay soups across transforms; every step below already
         // guards paired_halfedge < 0.
         result.is_soup = self.is_soup;
+        // The self-intersection cache is deliberately *not* carried across:
+        // transformed positions are rounded to f64, so an extreme scale can
+        // collapse distinct vertices onto each other and create coincident
+        // surface that the source mesh did not have. Re-running the detector
+        // costs microseconds; propagating a stale `false` costs correctness.
 
         // Update mesh transforms
         for (_, rel) in result.mesh_relation.mesh_id_transform.iter_mut() {
@@ -916,6 +949,7 @@ impl ManifoldImpl {
             mesh_relation: self.mesh_relation.clone(),
             collider: self.collider.clone(),
             is_soup: self.is_soup,
+            self_intersects: self.self_intersects.clone(),
         }
     }
 }

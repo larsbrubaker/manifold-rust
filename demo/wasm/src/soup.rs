@@ -77,6 +77,17 @@ impl ImportedMesh {
         self.manifold.as_impl().is_soup
     }
 
+    /// True when two of the mesh's own triangles genuinely intersect — they
+    /// cross, they overlap, or they are coincident surface — rather than
+    /// merely sharing edges and vertices. Manifold connectivity does not
+    /// rule this out, and it is why the Auto engine may pick Robust for an
+    /// operand that is not soup. The scan runs on demand (the importer does
+    /// not pay for it) and its verdict is cached.
+    #[wasm_bindgen(getter)]
+    pub fn self_intersecting(&self) -> bool {
+        self.manifold.has_self_intersections()
+    }
+
     #[wasm_bindgen(getter)]
     pub fn num_vert(&self) -> u32 {
         self.manifold.num_vert() as u32

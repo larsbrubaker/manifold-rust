@@ -393,11 +393,21 @@ pub fn boolean_with_token(
 
 /// Route a boolean to the requested engine (`types::BooleanEngine`).
 ///
-/// `Auto` resolves per pair: `Robust` iff either operand carries soup
-/// geometry, else `Exact`. `Exact` with a soup operand yields an empty
-/// result with `Error::NotManifold` (the guard inside
-/// [`boolean_with_token`]); no panic-catching is involved anywhere —
-/// dispatch is input-based only.
+/// `Auto` is clean-by-default: it picks the faster `Exact` engine only when
+/// correctness is not at risk — i.e. when **both** operands are topologically
+/// manifold (not soup) **and** free of self-intersection — no two of an
+/// operand's own triangles crossing, overlapping, or coinciding. Either
+/// condition failing routes the pair to `Robust`, because the exact engine's
+/// kernels assume complete halfedge pairing and a non-self-intersecting
+/// surface; on self-intersecting-but-manifold inputs it silently
+/// mis-integrates the result (e.g. Thingi10K #92068's triple-wound
+/// concentric shells).
+///
+/// The self-intersection test is cached per impl (see
+/// [`crate::robust::soup::has_self_intersections`]), so an operand pays for
+/// the scan at most once. `Exact` with a soup operand yields an empty result
+/// with `Error::NotManifold` (the guard inside [`boolean_with_token`]); no
+/// panic-catching is involved anywhere — dispatch is input-based only.
 pub fn boolean_dispatch(
     mesh_a: &ManifoldImpl,
     mesh_b: &ManifoldImpl,
@@ -408,7 +418,12 @@ pub fn boolean_dispatch(
     use crate::types::BooleanEngine as E;
     let resolved = match engine {
         E::Auto => {
-            if mesh_a.is_soup || mesh_b.is_soup {
+            use crate::robust::soup::has_self_intersections_with_token as self_isect;
+            if mesh_a.is_soup
+                || mesh_b.is_soup
+                || self_isect(mesh_a, token)
+                || self_isect(mesh_b, token)
+            {
                 E::Robust
             } else {
                 E::Exact

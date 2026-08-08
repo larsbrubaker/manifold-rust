@@ -124,6 +124,9 @@ export interface ImportedMesh {
   readonly status: string;
   readonly ok: boolean;
   readonly is_soup: boolean;
+  /** Own triangles genuinely intersect (crossing, overlap, or coincident
+   *  surface) rather than merely sharing edges/vertices. Computed on access. */
+  readonly self_intersecting: boolean;
   readonly num_vert: number;
   readonly num_tri: number;
   mesh(): any;

@@ -150,6 +150,154 @@ fn tiny_or_empty_meshes() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Geometric self-intersection detection (drives Auto engine dispatch)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn clean_shapes_have_no_self_intersections() {
+    // A strict cube: every same-mesh triangle contact is an ordinary shared
+    // edge or shared vertex, which must not count as a self-intersection.
+    let cube = Manifold::cube(v(2.0, 2.0, 2.0), false);
+    assert!(!cube.has_self_intersections());
+    // A denser mesh with fans of coplanar and non-coplanar neighbors.
+    let sphere = Manifold::sphere(1.0, 16);
+    assert!(!sphere.has_self_intersections());
+    // Same geometry imported as an unpaired soup: detection works off
+    // positions, not halfedge pairing, so the answer is unchanged.
+    assert!(!soup_cube().has_self_intersections());
+}
+
+#[test]
+fn overlapping_shells_are_self_intersecting() {
+    // Two cubes whose interiors overlap, concatenated into one closed soup:
+    // triangles of the second shell cross faces of the first.
+    let mut tris = cube_tris([0.0; 3], [2.0; 3]);
+    tris.extend(cube_tris([1.0; 3], [3.0; 3]));
+    let m = Manifold::from_mesh_gl_robust(&soup_mesh_gl(&tris));
+    assert_eq!(m.status(), Error::NoError);
+    assert!(m.has_self_intersections());
+    // Repeat queries hit the cache and stay consistent.
+    assert!(m.has_self_intersections());
+}
+
+#[test]
+fn edge_only_contacts_are_not_self_intersections() {
+    // Two cubes sharing exactly one edge: non-manifold connectivity, but the
+    // only same-mesh contacts are that shared edge and ordinary adjacency —
+    // no geometric self-intersection.
+    let mut tris = cube_tris([0.0; 3], [2.0; 3]);
+    tris.extend(cube_tris([2.0, 2.0, 0.0], [4.0, 4.0, 2.0]));
+    let m = Manifold::from_mesh_gl_robust(&soup_mesh_gl(&tris));
+    assert_eq!(m.status(), Error::NoError);
+    assert!(!m.has_self_intersections());
+}
+
+#[test]
+fn coincident_sheets_count_as_self_intersecting() {
+    // Doubled surface: every triangle has an exact duplicate. The robust
+    // engine needs no cut there (both copies emit the same pieces and the
+    // winding arithmetic resolves them), but the surface is coincident, and
+    // that is exactly what the exact engine mis-integrates — so the dispatch
+    // detector must report it.
+    let mut tris = cube_tris([0.0; 3], [2.0; 3]);
+    let doubled = tris.clone();
+    tris.extend(doubled.iter().map(|t| [t[0], t[2], t[1]]));
+    let m = Manifold::from_mesh_gl_robust(&soup_mesh_gl(&tris));
+    assert_eq!(m.status(), Error::NoError);
+    assert!(m.has_self_intersections());
+}
+
+#[test]
+fn self_intersection_is_recomputed_after_transform() {
+    // The verdict is deliberately not carried across a transform (rounded
+    // positions can create coincidences the source lacked), so each result
+    // is a fresh scan — and each must still be right.
+    let mut tris = cube_tris([0.0; 3], [2.0; 3]);
+    tris.extend(cube_tris([1.0; 3], [3.0; 3]));
+    let m = Manifold::from_mesh_gl_robust(&soup_mesh_gl(&tris));
+    assert!(m.has_self_intersections());
+    assert!(m
+        .translate(v(3.0, -1.0, 0.5))
+        .scale(v(2.0, 2.0, 2.0))
+        .has_self_intersections());
+    let clean = Manifold::cube(v(2.0, 2.0, 2.0), false);
+    assert!(!clean.has_self_intersections());
+    assert!(!clean.rotate(10.0, 20.0, 30.0).has_self_intersections());
+}
+
+#[test]
+fn warp_invalidates_the_cached_verdict() {
+    // Settle a `false` verdict, then fold the cube onto itself: the warped
+    // copy must be scanned afresh, not inherit the clone's answer.
+    let cube = Manifold::cube(v(2.0, 2.0, 2.0), false);
+    assert!(!cube.has_self_intersections());
+    // Mirror the top half down through the bottom half — every triangle
+    // above z = 1 crosses the material below it.
+    let folded = cube.warp(|p| {
+        if p.z > 1.0 {
+            p.z = 2.0 - p.z;
+        }
+    });
+    assert!(folded.has_self_intersections(), "warp must re-run the scan");
+    // simplify() also clones-then-mutates; its verdict must be re-derived.
+    assert!(!cube.simplify(0.0).has_self_intersections());
+}
+
+#[test]
+fn non_finite_positions_report_self_intersecting_without_panicking() {
+    // A warp to NaN survives every import check but has no exact rational
+    // form, so the detector cannot evaluate it. "Self-intersecting" is the
+    // safe answer (route to the robust engine) and, above all, not a panic.
+    let cube = Manifold::cube(v(2.0, 2.0, 2.0), false);
+    let nan_y = cube.warp(|p| {
+        if p.y > 1.0 {
+            p.y = f64::NAN;
+        }
+    });
+    assert!(!nan_y.is_empty(), "NaN survives the warp pipeline");
+    assert!(nan_y.has_self_intersections());
+    // Infinities are a different story: the bbox becomes non-finite and the
+    // warp pipeline empties the mesh, so the detector never sees them.
+    let inf_x = cube.warp(|p| {
+        if p.x > 1.0 {
+            p.x = f64::INFINITY;
+        }
+    });
+    assert!(inf_x.is_empty());
+    assert!(!inf_x.has_self_intersections());
+}
+
+#[test]
+fn same_winding_duplicates_cannot_reach_the_detector() {
+    // The detector's duplicate-triangle test is winding-agnostic (it
+    // compares vertex sets), so a same-winding duplicate would report true
+    // exactly like the reversed one in the test above. It cannot arise from
+    // any import, though: duplicating a triangle without flipping it leaves
+    // its three directed edges doubled in the same direction, which is
+    // precisely what soupify's closed-and-orientable check rejects.
+    let mut tris = cube_tris([0.0; 3], [2.0; 3]);
+    let dup = tris[0];
+    tris.push(dup);
+    let m = Manifold::from_mesh_gl_robust(&soup_mesh_gl(&tris));
+    assert_eq!(m.status(), Error::NotClosed);
+}
+
+#[test]
+fn half_offset_face_contact_reports_self_intersecting() {
+    // Pin test for the boundary case: two shells whose touching faces
+    // overlap in a rectangle (positive area) but do not coincide. That is a
+    // coplanar overlap, so the detector reports true — the same verdict it
+    // gives fully coincident sheets, and for the same reason (the exact
+    // engine cannot integrate shared surface). Contrast with the
+    // edge-and-vertex-only contacts above, which report false.
+    let mut tris = cube_tris([0.0; 3], [2.0; 3]);
+    tris.extend(cube_tris([1.0, 0.0, 2.0], [3.0, 2.0, 4.0]));
+    let m = Manifold::from_mesh_gl_robust(&soup_mesh_gl(&tris));
+    assert_eq!(m.status(), Error::NoError);
+    assert!(m.has_self_intersections());
+}
+
 #[test]
 fn soup_export_round_trips() {
     let m = soup_cube();
