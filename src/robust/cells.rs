@@ -37,6 +37,7 @@ use crate::linalg::Vec3;
 
 use super::classify::angle_cmp;
 use super::exact::rational::R3;
+use super::exact::Sign;
 use super::intersection_graph::{edge_key, EdgeKey, IntersectionGraph, Piece};
 use crate::types::OpType;
 
@@ -75,24 +76,35 @@ struct Inc {
     dv: BigRational,
 }
 
+/// The side of a half-face that faces counter-clockwise (increasing radial
+/// angle) around its edge.
+///
+/// A forward-traversing face has normal ∝ w × d, which sits 90° CCW of its
+/// apex direction, so its normal side is the CCW one; a backward face's
+/// normal is 90° CW, so the relationship inverts.
+#[inline]
+fn ccw_side(forward: bool) -> usize {
+    if forward {
+        NORMAL
+    } else {
+        ANTI
+    }
+}
+
+#[inline]
+fn cw_side(forward: bool) -> usize {
+    1 - ccw_side(forward)
+}
+
 impl Inc {
-    /// The side facing counter-clockwise (increasing radial angle).
-    ///
-    /// A forward-traversing face has normal ∝ w × d, which sits 90° CCW of
-    /// its apex direction, so its normal side is the CCW one; a backward
-    /// face's normal is 90° CW, so the relationship inverts.
     #[inline]
     fn ccw_side(&self) -> usize {
-        if self.forward {
-            NORMAL
-        } else {
-            ANTI
-        }
+        ccw_side(self.forward)
     }
 
     #[inline]
     fn cw_side(&self) -> usize {
-        1 - self.ccw_side()
+        cw_side(self.forward)
     }
 }
 
@@ -123,6 +135,28 @@ pub fn build_cells(graph: &IntersectionGraph) -> CellComplex {
     for (key, raw) in &incident {
         if raw.len() < 2 {
             continue; // a boundary edge bounds no wedge
+        }
+        // Ordinary manifold edge whose two faces are provably in different
+        // radial directions: the cyclic order is trivial, so both wedges
+        // link with no exact angle work at all. These edges outnumber the
+        // rest by a wide margin, and computing rational radial directions
+        // for them dominated cell construction. The filter must certify
+        // non-coplanarity — a coincident pair has one radial position, not
+        // two, and linking it as two would fuse the sheet's own sides.
+        if raw.len() == 2 {
+            let pt = |v: u32| {
+                let p = graph.verts_f64[v as usize];
+                [p.x, p.y, p.z]
+            };
+            let sign =
+                super::exact::approx::orient3d_a(pt(key.0), pt(key.1), pt(raw[0].2), pt(raw[1].2));
+            if matches!(sign, Some(Sign::Neg) | Some(Sign::Pos)) {
+                let (p0, fw0) = (raw[0].0, raw[0].1);
+                let (p1, fw1) = (raw[1].0, raw[1].1);
+                ds.unite(node(p0, ccw_side(fw0)), node(p1, cw_side(fw1)));
+                ds.unite(node(p1, ccw_side(fw1)), node(p0, cw_side(fw0)));
+                continue;
+            }
         }
         let k0 = &graph.verts[key.0 as usize];
         let k1 = &graph.verts[key.1 as usize];
