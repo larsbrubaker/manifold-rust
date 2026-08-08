@@ -264,6 +264,22 @@ fn thingi_939888_union_93557_is_closed() {
 }
 
 const MODEL_36088: &[u8] = include_bytes!("testdata/36088.stl");
+const MODEL_36374: &[u8] = include_bytes!("testdata/36374.stl");
+
+/// Thingi10K #36374 ∪ its rotated copy: returned NotClosed before the
+/// canonical cocircular tie-break — the downstream failure the understated
+/// walls of #36088 only threatened. BFS crossed a split coincident stack,
+/// seeded wrong windings, and extraction could not close.
+#[test]
+fn thingi_36374_union_rotated_self_is_closed() {
+    let a = import_stl_like_demo(MODEL_36374);
+    assert_eq!(a.status(), Error::NoError, "operand A import");
+    let b = a.rotate(30.0, 45.0, 60.0).translate(Vec3::new(0.3, 0.0, 0.0));
+    let result = a.union_with_engine(&b, BooleanEngine::Robust);
+    assert_eq!(result.status(), Error::NoError, "robust union status");
+    assert!(result.volume() > 0.0, "union volume must be positive");
+    assert_arrangement_consistent(&a, &b, "36374 ∪ rotated self");
+}
 
 /// Thingi10K #36088 ∪ its rotated copy (the sweep's standard pass): found by
 /// the full-corpus sweep as the one mesh in its window whose arrangement
