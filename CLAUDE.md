@@ -8,6 +8,16 @@
 
 **Exact numerical match** - This port must reproduce the C++ library with perfect numerical exactness. Not "close enough" — identical results on identical inputs.
 
+**Deliberate divergence is allowed — and documented.** Byte-matching the C++
+is the default, not a suicide pact: when the C++ behavior is a real
+correctness defect (e.g. an orientation-blind normal flood-fill distorting
+antiparallel-coplanar meshes), or when we can be provably more accurate,
+we fix it on our side. Every deliberate divergence must be documented in
+`docs/CPP_DIVERGENCES.md` (what differs, why, and the evidence), so
+trace-diff debugging sessions against the reference know what to expect.
+Divergence for convenience is still forbidden — only accuracy, real bug
+fixes, or measured improvements qualify.
+
 ## Test-First Bug Fixing (Critical Practice)
 
 When a bug is reported, always follow this workflow:
@@ -102,3 +112,12 @@ This project uses **PowerShell** on Windows for build scripts. Use `bash` syntax
 ## Porting Plan
 
 See `PORTING_PLAN.md` for the current phase status and implementation order.
+
+## Orchestration pattern
+
+The main session (Fable 5) acts as planner and orchestrator only and should
+not write or edit code directly. All implementation is delegated to the
+`implementer` subagent (`.claude/agents/implementer.md`), one scoped step at
+a time. All post-change review is delegated to the `reviewer` subagent
+(`.claude/agents/reviewer.md`). The main session handles only planning,
+architecture decisions, and synthesizing subagent results.
