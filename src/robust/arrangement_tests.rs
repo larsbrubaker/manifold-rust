@@ -63,7 +63,7 @@ fn validate(arr: &Arrangement) {
 
 #[test]
 fn empty_input_yields_single_triangle() {
-    let arr = build(TRI, &ArrangementInput::default());
+    let arr = build(TRI, &ArrangementInput::default(), None).unwrap();
     assert_eq!(arr.tris.len(), 1);
     assert_eq!(arr.points3.len(), 3);
     assert!(arr.constraints.is_empty());
@@ -76,7 +76,7 @@ fn single_segment_becomes_one_constraint() {
         points: vec![],
         segments: vec![(r3(1.0, 1.0, 0.0), r3(3.0, 2.0, 0.0), 7)],
     };
-    let arr = build(TRI, &input);
+    let arr = build(TRI, &input, None).unwrap();
     assert_eq!(arr.constraints.len(), 1);
     let provs = arr.constraints.values().next().unwrap();
     assert_eq!(provs.as_slice(), &[7]);
@@ -94,7 +94,7 @@ fn crossing_segments_split_at_intersection() {
             (r3(1.0, 3.0, 0.0), r3(3.0, 1.0, 0.0), 1),
         ],
     };
-    let arr = build(TRI, &input);
+    let arr = build(TRI, &input, None).unwrap();
     assert_eq!(arr.constraints.len(), 4);
     assert!(
         arr.points3.contains(&r3(2.0, 2.0, 0.0)),
@@ -114,7 +114,7 @@ fn point_primitive_splits_segment() {
         points: vec![(r3(2.0, 1.0, 0.0), 5)],
         segments: vec![(r3(1.0, 1.0, 0.0), r3(3.0, 1.0, 0.0), 9)],
     };
-    let arr = build(TRI, &input);
+    let arr = build(TRI, &input, None).unwrap();
     assert_eq!(arr.constraints.len(), 2, "point on segment must split it");
     for provs in arr.constraints.values() {
         assert_eq!(provs.as_slice(), &[9]);
@@ -133,7 +133,7 @@ fn collinear_overlapping_segments_merge_provenance() {
             (r3(2.0, 1.0, 0.0), r3(6.0, 1.0, 0.0), 1),
         ],
     };
-    let arr = build(TRI, &input);
+    let arr = build(TRI, &input, None).unwrap();
     assert_eq!(arr.constraints.len(), 3);
     let mut prov_sets: Vec<Vec<usize>> = arr.constraints.values().cloned().collect();
     for p in &mut prov_sets {
@@ -152,7 +152,7 @@ fn segment_touching_triangle_edge_and_corner() {
         points: vec![],
         segments: vec![(r3(0.0, 0.0, 0.0), r3(4.0, 4.0, 0.0), 3)],
     };
-    let arr = build(TRI, &input);
+    let arr = build(TRI, &input, None).unwrap();
     assert_eq!(arr.points3.len(), 4, "only the midpoint is new");
     assert_eq!(arr.constraints.len(), 1);
     validate(&arr);
@@ -176,7 +176,8 @@ fn polygon_boundary_ring() {
     let arr = build(TRI, &ArrangementInput {
         points: vec![],
         segments,
-    });
+    }, None)
+    .unwrap();
     assert_eq!(arr.constraints.len(), 6);
     validate(&arr);
 }
@@ -198,7 +199,7 @@ fn skew_plane_arrangement_lifts_exactly() {
         points: vec![],
         segments: vec![(mab.clone(), mbc.clone(), 0), (mbc.clone(), mca.clone(), 1), (mca, mab, 2)],
     };
-    let arr = build(tri, &input);
+    let arr = build(tri, &input, None).unwrap();
     use crate::robust::exact::predicates::orient3d_r;
     for p in &arr.points3 {
         assert_eq!(orient3d_r(&a, &b, &c, p), Sign::Zero, "point off plane");
@@ -217,7 +218,7 @@ fn constraint_edges_reference_valid_points() {
             (r3(2.0, 0.0, 0.0), r3(2.0, 4.0, 0.0), 1),
         ],
     };
-    let arr = build(TRI, &input);
+    let arr = build(TRI, &input, None).unwrap();
     for (u, w) in arr.constraints.keys() {
         assert!(*u < arr.points3.len() && *w < arr.points3.len());
         assert_ne!(arr.points2[*u], arr.points2[*w]);

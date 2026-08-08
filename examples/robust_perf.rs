@@ -13,7 +13,7 @@ use std::time::Instant;
 
 use manifold_rust::linalg::Vec3;
 use manifold_rust::manifold::Manifold;
-use manifold_rust::robust::{classify, intersection_graph, propagate, soup};
+use manifold_rust::robust::{cells, intersection_graph, soup};
 use manifold_rust::types::{BooleanEngine, MeshGL};
 
 fn make_spiky_dodecahedron(spike_height: f64) -> Manifold {
@@ -228,19 +228,23 @@ fn main() {
     let t_graph = t0.elapsed().as_secs_f64();
 
     let t0 = Instant::now();
-    let cls = classify::classify_rings(&graph);
-    let t_classify = t0.elapsed().as_secs_f64();
+    let complex = cells::build_cells(&graph);
+    let t_cells = t0.elapsed().as_secs_f64();
 
     let t0 = Instant::now();
-    let prop = propagate::propagate(&graph, &cls);
-    let t_prop = t0.elapsed().as_secs_f64();
+    let wind = cells::windings(&graph, &complex, [&p_tris, &q_tris]);
+    let t_wind = t0.elapsed().as_secs_f64();
+
+    let t0 = Instant::now();
+    let pieces = cells::extract(&graph, &complex, &wind, manifold_rust::types::OpType::Add);
+    let t_extract = t0.elapsed().as_secs_f64();
 
     let t0 = Instant::now();
     let out = manifold_rust::robust::assemble::assemble(
-        &graph.pieces,
+        &pieces,
         &graph.verts,
         &graph.verts_f64,
-        |pi| !cls.discarded[pi] && prop.tags[pi] == Some(classify::Tag::Union),
+        |_| true,
         None,
     );
     let t_assemble = t0.elapsed().as_secs_f64();
@@ -248,7 +252,8 @@ fn main() {
 
     println!("robust stages:");
     println!("  build_graph    {:8.2} ms   ({} pieces)", t_graph * 1e3, graph.pieces.len());
-    println!("  classify_rings {:8.2} ms", t_classify * 1e3);
-    println!("  propagate      {:8.2} ms   ({} untagged roots)", t_prop * 1e3, prop.untagged.len());
+    println!("  build_cells    {:8.2} ms   ({} cells)", t_cells * 1e3, complex.num_cells);
+    println!("  windings       {:8.2} ms", t_wind * 1e3);
+    println!("  extract        {:8.2} ms   ({} walls kept)", t_extract * 1e3, pieces.len());
     println!("  assemble       {:8.2} ms", t_assemble * 1e3);
 }

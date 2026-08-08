@@ -94,7 +94,16 @@ pub mod stats {
 /// Build the arrangement of `input` on triangle `tri`. Primitives must
 /// already be clipped to the triangle (tri_tri output is), with rational
 /// coordinates on its plane.
-pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
+///
+/// Returns `None` only when `token` is cancelled: a single segment-heavy
+/// triangle can spend minutes in the quadratic sweeps below, so the
+/// per-phase checks in build_graph alone leave a cancel unanswered for
+/// however long the worst triangle takes.
+pub fn build(
+    tri: [Vec3; 3],
+    input: &ArrangementInput,
+    token: Option<&crate::cancel::CancelToken>,
+) -> Option<Arrangement> {
     use std::sync::atomic::Ordering::Relaxed;
     let t0 = crate::timing::Stopwatch::start();
     stats::CALLS.fetch_add(1, Relaxed);
@@ -173,6 +182,9 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
             .unwrap_or_else(|| orient2d_h(&homogs[i], &homogs[j], &homogs[k]))
     };
     for i in 0..segs.len() {
+        if crate::cancel::is_cancelled(token) {
+            return None;
+        }
         for j in (i + 1)..segs.len() {
             let (ia, ib) = (segs[i].a, segs[i].b);
             let (ic, id) = (segs[j].a, segs[j].b);
@@ -216,6 +228,9 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
     // consecutive point pairs become constraint edges carrying provenance.
     let mut constraints: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
     for seg in &segs {
+        if crate::cancel::is_cancelled(token) {
+            return None;
+        }
         let (ha, hb) = (&homogs[seg.a], &homogs[seg.b]);
         // Segment direction cleared of denominators: v = (pb−pa)·(Bw·Aw).
         let vx = &hb.0 * &ha.2 - &ha.0 * &hb.2;
@@ -272,14 +287,14 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
     };
     let flipped = Sign::of_rat(axis_comp) == Sign::Neg;
 
-    Arrangement {
+    Some(Arrangement {
         axis,
         points3,
         points2,
         tris,
         constraints,
         flipped,
-    }
+    })
 }
 
 /// The exact points this input would register on `tri`, without running the
@@ -287,7 +302,12 @@ pub fn build(tri: [Vec3; 3], input: &ArrangementInput) -> Arrangement {
 /// crossings. robust/intersection_graph.rs uses this to build the global
 /// registries that force a common subdivision on both sides of every shared
 /// intersection segment and mesh edge before the real arrangements run.
-pub fn candidate_points(tri: [Vec3; 3], input: &ArrangementInput) -> Vec<R3> {
+/// Returns `None` only when `token` is cancelled (see [`build`]).
+pub fn candidate_points(
+    tri: [Vec3; 3],
+    input: &ArrangementInput,
+    token: Option<&crate::cancel::CancelToken>,
+) -> Option<Vec<R3>> {
     let corners: [R3; 3] = [
         R3::from_vec3(tri[0]),
         R3::from_vec3(tri[1]),
@@ -334,6 +354,9 @@ pub fn candidate_points(tri: [Vec3; 3], input: &ArrangementInput) -> Vec<R3> {
         orient2d_a(a.0, b.0, c.0).unwrap_or_else(|| orient2d_h(a.1, b.1, c.1))
     };
     for i in 0..segs2.len() {
+        if crate::cancel::is_cancelled(token) {
+            return None;
+        }
         for j in (i + 1)..segs2.len() {
             let (a, b) = (
                 (apts[i].0, &homogs[i].0),
@@ -360,7 +383,7 @@ pub fn candidate_points(tri: [Vec3; 3], input: &ArrangementInput) -> Vec<R3> {
             }
         }
     }
-    out
+    Some(out)
 }
 
 #[cfg(test)]

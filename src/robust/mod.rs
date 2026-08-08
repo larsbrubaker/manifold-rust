@@ -148,10 +148,9 @@ pub fn boolean(
     // Subtraction needs no operand flip: the cell predicate expresses it
     // directly as "inside P and not inside Q", so both operands keep their
     // own winding and their corner properties stay in their original order.
-    let graph = intersection_graph::build_graph(&p_tris, &q_tris);
-    if is_cancelled(token) {
+    let Some(graph) = intersection_graph::build_graph_with_token(&p_tris, &q_tris, token) else {
         return cancelled_impl();
-    }
+    };
     let t_cells = crate::timing::start();
     let complex = cells::build_cells(&graph);
     crate::timing::print("robust: cell complex", t_cells);

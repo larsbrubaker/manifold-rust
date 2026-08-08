@@ -294,6 +294,21 @@ fn clip_segment_to_polygon(a: &R3, b: &R3, poly: &[R3]) -> Option<(R3, R3)> {
 /// Build the intersection graph for soups `p` and `q` (each triangle wound
 /// outward; degenerate triangles are dropped here, paper §5).
 pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
+    build_graph_with_token(p, q, None).expect("uncancellable build_graph cannot cancel")
+}
+
+/// [`build_graph`] with cooperative cancellation. Returns `None` when the
+/// token fires. Checks run per triangle in every phase and inside the
+/// arrangement sweeps — heavily self-intersecting inputs spend minutes in
+/// per-triangle quadratic loops, and a cancel that only top-level phases
+/// notice can overshoot its deadline by that much (Thingi10K #42211 ran
+/// 565 s past a 60 s cancel before this plumbing).
+pub fn build_graph_with_token(
+    p: &[[Vec3; 3]],
+    q: &[[Vec3; 3]],
+    token: Option<&crate::cancel::CancelToken>,
+) -> Option<IntersectionGraph> {
+    let cancelled = || crate::cancel::is_cancelled(token);
     let t_all = crate::timing::start();
     let meshes: [&[[Vec3; 3]]; 2] = [p, q];
     let live: [Vec<bool>; 2] = [
@@ -338,6 +353,9 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
 
     let mut candidates_q: Vec<usize> = Vec::new();
     for (pi, pt) in p.iter().enumerate() {
+        if cancelled() {
+            return None;
+        }
         if !live[0][pi] {
             continue;
         }
@@ -414,6 +432,9 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
         let mut n_cut = 0usize;
         let mut stats = SelfCutStats::default();
         for i in 0..tris.len() {
+            if cancelled() {
+                return None;
+            }
             if !live[m][i] {
                 continue;
             }
@@ -467,6 +488,9 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
     // sides see identical geometry inside the shared area. Clip against the
     // region to avoid dragging unrelated geometry across.
     for (pi, qi, poly) in &coplanar_regions {
+        if cancelled() {
+            return None;
+        }
         let from_p: TriPrims = prims[0][*pi].clone();
         let from_q: TriPrims = prims[1][*qi].clone();
         let copy = |src: &TriPrims, dst: &mut TriPrims| {
@@ -513,7 +537,7 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
                 points: pr.points.clone(),
                 segments: pr.segments.clone(),
             };
-            candidates[m][ti] = Some(arrangement::candidate_points(meshes[m][ti], &input));
+            candidates[m][ti] = Some(arrangement::candidate_points(meshes[m][ti], &input, token)?);
         }
     }
 
@@ -527,6 +551,9 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
         [HashMap::new(), HashMap::new()];
     for m in 0..2 {
         for ti in 0..meshes[m].len() {
+            if cancelled() {
+                return None;
+            }
             let Some(cands) = &candidates[m][ti] else { continue };
             let t = meshes[m][ti];
             let corners = [
@@ -561,6 +588,9 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
     let mut seg_splits: BTreeMap<GeoEdgeKey, BTreeSet<R3>> = BTreeMap::new();
     for m in 0..2 {
         for ti in 0..meshes[m].len() {
+            if cancelled() {
+                return None;
+            }
             let Some(cands) = &candidates[m][ti] else { continue };
             let cands_a: Vec<[f64; 3]> = cands.iter().map(approx3).collect();
             for (a, b, _prov) in &prims[m][ti].segments {
@@ -585,6 +615,9 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
 
     for m in 0..2 {
         for ti in 0..meshes[m].len() {
+            if cancelled() {
+                return None;
+            }
             if !live[m][ti] {
                 continue;
             }
@@ -627,7 +660,7 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
             for pt in extra {
                 input.points.push((pt, usize::MAX));
             }
-            let arr = arrangement::build(t, &input);
+            let arr = arrangement::build(t, &input, token)?;
             // Intern each arrangement point once; sub-triangles and
             // constraint edges then only shuffle ids.
             let ids: Vec<u32> = arr.points3.iter().map(|p| interner.intern(p)).collect();
@@ -656,13 +689,13 @@ pub fn build_graph(p: &[[Vec3; 3]], q: &[[Vec3; 3]]) -> IntersectionGraph {
         arrangement::stats::snapshot_and_reset()
     ));
 
-    IntersectionGraph {
+    Some(IntersectionGraph {
         pieces,
         verts: interner.verts,
         verts_f64: interner.verts_f64,
         isect_edges,
         any_intersections,
-    }
+    })
 }
 
 /// Real self-intersection of one triangle pair from the same mesh: the
