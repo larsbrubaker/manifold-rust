@@ -18,7 +18,7 @@
 //
 // Everything is exact; broad-phase boxes are conservative f64.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use num_rational::BigRational;
 use num_traits::{One, Zero};
@@ -453,30 +453,39 @@ pub fn build_graph_with_token(
                 .map(|&i| crate::sort::morton_code(boxes[i].center(), &self_scene))
                 .collect(),
         );
-        let mut cands: Vec<usize> = Vec::new();
+        // The exact narrow phase per triangle is pure; workers return each
+        // triangle's (j, segments) contacts and per-worker stats, and the
+        // sequential merge assigns provenance pair ids in (i, j) order —
+        // identical to the sequential sweep.
         let mut n_pairs = 0usize;
         let mut n_cut = 0usize;
         let mut stats = SelfCutStats::default();
-        for i in 0..tris.len() {
-            if cancelled() {
-                return None;
-            }
-            if !live[m][i] {
-                continue;
-            }
-            cands.clear();
-            self_collider.collisions_one(&boxes[i], i, |_, leaf| {
-                cands.push(order[leaf]);
-            });
-            cands.sort_unstable();
-            for &j in &cands {
-                if j <= i || !boxes[i].does_overlap_box(&boxes[j]) {
-                    continue;
+        let contact_results = crate::par::maybe_par_map_ct(tris.len(), 64, token, |i| {
+            let mut local = SelfCutStats::default();
+            let mut contacts: Vec<(usize, Vec<(R3, R3)>)> = Vec::new();
+            let mut local_pairs = 0usize;
+            if live[m][i] {
+                let mut cands: Vec<usize> = Vec::new();
+                self_collider.collisions_one(&boxes[i], i, |_, leaf| {
+                    cands.push(order[leaf]);
+                });
+                cands.sort_unstable();
+                for &j in &cands {
+                    if j <= i || !boxes[i].does_overlap_box(&boxes[j]) {
+                        continue;
+                    }
+                    local_pairs += 1;
+                    if let Some(segs) = real_self_contact(tris[i], tris[j], &mut local) {
+                        contacts.push((j, segs));
+                    }
                 }
-                n_pairs += 1;
-                let Some(segs) = real_self_contact(tris[i], tris[j], &mut stats) else {
-                    continue;
-                };
+            }
+            (contacts, local, local_pairs)
+        })?;
+        for (i, (contacts, local, local_pairs)) in contact_results.into_iter().enumerate() {
+            n_pairs += local_pairs;
+            stats.add(&local);
+            for (j, segs) in contacts {
                 n_cut += 1;
                 for (x, y) in segs {
                     let pair = pair_count;
@@ -548,23 +557,31 @@ pub fn build_graph_with_token(
     crate::timing::print("robust: coplanar cross-copy", t_cross);
     let t_cand = crate::timing::start();
 
-    // 4a. Candidate points per intersected triangle.
+    // 4a. Candidate points per intersected triangle. Pure per triangle, so
+    // the map parallelizes under the bit-identical rule: results land in
+    // worklist order regardless of schedule.
     let mut candidates: [Vec<Option<Vec<R3>>>; 2] = [
         vec![None; p.len()],
         vec![None; q.len()],
     ];
-    for m in 0..2 {
-        for ti in 0..meshes[m].len() {
+    let cand_work: Vec<(usize, usize)> = (0..2)
+        .flat_map(|m| (0..meshes[m].len()).map(move |ti| (m, ti)))
+        .filter(|&(m, ti)| {
             let pr = &prims[m][ti];
-            if pr.points.is_empty() && pr.segments.is_empty() {
-                continue;
-            }
-            let input = ArrangementInput {
-                points: pr.points.clone(),
-                segments: pr.segments.clone(),
-            };
-            candidates[m][ti] = Some(arrangement::candidate_points(meshes[m][ti], &input, token)?);
-        }
+            !pr.points.is_empty() || !pr.segments.is_empty()
+        })
+        .collect();
+    let cand_results = crate::par::maybe_par_map_ct(cand_work.len(), 16, token, |i| {
+        let (m, ti) = cand_work[i];
+        let pr = &prims[m][ti];
+        let input = ArrangementInput {
+            points: pr.points.clone(),
+            segments: pr.segments.clone(),
+        };
+        arrangement::candidate_points(meshes[m][ti], &input, token)
+    })?;
+    for (&(m, ti), cands) in cand_work.iter().zip(cand_results) {
+        candidates[m][ti] = Some(cands?);
     }
 
     crate::timing::print("robust: candidate points", t_cand);
@@ -573,45 +590,58 @@ pub fn build_graph_with_token(
     // 4b. Original-edge registry: split points on each mesh edge (geometric
     // identity — soups have no reliable connectivity). Bit-keyed: original
     // edges join exact f64 vertices.
+    // Both registry sweeps are pure per triangle; workers collect local
+    // (key, point) hits and the single-threaded merge inserts them in
+    // worklist order. Registry values are sets, so content is
+    // order-independent and the merge order only preserves determinism of
+    // allocation, not meaning.
+    let reg_work: Vec<(usize, usize)> = (0..2)
+        .flat_map(|m| (0..meshes[m].len()).map(move |ti| (m, ti)))
+        .filter(|&(m, ti)| candidates[m][ti].is_some())
+        .collect();
+
     let mut edge_registry: [HashMap<BitEdgeKey, BTreeSet<R3>>; 2] =
         [HashMap::new(), HashMap::new()];
-    for m in 0..2 {
-        for ti in 0..meshes[m].len() {
-            if cancelled() {
-                return None;
-            }
-            let Some(cands) = &candidates[m][ti] else { continue };
-            let t = meshes[m][ti];
-            let corners = [
-                R3::from_vec3(t[0]),
-                R3::from_vec3(t[1]),
-                R3::from_vec3(t[2]),
-            ];
-            let ca: [[f64; 3]; 3] = [
-                [t[0].x, t[0].y, t[0].z],
-                [t[1].x, t[1].y, t[1].z],
-                [t[2].x, t[2].y, t[2].z],
-            ];
-            let cands_a: Vec<[f64; 3]> = cands.iter().map(approx3).collect();
-            for e in 0..3 {
-                let a = &corners[e];
-                let b = &corners[(e + 1) % 3];
-                let key = bit_edge_key(t[e], t[(e + 1) % 3]);
-                let sbox = seg_box3(ca[e], ca[(e + 1) % 3]);
-                for (pt, pt_a) in cands.iter().zip(&cands_a) {
-                    // A point on the edge lies inside its inflated box; the
-                    // reject skips the exact comparisons for everything else.
-                    if !box3_contains(&sbox, *pt_a) {
-                        continue;
-                    }
-                    if !r3_eq(pt, a)
-                        && !r3_eq(pt, b)
-                        && point_on_segment_f(*pt_a, pt, ca[e], a, ca[(e + 1) % 3], b)
-                    {
-                        edge_registry[m].entry(key).or_default().insert(pt.clone());
-                    }
+    let edge_hits = crate::par::maybe_par_map_ct(reg_work.len(), 16, token, |i| {
+        let (m, ti) = reg_work[i];
+        let cands = candidates[m][ti].as_ref().expect("filtered to Some");
+        let t = meshes[m][ti];
+        let corners = [
+            R3::from_vec3(t[0]),
+            R3::from_vec3(t[1]),
+            R3::from_vec3(t[2]),
+        ];
+        let ca: [[f64; 3]; 3] = [
+            [t[0].x, t[0].y, t[0].z],
+            [t[1].x, t[1].y, t[1].z],
+            [t[2].x, t[2].y, t[2].z],
+        ];
+        let cands_a: Vec<[f64; 3]> = cands.iter().map(approx3).collect();
+        let mut hits: Vec<(BitEdgeKey, R3)> = Vec::new();
+        for e in 0..3 {
+            let a = &corners[e];
+            let b = &corners[(e + 1) % 3];
+            let key = bit_edge_key(t[e], t[(e + 1) % 3]);
+            let sbox = seg_box3(ca[e], ca[(e + 1) % 3]);
+            for (pt, pt_a) in cands.iter().zip(&cands_a) {
+                // A point on the edge lies inside its inflated box; the
+                // reject skips the exact comparisons for everything else.
+                if !box3_contains(&sbox, *pt_a) {
+                    continue;
+                }
+                if !r3_eq(pt, a)
+                    && !r3_eq(pt, b)
+                    && point_on_segment_f(*pt_a, pt, ca[e], a, ca[(e + 1) % 3], b)
+                {
+                    hits.push((key, pt.clone()));
                 }
             }
+        }
+        hits
+    })?;
+    for (&(m, _), hits) in reg_work.iter().zip(&edge_hits) {
+        for (key, pt) in hits {
+            edge_registry[m].entry(*key).or_default().insert(pt.clone());
         }
     }
 
@@ -621,65 +651,89 @@ pub fn build_graph_with_token(
     // (entry/get), never iterated, and BTreeMap's exact rational comparisons
     // per probe dominated this phase on segment-heavy meshes.
     let mut seg_splits: HashMap<(R3Key, R3Key), BTreeSet<R3>> = HashMap::new();
-    for m in 0..2 {
-        for ti in 0..meshes[m].len() {
-            if cancelled() {
-                return None;
-            }
-            let Some(cands) = &candidates[m][ti] else { continue };
-            let cands_a: Vec<[f64; 3]> = cands.iter().map(approx3).collect();
-            for (a, b, _prov) in &prims[m][ti].segments {
-                let key = geo_edge_key(a, b);
-                let (aa, ba) = (approx3(a), approx3(b));
-                let sbox = seg_box3(aa, ba);
-                for (pt, pt_a) in cands.iter().zip(&cands_a) {
-                    if !box3_contains(&sbox, *pt_a) {
-                        continue;
-                    }
-                    if !r3_eq(pt, a) && !r3_eq(pt, b) && point_on_segment_f(*pt_a, pt, aa, a, ba, b) {
-                        seg_splits.entry(key.clone()).or_default().insert(pt.clone());
-                    }
+    let split_hits = crate::par::maybe_par_map_ct(reg_work.len(), 16, token, |i| {
+        let (m, ti) = reg_work[i];
+        let cands = candidates[m][ti].as_ref().expect("filtered to Some");
+        let cands_a: Vec<[f64; 3]> = cands.iter().map(approx3).collect();
+        let mut hits: Vec<(GeoEdgeKey, R3)> = Vec::new();
+        for (a, b, _prov) in &prims[m][ti].segments {
+            let key = geo_edge_key(a, b);
+            let (aa, ba) = (approx3(a), approx3(b));
+            let sbox = seg_box3(aa, ba);
+            for (pt, pt_a) in cands.iter().zip(&cands_a) {
+                if !box3_contains(&sbox, *pt_a) {
+                    continue;
+                }
+                if !r3_eq(pt, a) && !r3_eq(pt, b) && point_on_segment_f(*pt_a, pt, aa, a, ba, b) {
+                    hits.push((key.clone(), pt.clone()));
                 }
             }
+        }
+        hits
+    })?;
+    for hits in &split_hits {
+        for (key, pt) in hits {
+            seg_splits.entry(key.clone()).or_default().insert(pt.clone());
         }
     }
 
     crate::timing::print("robust: split registries", t_reg);
     let t_arr = crate::timing::start();
 
-    // 5. Build arrangements and emit pieces.
+    // 5. Build arrangements and emit pieces. The per-triangle arrangement
+    // (registry probes, CDT, crossings) is pure and runs in parallel; the
+    // interner is order-sensitive, so interning and piece emission replay
+    // the results strictly in worklist order — outputs are bit-identical to
+    // the sequential build.
+    enum TriResult {
+        /// Untouched triangle → whole piece, interned by f64 bits.
+        Untouched,
+        Arranged(arrangement::Arrangement),
+    }
+    let arr_work: Vec<(usize, usize)> = (0..2)
+        .flat_map(|m| (0..meshes[m].len()).map(move |ti| (m, ti)))
+        .filter(|&(m, ti)| live[m][ti])
+        .collect();
+    let arr_results = crate::par::maybe_par_map_ct(arr_work.len(), 16, token, |i| {
+        let (m, ti) = arr_work[i];
+        let t = meshes[m][ti];
+        let pr = &prims[m][ti];
+        // Boundary split points for this triangle (bit-keyed: uncut
+        // triangles probe with zero rational work).
+        let mut extra: BTreeSet<R3> = BTreeSet::new();
+        for e in 0..3 {
+            if let Some(set) = edge_registry[m].get(&bit_edge_key(t[e], t[(e + 1) % 3])) {
+                extra.extend(set.iter().cloned());
+            }
+        }
+        // Split points along this triangle's intersection segments
+        // discovered by the other side.
+        for (a, b, _) in &pr.segments {
+            if let Some(set) = seg_splits.get(&geo_edge_key(a, b)) {
+                extra.extend(set.iter().cloned());
+            }
+        }
+
+        if pr.points.is_empty() && pr.segments.is_empty() && extra.is_empty() {
+            return Some(TriResult::Untouched);
+        }
+        let mut input = ArrangementInput {
+            points: pr.points.clone(),
+            segments: pr.segments.clone(),
+        };
+        for pt in extra {
+            input.points.push((pt, usize::MAX));
+        }
+        arrangement::build(t, &input, token).map(TriResult::Arranged)
+    })?;
+
     let mut pieces: Vec<Piece> = Vec::new();
     let mut isect_edges: HashSet<EdgeKey> = HashSet::new();
     let mut interner = VertInterner::default();
-
-    for m in 0..2 {
-        for ti in 0..meshes[m].len() {
-            if cancelled() {
-                return None;
-            }
-            if !live[m][ti] {
-                continue;
-            }
-            let t = meshes[m][ti];
-            let pr = &prims[m][ti];
-            // Boundary split points for this triangle (bit-keyed: uncut
-            // triangles probe with zero rational work).
-            let mut extra: BTreeSet<R3> = BTreeSet::new();
-            for e in 0..3 {
-                if let Some(set) = edge_registry[m].get(&bit_edge_key(t[e], t[(e + 1) % 3])) {
-                    extra.extend(set.iter().cloned());
-                }
-            }
-            // Split points along this triangle's intersection segments
-            // discovered by the other side.
-            for (a, b, _) in &pr.segments {
-                if let Some(set) = seg_splits.get(&geo_edge_key(a, b)) {
-                    extra.extend(set.iter().cloned());
-                }
-            }
-
-            if pr.points.is_empty() && pr.segments.is_empty() && extra.is_empty() {
-                // Untouched triangle → whole piece, interned by f64 bits.
+    for (&(m, ti), result) in arr_work.iter().zip(arr_results) {
+        let t = meshes[m][ti];
+        match result? {
+            TriResult::Untouched => {
                 pieces.push(Piece {
                     mesh: m as u8,
                     tri: ti,
@@ -689,35 +743,27 @@ pub fn build_graph_with_token(
                         interner.intern_f64(t[2]),
                     ],
                 });
-                continue;
             }
-
-            let mut input = ArrangementInput {
-                points: pr.points.clone(),
-                segments: pr.segments.clone(),
-            };
-            for pt in extra {
-                input.points.push((pt, usize::MAX));
-            }
-            let arr = arrangement::build(t, &input, token)?;
-            // Intern each arrangement point once; sub-triangles and
-            // constraint edges then only shuffle ids.
-            let ids: Vec<u32> = arr.points3.iter().map(|p| interner.intern(p)).collect();
-            for (u, w) in arr.constraints.keys() {
-                isect_edges.insert(edge_key(ids[*u], ids[*w]));
-            }
-            for st in &arr.tris {
-                let (a, b, c) = (st[0], st[1], st[2]);
-                let vi = if arr.flipped {
-                    [ids[a], ids[c], ids[b]]
-                } else {
-                    [ids[a], ids[b], ids[c]]
-                };
-                pieces.push(Piece {
-                    mesh: m as u8,
-                    tri: ti,
-                    vi,
-                });
+            TriResult::Arranged(arr) => {
+                // Intern each arrangement point once; sub-triangles and
+                // constraint edges then only shuffle ids.
+                let ids: Vec<u32> = arr.points3.iter().map(|p| interner.intern(p)).collect();
+                for (u, w) in arr.constraints.keys() {
+                    isect_edges.insert(edge_key(ids[*u], ids[*w]));
+                }
+                for st in &arr.tris {
+                    let (a, b, c) = (st[0], st[1], st[2]);
+                    let vi = if arr.flipped {
+                        [ids[a], ids[c], ids[b]]
+                    } else {
+                        [ids[a], ids[b], ids[c]]
+                    };
+                    pieces.push(Piece {
+                        mesh: m as u8,
+                        tri: ti,
+                        vi,
+                    });
+                }
             }
         }
     }
@@ -803,6 +849,21 @@ struct SelfCutStats {
     full_point: usize,
     full_seg_benign: usize,
     full_secs: f64,
+}
+
+impl SelfCutStats {
+    /// Merge a worker's counters. Only diagnostics — `full_secs` summed
+    /// across workers reports aggregate CPU seconds, not wall time.
+    fn add(&mut self, o: &SelfCutStats) {
+        self.identical += o.identical;
+        self.edge_benign += o.edge_benign;
+        self.vert_benign += o.vert_benign;
+        self.full += o.full;
+        self.full_none += o.full_none;
+        self.full_point += o.full_point;
+        self.full_seg_benign += o.full_seg_benign;
+        self.full_secs += o.full_secs;
+    }
 }
 
 fn real_self_contact(
