@@ -121,8 +121,46 @@ const MODEL_92068: &[u8] = include_bytes!("testdata/92068.stl");
 const MODEL_39926: &[u8] = include_bytes!("testdata/39926.stl");
 const FRAME_1075458: &[u8] = include_bytes!("testdata/1075458.stl");
 const TOWER_91115: &[u8] = include_bytes!("testdata/91115.stl");
+/// Every wall's winding step must equal the difference between the cells it
+/// separates. A violation means the complex merged cells the geometry keeps
+/// apart — the condition that previously surfaced only as a hash-order
+/// dependent volume. Checked here on real, heavily self-intersecting scans
+/// rather than synthetic solids.
+fn assert_arrangement_consistent(a: &Manifold, b: &Manifold, what: &str) {
+    use crate::robust::{cells, intersection_graph, soup};
+    let p = soup::impl_to_tris(a.as_impl());
+    let q = soup::impl_to_tris(b.as_impl());
+    let graph = intersection_graph::build_graph(&p, &q);
+    let complex = cells::build_cells(&graph);
+    let wind = cells::propagate_from_outer(&graph, &complex);
+    let bad = cells::inconsistent_walls(&graph, &complex, &wind);
+    assert!(
+        bad.is_empty(),
+        "{what}: {} inconsistent walls of {} cells; first (piece, step, actual) = {:?}",
+        bad.len(),
+        complex.num_cells,
+        bad.first()
+    );
+}
+
+#[test]
+fn thingi_59082_arrangement_is_consistent() {
+    let a = import_stl_like_demo(CASTLE_STAIRS_59082);
+    let b = import_stl_like_demo(GROUND_1313535)
+        .rotate(162.0, 156.0, 337.0)
+        .translate(Vec3::new(0.3, 0.0, 0.0));
+    assert_arrangement_consistent(&a, &b, "59082 / 1313535");
+}
+
 const MODEL_74660: &[u8] = include_bytes!("testdata/74660.stl");
 const MODEL_1147177: &[u8] = include_bytes!("testdata/1147177.stl");
+
+#[test]
+fn thingi_74660_arrangement_is_consistent() {
+    let a = import_stl_like_demo(MODEL_74660);
+    let b = import_stl_like_demo(MODEL_1147177).translate(Vec3::new(0.3, 0.0, 0.0));
+    assert_arrangement_consistent(&a, &b, "74660 / 1147177");
+}
 
 /// Thingi10K #74660 union #1147177 (second demo repro of the same
 /// NotClosed family): the demo's default translate(0.3, 0, 0), no rotation.
