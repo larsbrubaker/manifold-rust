@@ -758,19 +758,6 @@ impl Cdt {
     }
 }
 
-/// Delaunay test on raw points: is the fourth point strictly inside the
-/// circumcircle of the (CCW) triangle? Kept for the validation in
-/// robust/cdt_tests.rs.
-#[cfg(test)]
-pub(super) fn is_strictly_non_delaunay(pts: &[R2], tri: [usize; 3], d: usize) -> bool {
-    incircle_h(
-        &homog2_of(&pts[tri[0]]),
-        &homog2_of(&pts[tri[1]]),
-        &homog2_of(&pts[tri[2]]),
-        &homog2_of(&pts[d]),
-    ) == Sign::Pos
-}
-
 #[cfg(test)]
 #[path = "cdt_tests.rs"]
 mod tests;
