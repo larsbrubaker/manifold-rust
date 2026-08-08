@@ -130,16 +130,42 @@ each for failures before the next. What that surfaced and fixed, in order:
   panic, no NotClosed, no wrong-volume verdicts). Only Cancelled on
   genuinely huge inputs (≥500 k tris).
 
+## The one robust-wrong verdict, fixed (`61b2dea`)
+
+#301921 ∪ rotated-self was the referee's only robust-wrong call (0.4033 vs
+true 0.4381). Root cause chain: the extracted boundary legitimately touches
+itself along edges (2k half-edges per id-edge); the generic import paired
+those fans arbitrarily; `cleanup_topology`'s `dedupe_edge`/`update_vert`
+then walked the crosslinked pairing out of the vertex star and physically
+moved geometry. `robust/pairing.rs` now pairs multi-edge fans geometrically
+(same solid wedge) and splits pinched vertices, making cleanup
+volume-neutral; the residual 0.6% (swap_degenerates acting on sign-flipped
+flood-filled normals) is resolved by skipping the swap for robust-assembled
+outputs — the first entry in `docs/CPP_DIVERGENCES.md` under the new
+documented-divergence policy. Robust volume is now extraction-exact on the
+repro and both engines agree with the referee.
+
+## Auto engine is clean-by-default (`7d86b25`)
+
+Auto routed to Exact for any manifold-connectivity operand, which shipped
+wrong volumes for manifold-but-self-overlapping inputs (gallery frame
+#92068 ∪ #39926: 15% overcount, operand overlap ratio 3.0). Auto now picks
+Exact only when both operands are manifold AND `has_self_intersections()`
+is false (cached exact self-scan, ~0.2 ms with collider reuse; duplicates
+count as contact). The demo badges self-intersecting operands under Auto.
+
 ## Open items, highest value first
 
 1. **Keep the batches doubling** until easy errors reappear or the corpus
-   is exhausted; referee anything with a >0.1% volume gap.
+   is exhausted; referee anything with a >0.1% volume gap. ~3,900 of 9,904
+   meshes covered; referee tally robust 52 – exact 1 (the 1 now fixed).
 2. **Big-mesh timeouts.** ≥500 k-tri self-intersecting meshes still blow
-   60 s (e.g. #98571). Next profile targets: the ~39 s wrapper cost of the
-   arrangements phase (interning, `extra` BTreeSet of rationals) and the
-   remaining prefix-scan pair loops.
-3. **Full-corpus confirmation sweep** once the easy-error stream is dry, to
-   put a final transition matrix against run 2's baseline window.
+   60 s. Next profile targets: the arrangements wrapper cost (interning,
+   `extra` BTreeSet of rationals) and the remaining prefix-scan pair loops.
+3. **Full-corpus confirmation sweep** once the easy-error stream is dry —
+   run 12's 100-slowest slice is the standing identity gate (latest: 95/100
+   bit-identical, drift ≤0.1% from the documented swap skip, no new
+   failures).
 
 ## Reproducing the data
 
