@@ -57,6 +57,10 @@ pub struct CellComplex {
     /// Compact cell id per (piece, side); index with [`node`].
     pub cell_of: Vec<u32>,
     pub num_cells: usize,
+    /// Distinct triangles of the arrangement, each with its coincident stack
+    /// collapsed into one winding step. Computed once here because both the
+    /// winding propagation and the extraction need it.
+    pub walls: Vec<Wall>,
 }
 
 impl CellComplex {
@@ -202,17 +206,23 @@ pub fn build_cells(graph: &IntersectionGraph) -> CellComplex {
         }
     }
 
-    // Compact the union-find roots into dense cell ids.
+    // Compact the union-find roots into dense cell ids. Roots are already
+    // node ids, so a flat table beats hashing here.
     let mut cell_of = vec![0u32; 2 * n];
-    let mut remap: HashMap<u32, u32> = HashMap::new();
+    let mut remap = vec![u32::MAX; 2 * n];
+    let mut num_cells = 0u32;
     for i in 0..(2 * n) {
-        let root = ds.find(i as u32);
-        let next = remap.len() as u32;
-        cell_of[i] = *remap.entry(root).or_insert(next);
+        let root = ds.find(i as u32) as usize;
+        if remap[root] == u32::MAX {
+            remap[root] = num_cells;
+            num_cells += 1;
+        }
+        cell_of[i] = remap[root];
     }
     CellComplex {
-        num_cells: remap.len(),
+        num_cells: num_cells as usize,
         cell_of,
+        walls: walls(graph),
     }
 }
 
@@ -432,7 +442,7 @@ fn cell_adjacency(
     complex: &CellComplex,
 ) -> Vec<Vec<(usize, [i32; 2])>> {
     let mut adj: Vec<Vec<(usize, [i32; 2])>> = vec![Vec::new(); complex.num_cells];
-    for Wall { rep, delta } in walls(graph) {
+    for &Wall { rep, delta } in &complex.walls {
         let (cn, ca) = (complex.cell(rep, NORMAL), complex.cell(rep, ANTI));
         if cn == ca {
             continue; // both sides in one cell: the sheet bounds nothing
@@ -461,7 +471,7 @@ pub fn inconsistent_walls(
     wind: &Windings,
 ) -> Vec<(usize, [i32; 2], [i32; 2])> {
     let mut bad = Vec::new();
-    for Wall { rep, delta } in walls(graph) {
+    for &Wall { rep, delta } in &complex.walls {
         let (cn, ca) = (complex.cell(rep, NORMAL), complex.cell(rep, ANTI));
         if cn == ca || !wind.known[cn] || !wind.known[ca] {
             continue;
@@ -508,7 +518,7 @@ pub fn extract(
     op: OpType,
 ) -> Vec<Piece> {
     let mut out = Vec::new();
-    for Wall { rep, .. } in walls(graph) {
+    for &Wall { rep, .. } in &complex.walls {
         let (cn, ca) = (complex.cell(rep, NORMAL), complex.cell(rep, ANTI));
         if cn == ca || !wind.known[cn] || !wind.known[ca] {
             continue;
@@ -537,6 +547,7 @@ pub fn extract(
 
 /// One distinct triangle of the arrangement, with the coincident stack that
 /// occupies it collapsed into a single winding step.
+#[derive(Clone, Copy)]
 pub struct Wall {
     /// Representative piece; its winding fixes the wall's normal side.
     pub rep: usize,
