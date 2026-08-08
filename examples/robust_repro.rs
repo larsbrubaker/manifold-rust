@@ -113,4 +113,106 @@ fn main() {
         out.num_tri(), out.num_vert(), out.volume(), out.surface_area(), out.status(),
         t0.elapsed().as_secs_f64() * 1e3,
     );
+
+    // REFEREE_SAMPLES=N arbitrates the union volume independently of both
+    // engines: stratified Monte Carlo over the joint bounding box with the
+    // exact winding query, plus the arrangement's inconsistent-wall count
+    // (same approach as examples/volume_referee.rs, generalized to a
+    // two-mesh frame). Union only.
+    let samples: usize = std::env::var("REFEREE_SAMPLES")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if samples > 0 && op == OpType::Add {
+        use manifold_rust::robust::exact::rational::R3;
+        use manifold_rust::robust::ray_shoot::{winding_number_indexed, WindingIndex};
+        use manifold_rust::robust::{cells, intersection_graph, soup};
+        let p = soup::impl_to_tris(a.as_impl());
+        let q = soup::impl_to_tris(b.as_impl());
+        let (mut min, mut max) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        for t in p.iter().chain(q.iter()) {
+            for v in t {
+                let c = [v.x, v.y, v.z];
+                for k in 0..3 {
+                    min[k] = min[k].min(c[k]);
+                    max[k] = max[k].max(c[k]);
+                }
+            }
+        }
+        let ext = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+        let idx_p = WindingIndex::new(&p);
+        let idx_q = WindingIndex::new(&q);
+        // SplitMix64, fixed seed.
+        let mut state = 0x5EED_CAFE_F00D_D1CEu64;
+        let mut rand = move || {
+            state = state.wrapping_add(0x9E3779B97F4A7C15);
+            let mut z = state;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+            ((z ^ (z >> 31)) >> 11) as f64 / (1u64 << 53) as f64
+        };
+        let mut hits = 0usize;
+        for _ in 0..samples {
+            let pt = R3::from_vec3(Vec3::new(
+                min[0] + ext[0] * rand(),
+                min[1] + ext[1] * rand(),
+                min[2] + ext[2] * rand(),
+            ));
+            if winding_number_indexed(&pt, &p, &idx_p) >= 1
+                || winding_number_indexed(&pt, &q, &idx_q) >= 1
+            {
+                hits += 1;
+            }
+        }
+        let vol_box = ext[0] * ext[1] * ext[2];
+        let frac = hits as f64 / samples as f64;
+        let (est, sigma) = (
+            vol_box * frac,
+            vol_box * (frac * (1.0 - frac) / samples as f64).sqrt(),
+        );
+        let bad = intersection_graph::build_graph_with_token(&p, &q, None)
+            .map(|graph| {
+                let complex = cells::build_cells(&graph);
+                let wind = cells::windings(&graph, &complex, [&p, &q]);
+                cells::inconsistent_walls(&complex, &wind).len()
+            })
+            .unwrap_or(usize::MAX);
+        println!("referee: volume {est:.7} ± {sigma:.7} ({samples} samples), inconsistent walls {bad}");
+        // Per-operand self-overlap: divergence-theorem volume (counts a
+        // doubly-wound region twice) over sampled once-counted material.
+        // A ratio away from 1.0 identifies the operand whose geometry
+        // self-overlaps despite clean manifold topology.
+        for (name, mani, tris, idx) in [("A", &a, &p, &idx_p), ("B", &b, &q, &idx_q)] {
+            let (mut omin, mut omax) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+            for t in tris.iter() {
+                for v in t {
+                    let c = [v.x, v.y, v.z];
+                    for k in 0..3 {
+                        omin[k] = omin[k].min(c[k]);
+                        omax[k] = omax[k].max(c[k]);
+                    }
+                }
+            }
+            let oext = [omax[0] - omin[0], omax[1] - omin[1], omax[2] - omin[2]];
+            let n = samples / 2;
+            let mut ohits = 0usize;
+            for _ in 0..n {
+                let pt = R3::from_vec3(Vec3::new(
+                    omin[0] + oext[0] * rand(),
+                    omin[1] + oext[1] * rand(),
+                    omin[2] + oext[2] * rand(),
+                ));
+                if winding_number_indexed(&pt, tris, idx) >= 1 {
+                    ohits += 1;
+                }
+            }
+            let sampled = oext[0] * oext[1] * oext[2] * ohits as f64 / n as f64;
+            println!(
+                "operand {name}: divergence volume {:.7}, sampled {{w>=1}} {:.7}, overlap ratio {:.3}",
+                mani.volume(),
+                sampled,
+                mani.volume() / sampled
+            );
+        }
+    }
 }
