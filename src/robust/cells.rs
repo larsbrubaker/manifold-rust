@@ -117,22 +117,28 @@ pub fn build_cells(graph: &IntersectionGraph) -> CellComplex {
     let n = graph.pieces.len();
     let ds = DisjointSets::new((2 * n).max(1) as u32);
 
-    // Edge → incident half-faces. Radial directions are filled per edge,
-    // since the (u, v) basis depends on the edge axis.
-    let mut incident: HashMap<EdgeKey, Vec<(usize, bool, u32)>> = HashMap::new();
+    // Incident half-faces per edge, as one flat array sorted by edge rather
+    // than a hash entry owning its own Vec: the allocation churn of ~3n tiny
+    // Vecs dominated cell construction on large arrangements.
+    let mut incident: Vec<(EdgeKey, usize, bool, u32)> = Vec::with_capacity(3 * n);
     for (pi, piece) in graph.pieces.iter().enumerate() {
         let vi = piece.vi;
         for e in 0..3 {
             let (a, b) = (vi[e], vi[(e + 1) % 3]);
-            let apex = vi[(e + 2) % 3];
-            incident
-                .entry(edge_key(a, b))
-                .or_default()
-                .push((pi, a < b, apex));
+            incident.push((edge_key(a, b), pi, a < b, vi[(e + 2) % 3]));
         }
     }
+    incident.sort_unstable();
 
-    for (key, raw) in &incident {
+    let mut at = 0;
+    while at < incident.len() {
+        let key = &incident[at].0;
+        let mut end = at + 1;
+        while end < incident.len() && incident[end].0 == *key {
+            end += 1;
+        }
+        let raw = &incident[at..end];
+        at = end;
         if raw.len() < 2 {
             continue; // a boundary edge bounds no wedge
         }
@@ -149,10 +155,10 @@ pub fn build_cells(graph: &IntersectionGraph) -> CellComplex {
                 [p.x, p.y, p.z]
             };
             let sign =
-                super::exact::approx::orient3d_a(pt(key.0), pt(key.1), pt(raw[0].2), pt(raw[1].2));
+                super::exact::approx::orient3d_a(pt(key.0), pt(key.1), pt(raw[0].3), pt(raw[1].3));
             if matches!(sign, Some(Sign::Neg) | Some(Sign::Pos)) {
-                let (p0, fw0) = (raw[0].0, raw[0].1);
-                let (p1, fw1) = (raw[1].0, raw[1].1);
+                let (p0, fw0) = (raw[0].1, raw[0].2);
+                let (p1, fw1) = (raw[1].1, raw[1].2);
                 ds.unite(node(p0, ccw_side(fw0)), node(p1, cw_side(fw1)));
                 ds.unite(node(p1, ccw_side(fw1)), node(p0, cw_side(fw0)));
                 continue;
@@ -216,7 +222,7 @@ pub fn build_cells(graph: &IntersectionGraph) -> CellComplex {
 fn radial_directions(
     k0: &R3,
     k1: &R3,
-    raw: &[(usize, bool, u32)],
+    raw: &[(EdgeKey, usize, bool, u32)],
     graph: &IntersectionGraph,
 ) -> Vec<Inc> {
     let w = k1.sub(k0);
@@ -241,7 +247,7 @@ fn radial_directions(
     let v = w.cross(&u);
 
     let mut out = Vec::with_capacity(raw.len());
-    for &(piece, forward, apex) in raw {
+    for &(_, piece, forward, apex) in raw {
         let a = &graph.verts[apex as usize];
         let (du_n, du_d) = super::exact::predicates::dot_diff_raw(a, k0, &u);
         let (dv_n, dv_d) = super::exact::predicates::dot_diff_raw(a, k0, &v);
