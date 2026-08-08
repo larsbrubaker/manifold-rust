@@ -600,7 +600,11 @@ pub fn build_graph_with_token(
         .filter(|&(m, ti)| candidates[m][ti].is_some())
         .collect();
 
-    let mut edge_registry: [HashMap<BitEdgeKey, BTreeSet<R3>>; 2] =
+    // Registry values are (points, seen) rather than BTreeSet: probes and
+    // dedup go through structural R3Key hashing, so the sequential merge
+    // never pays ordered rational comparisons, and the consuming `extra`
+    // sets see each point exactly once — the same content BTreeSet gave.
+    let mut edge_registry: [HashMap<BitEdgeKey, (Vec<R3>, HashSet<R3Key>)>; 2] =
         [HashMap::new(), HashMap::new()];
     let edge_hits = crate::par::maybe_par_map_ct(reg_work.len(), 16, token, |i| {
         let (m, ti) = reg_work[i];
@@ -641,7 +645,10 @@ pub fn build_graph_with_token(
     })?;
     for (&(m, _), hits) in reg_work.iter().zip(&edge_hits) {
         for (key, pt) in hits {
-            edge_registry[m].entry(*key).or_default().insert(pt.clone());
+            let e = edge_registry[m].entry(*key).or_default();
+            if e.1.insert(R3Key(pt.clone())) {
+                e.0.push(pt.clone());
+            }
         }
     }
 
@@ -650,7 +657,7 @@ pub fn build_graph_with_token(
     // Hash-keyed with structural R3Key hashing: the map is only ever probed
     // (entry/get), never iterated, and BTreeMap's exact rational comparisons
     // per probe dominated this phase on segment-heavy meshes.
-    let mut seg_splits: HashMap<(R3Key, R3Key), BTreeSet<R3>> = HashMap::new();
+    let mut seg_splits: HashMap<(R3Key, R3Key), (Vec<R3>, HashSet<R3Key>)> = HashMap::new();
     let split_hits = crate::par::maybe_par_map_ct(reg_work.len(), 16, token, |i| {
         let (m, ti) = reg_work[i];
         let cands = candidates[m][ti].as_ref().expect("filtered to Some");
@@ -673,7 +680,10 @@ pub fn build_graph_with_token(
     })?;
     for hits in &split_hits {
         for (key, pt) in hits {
-            seg_splits.entry(key.clone()).or_default().insert(pt.clone());
+            let e = seg_splits.entry(key.clone()).or_default();
+            if e.1.insert(R3Key(pt.clone())) {
+                e.0.push(pt.clone());
+            }
         }
     }
 
@@ -703,14 +713,14 @@ pub fn build_graph_with_token(
         let mut extra: BTreeSet<R3> = BTreeSet::new();
         for e in 0..3 {
             if let Some(set) = edge_registry[m].get(&bit_edge_key(t[e], t[(e + 1) % 3])) {
-                extra.extend(set.iter().cloned());
+                extra.extend(set.0.iter().cloned());
             }
         }
         // Split points along this triangle's intersection segments
         // discovered by the other side.
         for (a, b, _) in &pr.segments {
             if let Some(set) = seg_splits.get(&geo_edge_key(a, b)) {
-                extra.extend(set.iter().cloned());
+                extra.extend(set.0.iter().cloned());
             }
         }
 
