@@ -275,6 +275,29 @@ pub extern "C" fn manifold_rs_get_boolean_engine() -> i32 {
     }
 }
 
+/// Copy of `m` with inside-out shells rewound so every body reads as solid
+/// material under the robust engine's {winding >= 1} semantics: outermost
+/// shells end up winding +1 and legitimate cavity shells stay inward-wound.
+/// Coincident/doubled sheets are left untouched (the robust boolean's
+/// winding-stack arithmetic already classifies those). Works on both strict
+/// and robust-imported (soup) meshes, independent of any boolean call.
+/// Returns NULL only if `m` is NULL or the repair panics; a mesh that needs
+/// no repair comes back as a plain copy.
+///
+/// # Safety
+/// `m` must be NULL or a live handle from this library.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_repair_orientation(m: *const ManifoldRs) -> *mut ManifoldRs {
+    guard(ptr::null_mut(), || {
+        // SAFETY: caller contract; as_ref() handles the NULL case.
+        let Some(handle) = (unsafe { m.as_ref() }) else {
+            set_last_error("manifold_rs_repair_orientation: null manifold");
+            return ptr::null_mut();
+        };
+        into_handle(handle.inner.repair_orientation())
+    })
+}
+
 /// Copy of `m` re-tagged as an original mesh (a fresh mesh ID, no boolean
 /// history). NULL if `m` is NULL or the copy panics.
 ///

@@ -114,3 +114,59 @@ fn auto_engine_boolean_on_soup_through_batch() {
         manifold_rs_destroy(soup);
     }
 }
+
+/// Signed divergence-theorem volume from an exported MeshGL handle.
+unsafe fn exported_signed_volume(m: *const ManifoldRs) -> f64 {
+    let mesh = unsafe { manifold_rs_get_meshgl(m) };
+    assert!(!mesh.is_null());
+    let mut vlen = 0usize;
+    let mut tlen = 0usize;
+    let vp = unsafe { manifold_rs_meshgl_vert_properties(mesh, &mut vlen) };
+    let tv = unsafe { manifold_rs_meshgl_tri_verts(mesh, &mut tlen) };
+    let np = unsafe { manifold_rs_meshgl_num_prop(mesh) } as usize;
+    let verts = unsafe { slice_or_empty(vp, vlen) };
+    let tris = unsafe { slice_or_empty(tv, tlen) };
+    let p = |i: u32| {
+        let o = i as usize * np;
+        [verts[o] as f64, verts[o + 1] as f64, verts[o + 2] as f64]
+    };
+    let mut vol = 0.0;
+    for t in tris.chunks_exact(3) {
+        let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
+        vol += (a[0] * (b[1] * c[2] - b[2] * c[1])
+            - a[1] * (b[0] * c[2] - b[2] * c[0])
+            + a[2] * (b[0] * c[1] - b[1] * c[0]))
+            / 6.0;
+    }
+    unsafe { manifold_rs_meshgl_destroy(mesh) };
+    vol
+}
+
+#[test]
+fn repair_orientation_rewinds_inverted_cube() {
+    // The cube with every triangle reversed: a valid manifold wound
+    // inside-out, which encloses no {w >= 1} material until repaired.
+    let (verts, tris) = cube_mesh([0.0; 3], 2.0);
+    let inverted: Vec<u32> = tris
+        .chunks_exact(3)
+        .flat_map(|t| [t[0], t[2], t[1]])
+        .collect();
+    let broken = unsafe {
+        manifold_rs_from_mesh(verts.as_ptr(), verts.len(), inverted.as_ptr(), inverted.len(), 3)
+    };
+    assert_eq!(unsafe { manifold_rs_status(broken) }, 0);
+    assert!(unsafe { exported_signed_volume(broken) } < 0.0);
+
+    let repaired = unsafe { manifold_rs_repair_orientation(broken) };
+    assert!(!repaired.is_null());
+    assert_eq!(unsafe { manifold_rs_status(repaired) }, 0);
+    let vol = unsafe { exported_signed_volume(repaired) };
+    assert!((vol - 8.0).abs() < 1e-6, "expected +8, got {vol}");
+
+    // NULL contract.
+    assert!(unsafe { manifold_rs_repair_orientation(std::ptr::null()) }.is_null());
+    unsafe {
+        manifold_rs_destroy(repaired);
+        manifold_rs_destroy(broken);
+    }
+}

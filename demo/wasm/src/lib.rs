@@ -479,9 +479,27 @@ pub fn boolean_gallery_mesh_rotated(shape_a: i32, shape_b: i32, op: i32, offset_
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn boolean_gallery_mesh_engine(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32) -> MeshData {
+    boolean_gallery_mesh_repair(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, false)
+}
+
+/// [`boolean_gallery_mesh_engine`] with the orientation-repair toggle: when
+/// `repair` is set, both operands pass through
+/// `Manifold::repair_orientation` before the boolean. Built-in shapes are
+/// already outward-wound, so this is a visible no-op here — the toggle
+/// matters for imported Thingi10K pairs (`imported_boolean`) — but the flag
+/// is honored uniformly so the demo's one switch drives both paths.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn boolean_gallery_mesh_repair(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32, repair: bool) -> MeshData {
     // Distinct colors: shape A = blue (opaque), shape B = off-red (translucent)
-    let a = color_shape(&make_shape(shape_a), 0.27, 0.53, 0.80, 1.0);
-    let b = color_shape(&make_shape(shape_b), 0.85, 0.25, 0.25, 0.6);
+    let mut a = make_shape(shape_a);
+    let mut b = make_shape(shape_b);
+    if repair {
+        a = a.repair_orientation();
+        b = b.repair_orientation();
+    }
+    let a = color_shape(&a, 0.27, 0.53, 0.80, 1.0);
+    let b = color_shape(&b, 0.85, 0.25, 0.25, 0.6);
     // Rotate shape B about its offset center, then translate
     let b = b.rotate(rot_x, rot_y, rot_z).translate(Vec3::new(offset_x, offset_y, offset_z));
     let result = soup::op_with_engine(&a, &b, op, engine);

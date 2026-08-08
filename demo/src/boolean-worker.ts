@@ -8,7 +8,7 @@
 //     between the dev server and the GitHub Pages subpath).
 //   { type: 'import', slot: 'a'|'b', positions, indices }
 //   { type: 'run', seq, source: 'thingi'|'builtin', shapeA?, shapeB?,
-//     op, engine, ox, oy, oz, rx, ry, rz }
+//     op, engine, repair, ox, oy, oz, rx, ry, rz }
 // Replies (exactly one per import/run message, in order):
 //   { type: 'imported', slot, ok, status, is_soup, num_vert, num_tri }
 //   { type: 'result', seq, ok, data?, error?, elapsedMs }
@@ -78,12 +78,13 @@ async function handleMessage(msg: any) {
         if (!handles.a || !handles.b) throw new Error('operands not imported');
         raw = w.imported_boolean(
           handles.a, handles.b, msg.op, msg.engine,
-          msg.ox, msg.oy, msg.oz, msg.rx, msg.ry, msg.rz,
+          msg.ox, msg.oy, msg.oz, msg.rx, msg.ry, msg.rz, msg.repair ?? false,
         );
       } else {
-        raw = w.boolean_gallery_mesh_engine(
+        raw = w.boolean_gallery_mesh_repair(
           msg.shapeA, msg.shapeB, msg.op,
           msg.ox, msg.oy, msg.oz, msg.rx, msg.ry, msg.rz, msg.engine,
+          msg.repair ?? false,
         );
       }
       // Same extraction as wasm.ts toMeshData: capture the typed-array

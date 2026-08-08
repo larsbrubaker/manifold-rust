@@ -162,6 +162,7 @@ export function init(container: HTMLElement): () => void {
   let shapeB = loadSetting(DEMO, 'shapeB', 3);
   let op = loadSetting(DEMO, 'op', 0);
   let engine = loadSetting(DEMO, 'engine', 0) as BooleanEngine;
+  let repairOrientation = loadSetting(DEMO, 'repairOrientation', false);
   let offsetX = loadSetting(DEMO, 'offsetX', 0.3);
   let offsetY = loadSetting(DEMO, 'offsetY', 0.0);
   let offsetZ = loadSetting(DEMO, 'offsetZ', 0.0);
@@ -229,6 +230,7 @@ export function init(container: HTMLElement): () => void {
       frame: frameCount++,
       source,
       engine: ENGINE_NAMES[engine],
+      repair_orientation: repairOrientation,
       op: OP_NAMES[op] || op,
       offset: [offsetX, offsetY, offsetZ],
       rotation_degrees: [rotX, rotY, rotZ],
@@ -276,12 +278,12 @@ export function init(container: HTMLElement): () => void {
     const info = captureDebugInfo();
     const params: RunParams = inThingi()
       ? {
-          source: 'thingi', op, engine,
+          source: 'thingi', op, engine, repair: repairOrientation,
           ox: offsetX, oy: offsetY, oz: offsetZ, rx: rotX, ry: rotY, rz: rotZ,
           tag: { info, silent },
         }
       : {
-          source: 'builtin', shapeA, shapeB, op, engine,
+          source: 'builtin', shapeA, shapeB, op, engine, repair: repairOrientation,
           ox: offsetX, oy: offsetY, oz: offsetZ, rx: rotX, ry: rotY, rz: rotZ,
           tag: { info, silent },
         };
@@ -580,11 +582,19 @@ export function init(container: HTMLElement): () => void {
   // Engine first: it is the major choice (which pipeline runs at all), and
   // the operation is a detail within it.
   const engineCtl = createDropdown('Engine', ENGINES, String(engine), v => { engine = parseInt(v) as BooleanEngine; saveSetting(DEMO, 'engine', engine); update(); });
+  // Repair sits with the engine choice: it changes what the operands *mean*
+  // (inside-out bodies become solid material) before any boolean runs.
+  const repairBox = createCheckbox('Repair orientation', repairOrientation, v => {
+    repairOrientation = v;
+    saveSetting(DEMO, 'repairOrientation', v);
+    update();
+  });
   const opCtl = createDropdown('Operation', OPS, String(op), v => { op = parseInt(v); saveSetting(DEMO, 'op', op); update(); });
   const offXCtl = createSlider('Offset X ', -1.5, 1.5, offsetX, 0.1, v => { offsetX = v; saveSetting(DEMO, 'offsetX', v); update(); });
   const offYCtl = createSlider('Offset Y ', -1.5, 1.5, offsetY, 0.1, v => { offsetY = v; saveSetting(DEMO, 'offsetY', v); update(); });
   const offZCtl = createSlider('Offset Z ', -1.5, 1.5, offsetZ, 0.1, v => { offsetZ = v; saveSetting(DEMO, 'offsetZ', v); update(); });
   controlsEl.appendChild(engineCtl);
+  controlsEl.appendChild(repairBox);
   controlsEl.appendChild(opCtl);
   controlsEl.appendChild(offXCtl);
   controlsEl.appendChild(offYCtl);
@@ -629,6 +639,11 @@ export function init(container: HTMLElement): () => void {
   function setDropdownValue(ctl: HTMLElement, value: string) {
     const sel = ctl.querySelector('select');
     if (sel) sel.value = value;
+  }
+
+  function setCheckboxValue(ctl: HTMLElement, v: boolean) {
+    const input = ctl.querySelector('input');
+    if (input) input.checked = v;
   }
 
   function setSliderValue(ctl: HTMLElement, v: number) {
@@ -784,6 +799,11 @@ export function init(container: HTMLElement): () => void {
     if (opIdx >= 0) { op = opIdx; saveSetting(DEMO, 'op', op); setDropdownValue(opCtl, String(op)); }
     const engIdx = ENGINE_NAMES.indexOf(info.engine);
     if (engIdx >= 0) { engine = engIdx as BooleanEngine; saveSetting(DEMO, 'engine', engine); setDropdownValue(engineCtl, String(engine)); }
+    if (typeof info.repair_orientation === 'boolean') {
+      repairOrientation = info.repair_orientation;
+      saveSetting(DEMO, 'repairOrientation', repairOrientation);
+      setCheckboxValue(repairBox, repairOrientation);
+    }
     [offsetX, offsetY, offsetZ] = info.offset.map(Number) as [number, number, number];
     saveSetting(DEMO, 'offsetX', offsetX);
     saveSetting(DEMO, 'offsetY', offsetY);

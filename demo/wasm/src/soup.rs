@@ -95,7 +95,10 @@ impl ImportedMesh {
 
 /// Boolean between two imported meshes. `b` is rotated (degrees, XYZ order)
 /// about its own origin, then translated. op: 0=union, 1=intersection,
-/// 2=difference. engine: 0=Exact, 1=Robust, 2=Auto. Throws the result's
+/// 2=difference. engine: 0=Exact, 1=Robust, 2=Auto. When `repair` is set,
+/// `Manifold::repair_orientation` rewinds inside-out shells of both operands
+/// before the boolean, so inverted bodies contribute material instead of
+/// vanishing under the {winding >= 1} semantics. Throws the result's
 /// status string when the operation yields an error (e.g. "Not Manifold"
 /// when the Exact engine is handed soup geometry).
 #[wasm_bindgen]
@@ -111,18 +114,27 @@ pub fn imported_boolean(
     rot_x: f64,
     rot_y: f64,
     rot_z: f64,
+    repair: bool,
 ) -> Result<MeshData, JsValue> {
+    let (a_in, b_in) = if repair {
+        (
+            a.manifold.repair_orientation(),
+            b.manifold.repair_orientation(),
+        )
+    } else {
+        (a.manifold.clone(), b.manifold.clone())
+    };
     // Color the operands (A opaque blue, B translucent red). Both engines
     // carry properties through; only soup geometry cannot take them
     // (set_properties requires paired halfedges).
     let colorize = !a.is_soup() && !b.is_soup();
     let (a_m, b_m) = if colorize {
         (
-            crate::color_shape(&a.manifold, 0.27, 0.53, 0.80, 1.0),
-            crate::color_shape(&b.manifold, 0.85, 0.25, 0.25, 0.6),
+            crate::color_shape(&a_in, 0.27, 0.53, 0.80, 1.0),
+            crate::color_shape(&b_in, 0.85, 0.25, 0.25, 0.6),
         )
     } else {
-        (a.manifold.clone(), b.manifold.clone())
+        (a_in, b_in)
     };
     let b_m = b_m
         .rotate(rot_x, rot_y, rot_z)

@@ -156,6 +156,17 @@ int32_t manifold_rs_set_boolean_engine(int32_t engine);
 int32_t manifold_rs_get_boolean_engine(void);
 
 /*
+ * Copy of m with inside-out shells rewound so every body reads as solid
+ * material under the robust engine's winding >= 1 semantics: outermost shells
+ * end up winding +1, legitimate cavity shells stay (or become) inward-wound,
+ * and coincident/doubled sheets are left untouched. Works on both strict and
+ * robust-imported (soup) meshes, before and independent of any boolean call.
+ * A mesh that needs no repair is returned as a plain copy. Returns NULL only
+ * if m is NULL or the repair panics.
+ */
+ManifoldRs* manifold_rs_repair_orientation(const ManifoldRs* m);
+
+/*
  * Copy of m re-tagged as an original mesh: it is given a fresh mesh ID and its
  * boolean history is dropped, so results derived from it report that ID in
  * their run_original_id. Returns NULL if m is NULL or the copy panics.
