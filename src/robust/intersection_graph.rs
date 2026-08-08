@@ -746,11 +746,11 @@ fn real_self_contact(
     //
     // Exactly identical triangles (all three vertices coincide — doubled
     // surfaces, which some scans apply to their whole mesh) need no cut:
-    // both emit whole pieces with identical interned ids, and the global
-    // coincident binding in classify::bind_coincident reduces the stack
-    // (same winding keeps one representative, opposite windings cancel).
-    // Cutting them instead would drag every such triangle through the full
-    // arrangement pipeline along its own boundary, for nothing.
+    // both emit whole pieces with identical interned ids, so they land on
+    // one wall in robust/cells.rs and their winding steps add (a doubled
+    // sheet steps by two, a fold cancels to zero). Cutting them instead
+    // would drag every such triangle through the full arrangement pipeline
+    // along its own boundary, for nothing.
 
     // Adjacency fast paths — the overwhelming bulk of same-mesh box-overlap
     // pairs are edge- or vertex-neighbors whose only contact is that shared

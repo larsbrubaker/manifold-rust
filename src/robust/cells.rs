@@ -35,7 +35,6 @@ use num_traits::{Signed, Zero};
 use crate::disjoint_sets::DisjointSets;
 use crate::linalg::Vec3;
 
-use super::classify::angle_cmp;
 use super::exact::rational::R3;
 use super::exact::Sign;
 use super::intersection_graph::{edge_key, EdgeKey, IntersectionGraph, Piece};
@@ -78,6 +77,33 @@ struct Inc {
     /// Radial direction of the opposite vertex, in the edge's (u, v) basis.
     du: BigRational,
     dv: BigRational,
+}
+
+/// CCW angular comparison of two nonzero direction vectors, by pure sign
+/// arithmetic — quadrant first, then cross-product sign within a quadrant.
+/// No trigonometry, so the radial order around an edge is exact.
+fn angle_cmp(a: (&BigRational, &BigRational), b: (&BigRational, &BigRational)) -> Ordering {
+    fn quadrant(du: &BigRational, dv: &BigRational) -> u8 {
+        let (su, sv) = (Sign::of_rat(du), Sign::of_rat(dv));
+        debug_assert!(!(su == Sign::Zero && sv == Sign::Zero), "zero direction");
+        match (su, sv) {
+            (Sign::Pos, Sign::Pos) | (Sign::Pos, Sign::Zero) => 0,
+            (Sign::Zero, Sign::Pos) | (Sign::Neg, Sign::Pos) => 1,
+            (Sign::Neg, Sign::Zero) | (Sign::Neg, Sign::Neg) => 2,
+            _ => 3,
+        }
+    }
+    let (qa, qb) = (quadrant(a.0, a.1), quadrant(b.0, b.1));
+    if qa != qb {
+        return qa.cmp(&qb);
+    }
+    // Same quadrant: CCW order by cross-product sign. Cleared of the four
+    // (positive) denominators so unreduced fractions compare without gcds:
+    //   sign(a0·b1 − a1·b0) = sign(n_a0·n_b1·d_a1·d_b0 − n_a1·n_b0·d_a0·d_b1)
+    let lhs = a.0.numer() * b.1.numer() * a.1.denom() * b.0.denom();
+    let rhs = a.1.numer() * b.0.numer() * a.0.denom() * b.1.denom();
+    // Descending cross sign = CCW order: Pos → Less, Neg → Greater.
+    rhs.cmp(&lhs)
 }
 
 /// The side of a half-face that faces counter-clockwise (increasing radial

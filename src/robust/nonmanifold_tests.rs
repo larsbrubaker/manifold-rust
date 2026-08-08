@@ -166,9 +166,10 @@ fn doubled_cover_operand() {
     // Every facet listed twice with the same winding — a doubled cover, as
     // some Thingi10K scans ship (#92068 triples every facet). The regularized
     // boolean must emit each surface element once: exactly-coincident
-    // same-mesh pieces reduce to a single representative in
-    // classify::bind_coincident, otherwise the output surface is multiply
-    // covered and stops being closed where it meets the other operand.
+    // pieces share one wall in robust/cells.rs, whose winding step is the
+    // sum of the stack, and extraction emits a single representative —
+    // otherwise the output surface is multiply covered and stops being
+    // closed where it meets the other operand.
     let mut tris = cube_tris([0.0; 3], [2.0; 3]);
     tris.extend(cube_tris([0.0; 3], [2.0; 3]));
     let soup = soup_manifold(&tris);

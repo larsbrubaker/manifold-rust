@@ -35,19 +35,17 @@
 // face — which is what makes the result closed and consistently oriented no
 // matter how the input was wound.
 //
-// `classify` and `propagate` are retained for the ring regularization and
-// flood-fill they still provide to other callers; the boolean path no longer
-// needs either, since thin material now cancels arithmetically in the
-// winding sum instead of being discarded up front.
+// The paper's explicit regularization pass — radial ring cancellation and
+// coincident-piece binding — has no counterpart here: thin material cancels
+// arithmetically in the winding sum, so there is nothing to discard up
+// front.
 
 pub mod arrangement;
 pub mod assemble;
 pub mod cdt;
 pub mod cells;
-pub mod classify;
 pub mod exact;
 pub mod intersection_graph;
-pub mod propagate;
 pub mod ray_shoot;
 pub mod soup;
 pub mod tri_tri;
