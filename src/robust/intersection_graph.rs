@@ -227,6 +227,30 @@ fn approx3(p: &R3) -> [f64; 3] {
 
 /// Filtered point-on-segment: the approx prefilter rejects the generic case
 /// without touching BigInt; only near-incidences run the exact test.
+/// Conservative 3D box `[min; 3], [max; 3]` around a segment's exact
+/// endpoints from their correctly rounded approximations, inflated past
+/// rounding error — a point exactly on the segment is never rejected by
+/// testing its approximation against this box. Mirrors the 2D prefilter in
+/// robust/arrangement.rs; the registry sweeps below were quadratic in exact
+/// comparisons without it.
+#[inline]
+fn seg_box3(a: [f64; 3], b: [f64; 3]) -> [[f64; 3]; 2] {
+    let pad = |x: f64| x.abs() * 1e-15 + f64::MIN_POSITIVE;
+    let mut lo = [0.0; 3];
+    let mut hi = [0.0; 3];
+    for k in 0..3 {
+        let (l, h) = (a[k].min(b[k]), a[k].max(b[k]));
+        lo[k] = l - pad(l);
+        hi[k] = h + pad(h);
+    }
+    [lo, hi]
+}
+
+#[inline]
+fn box3_contains(b: &[[f64; 3]; 2], p: [f64; 3]) -> bool {
+    (0..3).all(|k| p[k] >= b[0][k] && p[k] <= b[1][k])
+}
+
 fn point_on_segment_f(p_approx: [f64; 3], p: &R3, a_approx: [f64; 3], a: &R3, b_approx: [f64; 3], b: &R3) -> bool {
     match super::exact::approx::not_on_segment_a(p_approx, a_approx, b_approx) {
         Some(false) => false,
@@ -571,7 +595,13 @@ pub fn build_graph_with_token(
                 let a = &corners[e];
                 let b = &corners[(e + 1) % 3];
                 let key = bit_edge_key(t[e], t[(e + 1) % 3]);
+                let sbox = seg_box3(ca[e], ca[(e + 1) % 3]);
                 for (pt, pt_a) in cands.iter().zip(&cands_a) {
+                    // A point on the edge lies inside its inflated box; the
+                    // reject skips the exact comparisons for everything else.
+                    if !box3_contains(&sbox, *pt_a) {
+                        continue;
+                    }
                     if !r3_eq(pt, a)
                         && !r3_eq(pt, b)
                         && point_on_segment_f(*pt_a, pt, ca[e], a, ca[(e + 1) % 3], b)
@@ -596,7 +626,11 @@ pub fn build_graph_with_token(
             for (a, b, _prov) in &prims[m][ti].segments {
                 let key = geo_edge_key(a, b);
                 let (aa, ba) = (approx3(a), approx3(b));
+                let sbox = seg_box3(aa, ba);
                 for (pt, pt_a) in cands.iter().zip(&cands_a) {
+                    if !box3_contains(&sbox, *pt_a) {
+                        continue;
+                    }
                     if !r3_eq(pt, a) && !r3_eq(pt, b) && point_on_segment_f(*pt_a, pt, aa, a, ba, b) {
                         seg_splits.entry(key.clone()).or_default().insert(pt.clone());
                     }

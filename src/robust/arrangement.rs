@@ -91,6 +91,42 @@ pub mod stats {
     }
 }
 
+/// Conservative 2D box `[min_x, min_y, max_x, max_y]` around exact points
+/// from their correctly rounded f64 approximations: inflated past rounding
+/// error, so geometry lying exactly on/inside the exact hull is never
+/// rejected by a box test on the approximations. Used to prefilter the
+/// quadratic sweeps below — Thingi10K's scan-like inputs put hundreds of
+/// short segments in one triangle, and paying an (often escalating) exact
+/// predicate per pair made 4k-triangle meshes run for minutes.
+#[inline]
+fn approx_box(pts: &[[f64; 2]]) -> [f64; 4] {
+    let (mut b, rest) = ([pts[0][0], pts[0][1], pts[0][0], pts[0][1]], &pts[1..]);
+    for p in rest {
+        b[0] = b[0].min(p[0]);
+        b[1] = b[1].min(p[1]);
+        b[2] = b[2].max(p[0]);
+        b[3] = b[3].max(p[1]);
+    }
+    // ~4.5 ulp of slack (rounding error is ≤ 0.5 ulp) plus a subnormal floor.
+    let pad = |x: f64| x.abs() * 1e-15 + f64::MIN_POSITIVE;
+    [
+        b[0] - pad(b[0]),
+        b[1] - pad(b[1]),
+        b[2] + pad(b[2]),
+        b[3] + pad(b[3]),
+    ]
+}
+
+#[inline]
+fn boxes_overlap(a: &[f64; 4], b: &[f64; 4]) -> bool {
+    a[0] <= b[2] && b[0] <= a[2] && a[1] <= b[3] && b[1] <= a[3]
+}
+
+#[inline]
+fn box_contains(b: &[f64; 4], p: [f64; 2]) -> bool {
+    p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3]
+}
+
 /// Build the arrangement of `input` on triangle `tri`. Primitives must
 /// already be clipped to the triangle (tri_tri output is), with rational
 /// coordinates on its plane.
@@ -181,11 +217,20 @@ pub fn build(
         orient2d_a(apts[i], apts[j], apts[k])
             .unwrap_or_else(|| orient2d_h(&homogs[i], &homogs[j], &homogs[k]))
     };
+    let seg_boxes: Vec<[f64; 4]> = segs
+        .iter()
+        .map(|s| approx_box(&[apts[s.a], apts[s.b]]))
+        .collect();
     for i in 0..segs.len() {
         if crate::cancel::is_cancelled(token) {
             return None;
         }
         for j in (i + 1)..segs.len() {
+            // A strict crossing lies in both exact boxes, which sit inside
+            // these inflated ones — the reject is conservative.
+            if !boxes_overlap(&seg_boxes[i], &seg_boxes[j]) {
+                continue;
+            }
             let (ia, ib) = (segs[i].a, segs[i].b);
             let (ic, id) = (segs[j].a, segs[j].b);
             let sc = o2(&apts, &homogs, ia, ib, ic);
@@ -231,6 +276,7 @@ pub fn build(
         if crate::cancel::is_cancelled(token) {
             return None;
         }
+        let sbox = approx_box(&[apts[seg.a], apts[seg.b]]);
         let (ha, hb) = (&homogs[seg.a], &homogs[seg.b]);
         // Segment direction cleared of denominators: v = (pb−pa)·(Bw·Aw).
         let vx = &hb.0 * &ha.2 - &ha.0 * &hb.2;
@@ -242,8 +288,14 @@ pub fn build(
         // rationals anywhere.
         let mut on_seg: Vec<(num_bigint::BigInt, num_bigint::BigInt, usize)> = Vec::new();
         for (idx, hp) in homogs.iter().enumerate() {
-            // Approx filter first: almost every point is certifiably off the
-            // segment's line; only near-collinear candidates pay for BigInt.
+            // A point on the segment lies in its exact box, so the inflated
+            // box test cannot reject a true hit.
+            if !box_contains(&sbox, apts[idx]) {
+                continue;
+            }
+            // Approx filter next: almost every remaining point is certifiably
+            // off the segment's line; only near-collinear candidates pay for
+            // BigInt.
             match orient2d_a(apts[seg.a], apts[seg.b], apts[idx]) {
                 Some(_) => continue, // certified nonzero → not collinear
                 None => {}
@@ -353,11 +405,18 @@ pub fn candidate_points(
     let o2 = |a: ([f64; 2], &Homog2), b: ([f64; 2], &Homog2), c: ([f64; 2], &Homog2)| -> Sign {
         orient2d_a(a.0, b.0, c.0).unwrap_or_else(|| orient2d_h(a.1, b.1, c.1))
     };
+    let seg_boxes: Vec<[f64; 4]> = apts
+        .iter()
+        .map(|(a, b)| approx_box(&[*a, *b]))
+        .collect();
     for i in 0..segs2.len() {
         if crate::cancel::is_cancelled(token) {
             return None;
         }
         for j in (i + 1)..segs2.len() {
+            if !boxes_overlap(&seg_boxes[i], &seg_boxes[j]) {
+                continue;
+            }
             let (a, b) = (
                 (apts[i].0, &homogs[i].0),
                 (apts[i].1, &homogs[i].1),
