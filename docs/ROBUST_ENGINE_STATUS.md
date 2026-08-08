@@ -1,6 +1,6 @@
 # Robust boolean engine — status
 
-Snapshot for picking this work up on another machine. Current as of `4381b88`
+Snapshot for picking this work up on another machine. Current as of `9fbc40a`
 on `main`.
 
 ## What changed
@@ -101,21 +101,45 @@ coordinate-rank diagonal, making the triangulation a function of coordinates
 — coincident copies agree by construction. Regression test:
 `thingi_36088_arrangement_is_consistent`.
 
+## Batch-mining findings (2026-08-08 session)
+
+The 8-hour full sweep was replaced by exponentially growing random batches
+(1, 2, 4, … 512 meshes; `--ids $(shuf …)` against `thingi_sweep.db`), mining
+each for failures before the next. What that surfaced and fixed, in order:
+
+- **Cocircular CDT tie fix validated** — it also cured the one real
+  NotClosed of the sequential window (#36374, now a regression test).
+- **Cancel was unresponsive** (#42211 ran 565 s past a 60 s deadline) —
+  token now checked per triangle and inside the arrangement sweeps
+  (`build_graph_with_token`); the same mesh stops within a second.
+- **Timeout family root-caused**: heavily self-intersecting scans put
+  hundreds of segments in single triangles, and the per-triangle quadratic
+  sweeps paid an exact predicate per pair. Conservative-box prefilters plus
+  a hashed segment registry cut #42211's robust pass from ~580 s to ~145 s
+  (crossings 205→18.5 s, candidate points 200→20 s, on-seg 83→6.9 s,
+  registries 72→27 s). Outputs unchanged. Remaining profile: arrangements
+  ~87 s (~39 s of it interning/dedup wrapper cost), candidate points 20 s.
+- **Referee tally through batch 256: robust right 31, exact right 0.**
+  Recurring exact-engine failure families: inverted meshes (referee finds
+  zero `{w≥1}` material, exact reports the divergence integral), and
+  N-times-wound shells (exact = N× the physical volume; the #138xxx family
+  is exactly 3×). Robust's occasional dramatic *simplifications* are also
+  correct: #88147 emits 430 tris vs exact's 2222 with identical volume and
+  area (coincident stacks cancelled arithmetically).
+- Batches 1 through 256: **zero robust-side hard failures at HEAD** (no
+  panic, no NotClosed, no wrong-volume verdicts). Only Cancelled on
+  genuinely huge inputs (≥500 k tris).
+
 ## Open items, highest value first
 
-1. **Corpus validation of the CDT tie fix.** Sweep run 2 (baseline, at
-   `a0869b6`, pre-fix) was in flight when the fix landed; when it completes,
-   run the full sweep again at the fixed commit and diff the transition
-   matrix. The `outer_cell` lesson stands: structural changes need the full
-   corpus.
-2. **Timeouts at 60s.** Collect run 2's `robust_status='Cancelled'` ids,
-   re-sweep them with `--timeout-secs 600` to see whether they complete at
-   all, then profile the worst.
-3. **Performance.** 1.44× wants a profiler, not another guess.
-4. **Referee the tail.** As run 2 accumulates, keep arbitrating new *large*
-   volume disagreements (`--from-run 2` or explicit `--ids`) to confirm the
-   robust-right pattern holds corpus-wide; sub-1% drift needs ~1e6+ samples
-   per mesh and is not worth it yet.
+1. **Keep the batches doubling** until easy errors reappear or the corpus
+   is exhausted; referee anything with a >0.1% volume gap.
+2. **Big-mesh timeouts.** ≥500 k-tri self-intersecting meshes still blow
+   60 s (e.g. #98571). Next profile targets: the ~39 s wrapper cost of the
+   arrangements phase (interning, `extra` BTreeSet of rationals) and the
+   remaining prefix-scan pair loops.
+3. **Full-corpus confirmation sweep** once the easy-error stream is dry, to
+   put a final transition matrix against run 2's baseline window.
 
 ## Reproducing the data
 
