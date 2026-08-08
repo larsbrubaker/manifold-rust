@@ -1,6 +1,6 @@
 # Robust boolean engine — status
 
-Snapshot for picking this work up on another machine. Current as of `1bf570c`
+Snapshot for picking this work up on another machine. Current as of `4381b88`
 on `main`.
 
 ## What changed
@@ -40,9 +40,11 @@ never material. Every operation is one predicate on the winding vector, so
 
 ## Current state
 
-All 643 library tests pass. `cargo test --release --lib`.
+All 644 library tests pass. `cargo test --release --lib`.
 
-Full-corpus sweep, **3781 of 9934 meshes** (run was still going):
+Full-corpus sweep, **3781 of 9934 meshes** (an earlier partial run on the
+other machine; a fresh full baseline is accumulating as run 2 of
+`thingi_sweep.db` on this one):
 
 | metric | value |
 |---|---|
@@ -60,20 +62,60 @@ two targeted optimizations after the first (skipping exact radial work on
 ordinary manifold edges) bought ~1% each, so profiling is needed before
 optimizing further rather than more guessing.
 
+## The volume disagreements are (mostly) the exact engine's fault
+
+The former top unknown is resolved in direction. `examples/volume_referee.rs`
+arbitrates a disagreement independently of both engines: it Monte-Carlo
+samples `vol({w_A ≥ 1} ∪ {w_B ≥ 1})` of the *inputs* with the exact winding
+query — the solid both engines claim to compute — and reports an estimate
+with a standard error. On the first 37 genuine volume disagreements of the
+fresh sweep:
+
+- **Robust right 9, exact right 0.** Every arbitrated large disagreement went
+  robust's way, including one where exact reported 0.297 for a model whose
+  `{w ≥ 1}` material is literally empty (referee: 0 hits in 100k samples).
+- The exact engine's failure signature is 2–3× **overcounting** on
+  self-overlapping scans: its volume integrates winding, so doubly-wound
+  regions count twice. The referee's `overlapA` column (divergence volume ÷
+  once-counted material of operand A) makes this visible per mesh.
+- The remaining ~26 were sub-1% differences inside sampling noise —
+  tessellation-level drift, not classification errors.
+
+Consequence: exact-vs-robust `match_ok` on self-intersecting inputs measures
+conformance to a broken reference. Treat volume mismatches as suspect-exact
+until the referee says otherwise.
+
+The sweep's `match_ok=0` bucket also conflates gates: of run 2's first 76
+mismatches, only 37 differed in volume; 18 differed only in area and 21 only
+in tri/vert counts (both advisory under derived orientation).
+
+## One real robust-side bug found and fixed
+
+Thingi10K #36088 (440 tris) produced 4 `inconsistent_walls`: a coincident
+doubled sheet's two copies triangulated an exactly-cocircular square with
+*opposite diagonals* (the CDT tie fell to construction history), so the stack
+split into vi-distinct walls declaring `[1,0]` steps across a `[2,0]`
+crossing. Windings survived only because BFS reached those cells by other
+paths. Fixed in `9350880`: cocircular flips now resolve toward a canonical
+coordinate-rank diagonal, making the triangulation a function of coordinates
+— coincident copies agree by construction. Regression test:
+`thingi_36088_arrangement_is_consistent`.
+
 ## Open items, highest value first
 
-1. **568 volume disagreements (17.6%).** The largest unknown. These are *not*
-   new — the pre-swap engine had a comparable rate on its overlap. Unresolved
-   whether the robust or the exact engine is wrong; the exact engine is the
-   nominal reference but these are self-intersecting inputs where its
-   assumptions are shaky. Start by bucketing: pick a handful, check whether the
-   robust result is closed and self-consistent (`cells::inconsistent_walls`),
-   and compare against a third opinion.
-2. **30 timeouts at 60s.** Sweep with a longer `--timeout-secs` to see whether
-   they complete at all, then profile the worst.
+1. **Corpus validation of the CDT tie fix.** Sweep run 2 (baseline, at
+   `a0869b6`, pre-fix) was in flight when the fix landed; when it completes,
+   run the full sweep again at the fixed commit and diff the transition
+   matrix. The `outer_cell` lesson stands: structural changes need the full
+   corpus.
+2. **Timeouts at 60s.** Collect run 2's `robust_status='Cancelled'` ids,
+   re-sweep them with `--timeout-secs 600` to see whether they complete at
+   all, then profile the worst.
 3. **Performance.** 1.44× wants a profiler, not another guess.
-4. **`is_strictly_non_delaunay` in `cdt.rs`** is dead — the one remaining
-   compiler warning.
+4. **Referee the tail.** As run 2 accumulates, keep arbitrating new *large*
+   volume disagreements (`--from-run 2` or explicit `--ids`) to confirm the
+   robust-right pattern holds corpus-wide; sub-1% drift needs ~1e6+ samples
+   per mesh and is not worth it yet.
 
 ## Reproducing the data
 
@@ -96,6 +138,16 @@ totals instead of transitions hid a real regression once already.
 **Gate:** volume + closure. Area and triangle counts are advisory — derived
 orientation and one-representative-per-stack legitimately change surface
 tessellation without changing the solid.
+
+**Arbitrating a disagreement:**
+
+```bash
+cargo run --release --example volume_referee -- --ids A,B,C --samples 100000
+```
+
+Prints the sampled ground-truth volume ±σ, both engines' answers, the
+arrangement's inconsistent-wall count, and operand A's self-overlap ratio.
+`--from-run N` pulls every `match_ok=0` mesh of a sweep run instead.
 
 ## Regression tests worth knowing about
 
