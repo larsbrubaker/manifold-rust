@@ -48,13 +48,15 @@ pub fn edge_key(a: u32, b: u32) -> EdgeKey {
 
 /// Canonical (lexicographically sorted) exact edge between two points —
 /// local key for the split-point registries built before interning exists.
-type GeoEdgeKey = (R3, R3);
+/// Wrapped in [`R3Key`] so the registry hashes structurally instead of
+/// comparing rationals per probe.
+type GeoEdgeKey = (R3Key, R3Key);
 
 fn geo_edge_key(a: &R3, b: &R3) -> GeoEdgeKey {
     if a <= b {
-        (a.clone(), b.clone())
+        (R3Key(a.clone()), R3Key(b.clone()))
     } else {
-        (b.clone(), a.clone())
+        (R3Key(b.clone()), R3Key(a.clone()))
     }
 }
 
@@ -615,7 +617,10 @@ pub fn build_graph_with_token(
 
     // 4c. Intersection-segment registry: for every pair segment, gather the
     // split points both sides know about.
-    let mut seg_splits: BTreeMap<GeoEdgeKey, BTreeSet<R3>> = BTreeMap::new();
+    // Hash-keyed with structural R3Key hashing: the map is only ever probed
+    // (entry/get), never iterated, and BTreeMap's exact rational comparisons
+    // per probe dominated this phase on segment-heavy meshes.
+    let mut seg_splits: HashMap<(R3Key, R3Key), BTreeSet<R3>> = HashMap::new();
     for m in 0..2 {
         for ti in 0..meshes[m].len() {
             if cancelled() {
