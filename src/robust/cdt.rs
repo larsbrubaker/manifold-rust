@@ -47,6 +47,13 @@ struct Cdt {
     /// Constraint recovery uses this to rotate around a vertex instead of
     /// scanning the whole triangulation.
     vert_tri: Vec<u32>,
+    /// Rank of each point in exact lexicographic (x, y) coordinate order.
+    /// Cocircular-tie flips key on this so the triangulation is a function
+    /// of the point coordinates, not of construction history — coincident
+    /// coplanar triangles must tile their shared region identically or the
+    /// cell complex sees one physical sheet crossing as several
+    /// vi-distinct walls with understated winding steps.
+    rank: Vec<u32>,
 }
 
 /// Constrained Delaunay triangulation of `points` inside the triangle formed
@@ -72,6 +79,17 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
         .iter()
         .map(|p| [rat_to_f64(&p.x), rat_to_f64(&p.y)])
         .collect();
+    let mut by_coord: Vec<usize> = (0..points.len()).collect();
+    by_coord.sort_by(|&i, &j| {
+        points[i]
+            .x
+            .cmp(&points[j].x)
+            .then_with(|| points[i].y.cmp(&points[j].y))
+    });
+    let mut rank = vec![0u32; points.len()];
+    for (r, &i) in by_coord.iter().enumerate() {
+        rank[i] = r as u32;
+    }
     let mut cdt = Cdt {
         pts: hom,
         apts,
@@ -83,6 +101,7 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
         }],
         suspects: Vec::new(),
         vert_tri: vec![0; points.len()],
+        rank,
     };
 
     for p in 3..cdt.pts.len() {
@@ -112,25 +131,43 @@ impl Cdt {
             .unwrap_or_else(|| orient2d_h(&self.pts[i], &self.pts[j], &self.pts[k]))
     }
 
-    /// Strict-incircle with the approx filter first, exact fallback.
+    /// Incircle sign with the approx filter first, exact fallback. `Pos`
+    /// means `d` is strictly inside the circumcircle of the (CCW) triangle;
+    /// `Zero` is an exact cocircular tie.
     #[inline]
-    fn nondelaunay(&self, tri: [usize; 3], d: usize) -> bool {
+    fn incircle(&self, tri: [usize; 3], d: usize) -> Sign {
         match incircle_a(
             self.apts[tri[0]],
             self.apts[tri[1]],
             self.apts[tri[2]],
             self.apts[d],
         ) {
-            Some(s) => s == Sign::Pos,
-            None => {
-                incircle_h(
-                    &self.pts[tri[0]],
-                    &self.pts[tri[1]],
-                    &self.pts[tri[2]],
-                    &self.pts[d],
-                ) == Sign::Pos
-            }
+            Some(s) => s,
+            None => incircle_h(
+                &self.pts[tri[0]],
+                &self.pts[tri[1]],
+                &self.pts[tri[2]],
+                &self.pts[d],
+            ),
         }
+    }
+
+    /// Strict Delaunay violation (see [`Cdt::incircle`]).
+    #[inline]
+    fn nondelaunay(&self, tri: [usize; 3], d: usize) -> bool {
+        self.incircle(tri, d) == Sign::Pos
+    }
+
+    /// Canonical identity of the diagonal {u, v}: the pair of coordinate
+    /// ranks, low first. Ranks order points by exact coordinates, so two
+    /// coincident coplanar triangles — which project into the same
+    /// dominant-axis plane and therefore hand this CDT the same coordinates
+    /// for shared points — agree on this key even though their local point
+    /// indices differ.
+    #[inline]
+    fn diag_key(&self, u: usize, v: usize) -> (u32, u32) {
+        let (ru, rv) = (self.rank[u], self.rank[v]);
+        (ru.min(rv), ru.max(rv))
     }
 
     /// `point_in_tri_2d` over the filtered predicate (same TriLoc semantics
@@ -396,8 +433,7 @@ impl Cdt {
     /// enqueues the two replacement triangles, and their neighbors get
     /// re-tested through the shared edges when those triangles are examined,
     /// so the worklist reaches everything the old global fixpoint rescan
-    /// reached. Exact incircle ties (cocircular quads) never flip, which
-    /// guarantees termination.
+    /// reached. Termination is argued at [`Cdt::try_flip`].
     fn legalize_suspects(&mut self) {
         while let Some(t) = self.suspects.pop() {
             if t >= self.tris.len() || !self.tris[t].alive {
@@ -416,9 +452,23 @@ impl Cdt {
         }
     }
 
-    /// Flip edge `e` of `t` if it is internal, unconstrained, strictly
-    /// non-Delaunay, and its quad is strictly convex. Returns whether a flip
-    /// happened.
+    /// Flip edge `e` of `t` if it is internal, unconstrained, its quad is
+    /// strictly convex, and the flip either repairs a strict Delaunay
+    /// violation or resolves an exact cocircular tie toward the canonical
+    /// (lowest [`Cdt::diag_key`]) diagonal. Returns whether a flip happened.
+    ///
+    /// Tie flips make the triangulation of a cocircular quad a function of
+    /// its point coordinates instead of its construction history, so
+    /// coincident coplanar triangles tile shared regions identically (found
+    /// on Thingi10K #36088, where a doubled sheet's two copies picked
+    /// opposite diagonals of an exact square and the cell complex saw four
+    /// [1,0]-step walls where the geometry has [2,0]-step stacks).
+    ///
+    /// Termination: a strict flip strictly lowers the lifted-paraboloid
+    /// volume; a tie flip keeps it equal (that is what cocircular means for
+    /// the lift) while strictly lowering the multiset of diagonal keys. The
+    /// pair (lift volume, key multiset) therefore strictly decreases
+    /// lexicographically on every flip.
     fn try_flip(&mut self, t: usize, e: usize) -> bool {
         if self.tris[t].con[e] {
             return false;
@@ -435,9 +485,15 @@ impl Cdt {
             self.tris[t].v[(e + 2) % 3],
         );
         let d = self.tris[n].v[(ne + 2) % 3];
-        // Strict Delaunay violation?
-        if !self.nondelaunay(self.tris[t].v, d) {
-            return false;
+        match self.incircle(self.tris[t].v, d) {
+            Sign::Neg => return false,
+            Sign::Zero => {
+                // Cocircular: flip only toward the canonical diagonal.
+                if self.diag_key(c, d) >= self.diag_key(a, b) {
+                    return false;
+                }
+            }
+            Sign::Pos => {}
         }
         // Strictly convex quad a-d-b-c (new triangles must be CCW)?
         if self.o2(a, d, c) != Sign::Pos || self.o2(d, b, c) != Sign::Pos {

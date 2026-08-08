@@ -262,3 +262,18 @@ fn thingi_939888_union_93557_is_closed() {
     // just sanity-check positivity here — status is the regression.
     assert!(result.volume() > 0.0, "union volume must be positive");
 }
+
+const MODEL_36088: &[u8] = include_bytes!("testdata/36088.stl");
+
+/// Thingi10K #36088 ∪ its rotated copy (the sweep's standard pass): found by
+/// the full-corpus sweep as the one mesh in its window whose arrangement
+/// carried inconsistent walls — winding steps that contradict the resolved
+/// cell windings. The union's volume was still right, but an inconsistent
+/// complex means cells were merged that the geometry keeps apart.
+#[test]
+fn thingi_36088_arrangement_is_consistent() {
+    let a = import_stl_like_demo(MODEL_36088);
+    assert_eq!(a.status(), Error::NoError, "operand A import");
+    let b = a.rotate(30.0, 45.0, 60.0).translate(Vec3::new(0.3, 0.0, 0.0));
+    assert_arrangement_consistent(&a, &b, "36088 ∪ rotated self");
+}
