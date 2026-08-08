@@ -29,9 +29,6 @@
 use std::cmp::Ordering;
 use std::collections::HashMap;
 
-use num_rational::BigRational;
-use num_traits::{Signed, Zero};
-
 use crate::disjoint_sets::DisjointSets;
 use crate::linalg::Vec3;
 
@@ -74,36 +71,8 @@ struct Inc {
     piece: usize,
     /// Traversal runs key.0 → key.1 (the edge's canonical direction).
     forward: bool,
-    /// Radial direction of the opposite vertex, in the edge's (u, v) basis.
-    du: BigRational,
-    dv: BigRational,
-}
-
-/// CCW angular comparison of two nonzero direction vectors, by pure sign
-/// arithmetic — quadrant first, then cross-product sign within a quadrant.
-/// No trigonometry, so the radial order around an edge is exact.
-fn angle_cmp(a: (&BigRational, &BigRational), b: (&BigRational, &BigRational)) -> Ordering {
-    fn quadrant(du: &BigRational, dv: &BigRational) -> u8 {
-        let (su, sv) = (Sign::of_rat(du), Sign::of_rat(dv));
-        debug_assert!(!(su == Sign::Zero && sv == Sign::Zero), "zero direction");
-        match (su, sv) {
-            (Sign::Pos, Sign::Pos) | (Sign::Pos, Sign::Zero) => 0,
-            (Sign::Zero, Sign::Pos) | (Sign::Neg, Sign::Pos) => 1,
-            (Sign::Neg, Sign::Zero) | (Sign::Neg, Sign::Neg) => 2,
-            _ => 3,
-        }
-    }
-    let (qa, qb) = (quadrant(a.0, a.1), quadrant(b.0, b.1));
-    if qa != qb {
-        return qa.cmp(&qb);
-    }
-    // Same quadrant: CCW order by cross-product sign. Cleared of the four
-    // (positive) denominators so unreduced fractions compare without gcds:
-    //   sign(a0·b1 − a1·b0) = sign(n_a0·n_b1·d_a1·d_b0 − n_a1·n_b0·d_a0·d_b1)
-    let lhs = a.0.numer() * b.1.numer() * a.1.denom() * b.0.denom();
-    let rhs = a.1.numer() * b.0.numer() * a.0.denom() * b.1.denom();
-    // Descending cross sign = CCW order: Pos → Less, Neg → Greater.
-    rhs.cmp(&lhs)
+    /// Vertex id of the opposite (apex) vertex.
+    apex: u32,
 }
 
 /// The side of a half-face that faces counter-clockwise (increasing radial
@@ -144,6 +113,15 @@ impl Inc {
 /// material cancels arithmetically in the winding sum, which is both simpler
 /// and more robust than deciding up front which sheets are real.
 pub fn build_cells(graph: &IntersectionGraph) -> CellComplex {
+    build_cells_with_token(graph, None).expect("uncancellable build_cells cannot cancel")
+}
+
+/// [`build_cells`] with cooperative cancellation, checked once per
+/// arrangement edge. Returns `None` when the token fires.
+pub fn build_cells_with_token(
+    graph: &IntersectionGraph,
+    token: Option<&crate::cancel::CancelToken>,
+) -> Option<CellComplex> {
     let n = graph.pieces.len();
     let ds = DisjointSets::new((2 * n).max(1) as u32);
 
@@ -162,6 +140,9 @@ pub fn build_cells(graph: &IntersectionGraph) -> CellComplex {
 
     let mut at = 0;
     while at < incident.len() {
+        if crate::cancel::is_cancelled(token) {
+            return None;
+        }
         let key = &incident[at].0;
         let mut end = at + 1;
         while end < incident.len() && incident[end].0 == *key {
@@ -194,19 +175,9 @@ pub fn build_cells(graph: &IntersectionGraph) -> CellComplex {
                 continue;
             }
         }
-        let k0 = &graph.verts[key.0 as usize];
-        let k1 = &graph.verts[key.1 as usize];
-        let mut incs = radial_directions(k0, k1, raw, graph);
-        if incs.len() < 2 {
+        let Some((incs, groups)) = radial_fan(key.0, key.1, raw, graph) else {
             continue;
-        }
-        incs.sort_by(|a, b| {
-            angle_cmp((&a.du, &a.dv), (&b.du, &b.dv)).then_with(|| a.piece.cmp(&b.piece))
-        });
-
-        // Group coincident radial directions into single walls, then link
-        // consecutive walls around the cyclic order.
-        let groups = group_by_angle(&incs);
+        };
         for gi in 0..groups.len() {
             let (s, e) = groups[gi];
             // All faces of a wall share the cell on each of its two sides.
@@ -245,78 +216,223 @@ pub fn build_cells(graph: &IntersectionGraph) -> CellComplex {
         }
         cell_of[i] = remap[root];
     }
-    CellComplex {
+    Some(CellComplex {
         num_cells: num_cells as usize,
         cell_of,
         walls: walls(graph),
+    })
+}
+
+/// Filtered orientation of apex `b` against apex `a` around the directed
+/// edge `k0 → k1`: `Pos` means `b` sits CCW of `a` by less than a half turn.
+/// The f64 filter (on the cached correctly rounded approximations) certifies
+/// almost every query; only near-coplanar apex pairs escalate to the exact
+/// rational determinant.
+fn orient_edge(graph: &IntersectionGraph, k0: u32, k1: u32, a: u32, b: u32) -> Sign {
+    let pt = |v: u32| {
+        let p = graph.verts_f64[v as usize];
+        [p.x, p.y, p.z]
+    };
+    match super::exact::approx::orient3d_a(pt(k0), pt(k1), pt(a), pt(b)) {
+        Some(s @ (Sign::Pos | Sign::Neg)) => s,
+        _ => super::exact::predicates::orient3d_r(
+            &graph.verts[k0 as usize],
+            &graph.verts[k1 as usize],
+            &graph.verts[a as usize],
+            &graph.verts[b as usize],
+        ),
     }
 }
 
-/// Radial direction of each incident face's apex, in a right-handed (u, v, w)
-/// basis with w along the edge — the same construction the ring
-/// regularization uses, so both agree on angular order.
-fn radial_directions(
-    k0: &R3,
-    k1: &R3,
+/// Exact radial direction of `a`'s apex about edge `k0 → k1`: the cross
+/// product `(k1−k0) × (a−k0)`. Zero iff the apex lies on the edge's axis.
+fn radial_cross(graph: &IntersectionGraph, k0: u32, k1: u32, a: u32) -> R3 {
+    let w = graph.verts[k1 as usize].sub(&graph.verts[k0 as usize]);
+    let d = graph.verts[a as usize].sub(&graph.verts[k0 as usize]);
+    w.cross(&d)
+}
+
+/// A value with a rigorous absolute error bound, tracked through the few
+/// operations the fan filters need. Inputs are correctly rounded f64
+/// approximations of exact rationals (error ≤ 0.5 ulp ≤ u·|x|), and every
+/// operation adds its own rounding term — the bound is conservative by
+/// construction, so a certified sign is exact. This matters because the fan
+/// geometry routinely subtracts nearly equal coordinates, where the input
+/// rounding error dwarfs a magnitude bound taken on the *differences*.
+#[derive(Clone, Copy)]
+struct Approx {
+    v: f64,
+    err: f64,
+}
+
+const U: f64 = f64::EPSILON;
+
+impl Approx {
+    /// A correctly rounded approximation of an exact value.
+    fn input(v: f64) -> Self {
+        Approx { v, err: U * v.abs() }
+    }
+    fn sub(self, o: Approx) -> Self {
+        let v = self.v - o.v;
+        Approx { v, err: self.err + o.err + U * v.abs() }
+    }
+    fn mul(self, o: Approx) -> Self {
+        let v = self.v * o.v;
+        Approx {
+            v,
+            err: self.v.abs() * o.err + self.err * o.v.abs() + self.err * o.err + U * v.abs(),
+        }
+    }
+    fn add(self, o: Approx) -> Self {
+        let v = self.v + o.v;
+        Approx { v, err: self.err + o.err + U * v.abs() }
+    }
+    fn sign(self) -> Option<Sign> {
+        if self.v.abs() > self.err {
+            Some(if self.v > 0.0 { Sign::Pos } else { Sign::Neg })
+        } else {
+            None
+        }
+    }
+}
+
+/// The three components of `(k1−k0) × (a−k0)` with error bounds.
+fn radial_cross_a(graph: &IntersectionGraph, k0: u32, k1: u32, a: u32) -> [Approx; 3] {
+    let p = |v: u32| {
+        let p = graph.verts_f64[v as usize];
+        [Approx::input(p.x), Approx::input(p.y), Approx::input(p.z)]
+    };
+    let (p0, p1, pa) = (p(k0), p(k1), p(a));
+    let w = [p1[0].sub(p0[0]), p1[1].sub(p0[1]), p1[2].sub(p0[2])];
+    let d = [pa[0].sub(p0[0]), pa[1].sub(p0[1]), pa[2].sub(p0[2])];
+    [
+        w[1].mul(d[2]).sub(w[2].mul(d[1])),
+        w[2].mul(d[0]).sub(w[0].mul(d[2])),
+        w[0].mul(d[1]).sub(w[1].mul(d[0])),
+    ]
+}
+
+/// Is the apex on the edge's axis (a degenerate sliver with no wedge)?
+/// A certifiably nonzero cross component proves off-axis; only near-axis
+/// apexes pay for the exact cross.
+fn on_axis(graph: &IntersectionGraph, k0: u32, k1: u32, a: u32) -> bool {
+    if radial_cross_a(graph, k0, k1, a)
+        .iter()
+        .any(|c| c.sign().is_some())
+    {
+        return false;
+    }
+    radial_cross(graph, k0, k1, a).is_zero()
+}
+
+/// For two apexes whose radial directions are exactly parallel (orient_edge
+/// returned Zero), do they point the same way (`Pos`, a coincident stack) or
+/// opposite ways (`Neg`, a fold)? Sign of the dot of the two radial crosses;
+/// exact fallback only when the error-tracked f64 dot cannot certify.
+fn same_ray_sign(graph: &IntersectionGraph, k0: u32, k1: u32, a: u32, b: u32) -> Sign {
+    let ca = radial_cross_a(graph, k0, k1, a);
+    let cb = radial_cross_a(graph, k0, k1, b);
+    let dot = ca[0]
+        .mul(cb[0])
+        .add(ca[1].mul(cb[1]))
+        .add(ca[2].mul(cb[2]));
+    if let Some(s) = dot.sign() {
+        return s;
+    }
+    let ea = radial_cross(graph, k0, k1, a);
+    let eb = radial_cross(graph, k0, k1, b);
+    let exact = &ea.x * &eb.x + &ea.y * &eb.y + &ea.z * &eb.z;
+    Sign::of_rat(&exact)
+}
+
+/// Radially sort the incident half-faces of one arrangement edge and group
+/// coincident directions, returning `None` when fewer than two off-axis
+/// faces remain.
+///
+/// The cyclic CCW order is derived from filtered orient3d queries against a
+/// reference apex (the first off-axis face) instead of exact coordinates in
+/// a rational basis: classify every face into {reference ray, CCW half,
+/// opposite ray, CW half}, then sort each open half by pairwise orientation.
+/// Two faces compare Equal exactly when their radial directions coincide, so
+/// the Equal-runs are the coincident walls. The starting point of a cyclic
+/// order is immaterial to the wedge links, which lets the whole fan run on
+/// the f64 filter in the common case — the rational-basis construction this
+/// replaces dominated cell construction on self-intersecting scans.
+fn radial_fan(
+    k0: u32,
+    k1: u32,
     raw: &[(EdgeKey, usize, bool, u32)],
     graph: &IntersectionGraph,
-) -> Vec<Inc> {
-    let w = k1.sub(k0);
-    let (ax, ay, az) = (w.x.abs(), w.y.abs(), w.z.abs());
-    let unit = |i: usize| {
-        let z = BigRational::zero;
-        let o = || BigRational::from_integer(1.into());
-        match i {
-            0 => R3::new(o(), z(), z()),
-            1 => R3::new(z(), o(), z()),
-            _ => R3::new(z(), z(), o()),
-        }
-    };
-    let k = if ax <= ay && ax <= az {
-        0
-    } else if ay <= az {
-        1
-    } else {
-        2
-    };
-    let u = w.cross(&unit(k));
-    let v = w.cross(&u);
-
-    let mut out = Vec::with_capacity(raw.len());
-    for &(_, piece, forward, apex) in raw {
-        let a = &graph.verts[apex as usize];
-        let (du_n, du_d) = super::exact::predicates::dot_diff_raw(a, k0, &u);
-        let (dv_n, dv_d) = super::exact::predicates::dot_diff_raw(a, k0, &v);
-        let du = BigRational::new_raw(du_n, du_d);
-        let dv = BigRational::new_raw(dv_n, dv_d);
-        if du.is_zero() && dv.is_zero() {
-            continue; // apex on the axis: a degenerate sliver, no wedge
-        }
-        out.push(Inc {
+) -> Option<(Vec<Inc>, Vec<(usize, usize)>)> {
+    let mut incs: Vec<Inc> = raw
+        .iter()
+        .filter(|&&(_, _, _, apex)| !on_axis(graph, k0, k1, apex))
+        .map(|&(_, piece, forward, apex)| Inc {
             piece,
             forward,
-            du,
-            dv,
-        });
+            apex,
+        })
+        .collect();
+    if incs.len() < 2 {
+        return None;
     }
-    out
-}
+    // Class of each face relative to the reference apex: 0 = on the
+    // reference ray, 1 = strictly CCW of it (first half turn), 2 = on the
+    // opposite ray, 3 = strictly CW (second half turn).
+    let r = incs[0].apex;
+    let class = |apex: u32| -> u8 {
+        if apex == r {
+            return 0;
+        }
+        match orient_edge(graph, k0, k1, r, apex) {
+            Sign::Pos => 1,
+            Sign::Neg => 3,
+            Sign::Zero => match same_ray_sign(graph, k0, k1, r, apex) {
+                Sign::Pos => 0,
+                Sign::Neg => 2,
+                Sign::Zero => unreachable!("parallel nonzero radial rays have nonzero dot"),
+            },
+        }
+    };
+    let classes: HashMap<u32, u8> = incs.iter().map(|i| (i.apex, class(i.apex))).collect();
+    incs.sort_by(|a, b| {
+        let (ca, cb) = (classes[&a.apex], classes[&b.apex]);
+        ca.cmp(&cb)
+            .then_with(|| {
+                if ca != 1 && ca != 3 || a.apex == b.apex {
+                    Ordering::Equal // same ray by class
+                } else {
+                    // Within an open half turn, Zero means the same ray (the
+                    // opposite ray would land in the other class).
+                    match orient_edge(graph, k0, k1, a.apex, b.apex) {
+                        Sign::Pos => Ordering::Less,
+                        Sign::Neg => Ordering::Greater,
+                        Sign::Zero => Ordering::Equal,
+                    }
+                }
+            })
+            .then_with(|| a.piece.cmp(&b.piece))
+    });
 
-/// Half-open `[start, end)` ranges of equal radial direction.
-fn group_by_angle(incs: &[Inc]) -> Vec<(usize, usize)> {
+    // Equal-direction runs become the walls.
     let mut groups = Vec::new();
     let mut i = 0;
     while i < incs.len() {
         let mut j = i + 1;
-        while j < incs.len()
-            && angle_cmp((&incs[i].du, &incs[i].dv), (&incs[j].du, &incs[j].dv)) == Ordering::Equal
-        {
+        while j < incs.len() && {
+            let (ci, cj) = (classes[&incs[i].apex], classes[&incs[j].apex]);
+            ci == cj
+                && (ci == 0
+                    || ci == 2
+                    || incs[i].apex == incs[j].apex
+                    || orient_edge(graph, k0, k1, incs[i].apex, incs[j].apex) == Sign::Zero)
+        } {
             j += 1;
         }
         groups.push((i, j));
         i = j;
     }
-    groups
+    Some((incs, groups))
 }
 
 /// Per-cell winding numbers, one entry per operand.

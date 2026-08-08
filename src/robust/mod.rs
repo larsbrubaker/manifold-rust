@@ -152,11 +152,10 @@ pub fn boolean(
         return cancelled_impl();
     };
     let t_cells = crate::timing::start();
-    let complex = cells::build_cells(&graph);
-    crate::timing::print("robust: cell complex", t_cells);
-    if is_cancelled(token) {
+    let Some(complex) = cells::build_cells_with_token(&graph, token) else {
         return cancelled_impl();
-    }
+    };
+    crate::timing::print("robust: cell complex", t_cells);
 
     // One exact query anchors each connected component; the rest of its
     // cells follow combinatorially.
