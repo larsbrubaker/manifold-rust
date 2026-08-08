@@ -7,6 +7,10 @@
 //
 // op: union|intersection|difference (default union)
 // engine: exact|robust|auto (default robust)
+//
+// REPAIR=1 in the environment applies `Manifold::repair_orientation` to both
+// operands after import (rewinding inside-out shells), so the effect of the
+// repair on a logged frame can be compared against the same frame without it.
 
 use manifold_rust::linalg::Vec3;
 use manifold_rust::manifold::Manifold;
@@ -93,8 +97,14 @@ fn main() {
             new_prop[3] = al;
         })
     };
-    let a0 = import_stl(&args[0]);
-    let b0 = import_stl(&args[1]);
+    let repair = std::env::var("REPAIR").is_ok_and(|v| v == "1");
+    let mut a0 = import_stl(&args[0]);
+    let mut b0 = import_stl(&args[1]);
+    if repair {
+        a0 = a0.repair_orientation();
+        b0 = b0.repair_orientation();
+        println!("repair_orientation applied to both operands");
+    }
     let both_solid = !a0.as_impl().is_soup && !b0.as_impl().is_soup;
     let (a, b) = if both_solid {
         (colorize(a0, 0.27, 0.53, 0.80, 1.0), colorize(b0, 0.85, 0.25, 0.25, 0.6))

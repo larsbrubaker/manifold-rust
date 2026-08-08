@@ -263,6 +263,115 @@ fn thingi_939888_union_93557_is_closed() {
     assert!(result.volume() > 0.0, "union volume must be positive");
 }
 
+const RECOGNIZER_68730: &[u8] = include_bytes!("testdata/68730.stl");
+
+/// Sampled volume of `{winding >= 1}` over the mesh's bounding box —
+/// stratified Monte Carlo with the exact winding query and a fixed SplitMix64
+/// seed, the same independent arbiter `examples/robust_repro.rs` uses
+/// (REFEREE_SAMPLES). Returns (estimate, one standard deviation).
+fn sampled_material(m: &Manifold, samples: usize) -> (f64, f64) {
+    use crate::robust::exact::rational::R3;
+    use crate::robust::ray_shoot::{winding_number_indexed, WindingIndex};
+    let tris = crate::robust::soup::impl_to_tris(m.as_impl());
+    let (mut min, mut max) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+    for t in &tris {
+        for v in t {
+            let c = [v.x, v.y, v.z];
+            for k in 0..3 {
+                min[k] = min[k].min(c[k]);
+                max[k] = max[k].max(c[k]);
+            }
+        }
+    }
+    let ext = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+    let idx = WindingIndex::new(&tris);
+    let mut state = 0x5EED_CAFE_F00D_D1CEu64;
+    let mut rand = move || {
+        state = state.wrapping_add(0x9E3779B97F4A7C15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        ((z ^ (z >> 31)) >> 11) as f64 / (1u64 << 53) as f64
+    };
+    let mut hits = 0usize;
+    for _ in 0..samples {
+        let pt = R3::from_vec3(Vec3::new(
+            min[0] + ext[0] * rand(),
+            min[1] + ext[1] * rand(),
+            min[2] + ext[2] * rand(),
+        ));
+        if winding_number_indexed(&pt, &tris, &idx) >= 1 {
+            hits += 1;
+        }
+    }
+    let vol_box = ext[0] * ext[1] * ext[2];
+    let frac = hits as f64 / samples as f64;
+    (
+        vol_box * frac,
+        vol_box * (frac * (1.0 - frac) / samples as f64).sqrt(),
+    )
+}
+
+/// Signed divergence-theorem volume (`Manifold::volume` hides the sign).
+fn signed_volume(m: &Manifold) -> f64 {
+    crate::robust::soup::impl_to_tris(m.as_impl())
+        .iter()
+        .map(|t| crate::linalg::dot(t[0], crate::linalg::cross(t[1], t[2])) / 6.0)
+        .sum()
+}
+
+/// Thingi10K #68730 ("recognizer cuerpo repaired"): edge/vertex manifold, but
+/// several of its bodies are wound inside-out, so under {w >= 1} semantics
+/// most of its geometry is not material and vanishes from booleans (operand
+/// overlap ratio ~13x in the demo's repro frames against #486860).
+/// `repair_orientation` must rewind those bodies so the mesh's enclosed
+/// volume matches what the independent winding sampler measures.
+#[test]
+fn thingi_68730_repair_orientation_restores_material() {
+    let broken = import_stl_like_demo(RECOGNIZER_68730);
+    assert_eq!(broken.status(), Error::NoError, "import");
+
+    const SAMPLES: usize = 20_000;
+    let (mat_broken, _) = sampled_material(&broken, SAMPLES);
+    let div_broken = signed_volume(&broken);
+    assert!(
+        div_broken.abs() > 5.0 * mat_broken,
+        "fixture regressed: divergence volume {div_broken} should dwarf sampled material {mat_broken}"
+    );
+
+    let repaired = broken.repair_orientation();
+    assert_eq!(repaired.status(), Error::NoError, "repair status");
+    assert_eq!(repaired.num_tri(), broken.num_tri());
+    assert!(!repaired.as_impl().is_soup, "68730 imports as a manifold");
+    assert!(repaired.as_impl().is_manifold(), "pairing must survive repair");
+
+    // Repaired, the divergence volume and the sampled {w >= 1} material must
+    // agree: every body now bounds solid material exactly once.
+    let (mat_fixed, sigma) = sampled_material(&repaired, SAMPLES);
+    let div_fixed = signed_volume(&repaired);
+    // Rewinding turns each inverted body's negative contribution positive,
+    // so the repaired total must exceed the broken total's magnitude.
+    assert!(
+        div_fixed >= div_broken.abs(),
+        "repair must add enclosed volume ({div_fixed} vs {div_broken})"
+    );
+    assert!(
+        (div_fixed - mat_fixed).abs() < 5.0 * sigma,
+        "repaired divergence volume {div_fixed} vs sampled material {mat_fixed} (sigma {sigma})"
+    );
+
+    // And the repaired bodies must survive a boolean: union with a probe box
+    // through the model keeps at least the mesh's own material.
+    let probe = Manifold::cube(Vec3::new(0.5, 0.5, 0.5), true);
+    let union = repaired.union_with_engine(&probe, BooleanEngine::Robust);
+    assert_eq!(union.status(), Error::NoError, "robust union status");
+    assert!(
+        union.volume() > div_fixed - 1e-9,
+        "union volume {} must contain the repaired material {div_fixed}",
+        union.volume()
+    );
+}
+
 const MODEL_36088: &[u8] = include_bytes!("testdata/36088.stl");
 const MODEL_36374: &[u8] = include_bytes!("testdata/36374.stl");
 

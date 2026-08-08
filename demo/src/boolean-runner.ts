@@ -27,6 +27,8 @@ export interface RunParams {
   shapeB?: number;
   op: number;
   engine: BooleanEngine;
+  /** Rewind inside-out shells of both operands before the boolean. */
+  repair: boolean;
   ox: number; oy: number; oz: number;
   rx: number; ry: number; rz: number;
   /** Opaque payload handed back with the result (debug info, flags). */

@@ -47,6 +47,7 @@ pub mod cells;
 pub mod exact;
 pub mod intersection_graph;
 pub mod ray_shoot;
+pub mod repair;
 pub mod soup;
 pub mod tri_tri;
 

@@ -350,6 +350,34 @@ impl Manifold {
         self.boolean_with_engine(other, op, crate::types::BooleanConfig::default_engine())
     }
 
+    /// Repair the winding of inside-out shells so every body reads as solid
+    /// material under the robust engine's {winding >= 1} semantics.
+    ///
+    /// Connected shells whose exact winding shows them inverted relative to
+    /// their nesting are rewound: outermost shells end up winding +1 and
+    /// cavity shells stay (or become) correctly inward-wound — legitimate
+    /// voids are preserved, unlike a blanket flip of negative-signed-volume
+    /// shells. Coincident/doubled sheets are deliberately left untouched;
+    /// the robust boolean's winding-stack arithmetic already handles them.
+    ///
+    /// Works standalone (no boolean required) on both manifold and
+    /// soup-backed impls; positions, properties, and mesh relations are
+    /// untouched, only triangle winding changes. Returns `self` unchanged
+    /// when nothing needs flipping.
+    pub fn repair_orientation(&self) -> Self {
+        if self.is_empty() {
+            return self.clone();
+        }
+        let tris = crate::robust::soup::impl_to_tris(&self.imp);
+        let plan = crate::robust::repair::plan_repair(&tris);
+        if plan.is_noop() {
+            return self.clone();
+        }
+        let mut out = self.imp.clone();
+        crate::robust::repair::apply_flips(&mut out, &plan.flip);
+        Self::from_impl(out)
+    }
+
     /// [`Manifold::boolean`] with an explicit engine choice, overriding the
     /// process-global default set via
     /// [`crate::types::BooleanConfig::set_default_engine`].
