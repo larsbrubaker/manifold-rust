@@ -10,7 +10,6 @@ export class ThreeViewer {
   private scene: THREE.Scene;
   private camera: THREE.PerspectiveCamera;
   private controls: OrbitControls;
-  private backMesh: THREE.Mesh | null = null;
   private frontMesh: THREE.Mesh | null = null;
   private wireMesh: THREE.LineSegments | null = null;
   private showWireframe = false;
@@ -101,10 +100,8 @@ export class ThreeViewer {
       (this.xrayMesh.material as THREE.Material).dispose();
       this.xrayMesh = null;
     }
-    const src = this.frontMesh ?? this.backMesh;
-    const show = !this.xray;
-    if (this.backMesh) this.backMesh.visible = show;
-    if (this.frontMesh) this.frontMesh.visible = show;
+    const src = this.frontMesh;
+    if (this.frontMesh) this.frontMesh.visible = !this.xray;
     if (!this.xray || !src) return;
     const hasColors = !!src.geometry.getAttribute('color');
     const mat = new DepthPeelStandardMaterial();
@@ -129,10 +126,12 @@ export class ThreeViewer {
     geom.setIndex(new THREE.BufferAttribute(data.indices, 1));
 
     const hasColors = data.has_colors && data.colors;
-    let isTransparent = false;
 
     if (hasColors) {
-      // Colors are RGBA (4 floats per vertex), split into RGB + alpha
+      // Colors are RGBA (4 floats per vertex); only RGB is used here. The
+      // alpha channel (e.g. operand B's 0.6 tint) is deliberately ignored:
+      // the normal view renders fully opaque so face orientation problems
+      // (inverted bodies) stay visible — see-through display is X-Ray's job.
       const colorsRGBA = data.colors!;
       const vertCount = colorsRGBA.length / 4;
       const rgb = new Float32Array(vertCount * 3);
@@ -140,84 +139,20 @@ export class ThreeViewer {
         rgb[i * 3] = colorsRGBA[i * 4];
         rgb[i * 3 + 1] = colorsRGBA[i * 4 + 1];
         rgb[i * 3 + 2] = colorsRGBA[i * 4 + 2];
-        if (colorsRGBA[i * 4 + 3] < 0.999) isTransparent = true;
       }
       geom.setAttribute('color', new THREE.BufferAttribute(rgb, 3));
     }
 
-    if (isTransparent) {
-      // Per-vertex alpha via separate attribute + shader patch
-      const colorsRGBA = data.colors!;
-      const vertCount = colorsRGBA.length / 4;
-      const alphas = new Float32Array(vertCount);
-      for (let i = 0; i < vertCount; i++) {
-        alphas[i] = colorsRGBA[i * 4 + 3];
-      }
-      geom.setAttribute('aAlpha', new THREE.BufferAttribute(alphas, 1));
-
-      // Shader patch: pass per-vertex alpha through to fragment, multiply gl_FragColor.a
-      const patchAlpha = (mat: THREE.MeshStandardMaterial) => {
-        mat.onBeforeCompile = (shader) => {
-          // Vertex: declare attribute + varying, assign in main
-          shader.vertexShader = 'attribute float aAlpha;\nvarying float vAlpha;\n' + shader.vertexShader;
-          shader.vertexShader = shader.vertexShader.replace(
-            '#include <begin_vertex>',
-            '#include <begin_vertex>\nvAlpha = aAlpha;'
-          );
-          // Fragment: declare varying, multiply final alpha
-          shader.fragmentShader = 'varying float vAlpha;\n' + shader.fragmentShader;
-          shader.fragmentShader = shader.fragmentShader.replace(
-            '#include <dithering_fragment>',
-            '#include <dithering_fragment>\ngl_FragColor.a *= vAlpha;'
-          );
-        };
-      };
-
-      // Two-pass rendering for correct transparency:
-      // Pass 1 (renderOrder 0): back faces, no depth write — so back faces show behind transparent front faces
-      const backMat = new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        vertexColors: true,
-        roughness: 0.5,
-        metalness: 0.1,
-        side: THREE.BackSide,
-        flatShading: true,
-        transparent: true,
-        depthWrite: false,
-      });
-      patchAlpha(backMat);
-      this.backMesh = new THREE.Mesh(geom, backMat);
-      this.backMesh.renderOrder = 0;
-      this.scene.add(this.backMesh);
-
-      // Pass 2 (renderOrder 1): front faces, depth write on — opaque fragments block, transparent blend
-      const frontMat = new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        vertexColors: true,
-        roughness: 0.5,
-        metalness: 0.1,
-        side: THREE.FrontSide,
-        flatShading: true,
-        transparent: true,
-        depthWrite: true,
-      });
-      patchAlpha(frontMat);
-      this.frontMesh = new THREE.Mesh(geom, frontMat);
-      this.frontMesh.renderOrder = 1;
-      this.scene.add(this.frontMesh);
-    } else {
-      // Opaque single-pass
-      const mat = new THREE.MeshStandardMaterial({
-        color: hasColors ? 0xffffff : 0x4488cc,
-        vertexColors: !!hasColors,
-        roughness: 0.5,
-        metalness: 0.1,
-        side: THREE.DoubleSide,
-        flatShading: true,
-      });
-      this.frontMesh = new THREE.Mesh(geom, mat);
-      this.scene.add(this.frontMesh);
-    }
+    const mat = new THREE.MeshStandardMaterial({
+      color: hasColors ? 0xffffff : 0x4488cc,
+      vertexColors: !!hasColors,
+      roughness: 0.5,
+      metalness: 0.1,
+      side: THREE.DoubleSide,
+      flatShading: true,
+    });
+    this.frontMesh = new THREE.Mesh(geom, mat);
+    this.scene.add(this.frontMesh);
 
     if (this.showWireframe) {
       this.addWireframe(geom);
@@ -245,7 +180,7 @@ export class ThreeViewer {
       this.wireMesh.geometry.dispose();
       this.wireMesh = null;
     }
-    const mesh = this.frontMesh || this.backMesh;
+    const mesh = this.frontMesh;
     if (show && mesh) {
       this.addWireframe(mesh.geometry);
     }
@@ -271,15 +206,8 @@ export class ThreeViewer {
     if (this.xrayMesh) {
       this.xrayGroup.remove(this.xrayMesh);
       (this.xrayMesh.material as THREE.Material).dispose();
-      // Geometry is shared with front/back mesh; disposed below.
+      // Geometry is shared with frontMesh; disposed below.
       this.xrayMesh = null;
-    }
-    const sharedGeom = this.backMesh && this.frontMesh && this.backMesh.geometry === this.frontMesh.geometry;
-    if (this.backMesh) {
-      this.scene.remove(this.backMesh);
-      if (!sharedGeom) this.backMesh.geometry.dispose();
-      (this.backMesh.material as THREE.Material).dispose();
-      this.backMesh = null;
     }
     if (this.frontMesh) {
       this.scene.remove(this.frontMesh);

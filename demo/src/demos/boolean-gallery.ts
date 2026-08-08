@@ -417,6 +417,7 @@ export function init(container: HTMLElement): () => void {
     loadBtn.textContent = 'Loading pair…';
     errorBox.style.display = 'none';
     skippedImports = [];
+    let loaded = false;
     try {
       const [kindA, kindB] = pairOperandKinds(pairKind);
       const a = await loadOperand(kindA, 'a');
@@ -424,6 +425,7 @@ export function init(container: HTMLElement): () => void {
       freeThingiPair();
       thingiA = a;
       thingiB = b;
+      loaded = true;
       // Random static orientation for B so every pair meets differently;
       // if Animate is on, rotation keeps advancing from here.
       rotX = Math.floor(Math.random() * 360);
@@ -434,7 +436,10 @@ export function init(container: HTMLElement): () => void {
     } catch (e) {
       console.error('Thingi10K pair load failed:', e);
       restoreWorkerOperands();
-      setThingiInfo(inThingi() ? `A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}` : null);
+      setThingiInfo(inThingi()
+        ? `<strong>Load failed — showing previous pair:</strong><br>` +
+          `A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}`
+        : null);
       errorBox.style.display = 'block';
       errorBox.innerHTML = `<strong>Failed to load Thingi10K pair:</strong> ${String(e)}`;
     } finally {
@@ -442,8 +447,10 @@ export function init(container: HTMLElement): () => void {
       loadBtn.disabled = false;
       loadBtn.textContent = 'Load Random Pair';
     }
-    // After loadingPair clears — update() is a no-op while a pair loads.
-    if (inThingi()) update();
+    // Re-render only on success (update() is a no-op while a pair loads).
+    // On failure the previous result stays on screen and — crucially — the
+    // error stays visible: a successful update() would hide the error box.
+    if (loaded && inThingi()) update();
   }
 
   /// First pair for a fresh Thingi session, honoring the saved Pair Type:
@@ -822,26 +829,33 @@ export function init(container: HTMLElement): () => void {
       useBtn.disabled = true;
       useBtn.textContent = 'Loading pair…';
       skippedImports = [];
+      let loaded = false;
       try {
         const a = await loadOperandFromRecord(info.model_a, 'a');
         const b = await loadOperandFromRecord(info.model_b, 'b');
         freeThingiPair();
         thingiA = a;
         thingiB = b;
+        loaded = true;
         setThingiInfo(`A: ${operandLabel(thingiA)}<br>B: ${operandLabel(thingiB)}<br>` +
           `Restored rotation: [${rotX}, ${rotY}, ${rotZ}]&deg;`);
       } catch (e) {
         restoreWorkerOperands();
-        setThingiInfo(inThingi() ? `A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}` : null);
-        showUseError(`failed to load the captured pair: ${String(e)}`);
+        setThingiInfo(inThingi()
+          ? `<strong>Load failed — showing previous pair:</strong><br>` +
+            `A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}`
+          : null);
+        showUseError(`failed to load the requested pair: ${String(e)}`);
       } finally {
         loadingPair = false;
         loadBtn.disabled = false;
         useBtn.disabled = false;
         useBtn.textContent = 'Use Debug Info';
       }
-      // After loadingPair clears — update() is a no-op while a pair loads.
-      if (inThingi()) update();
+      // Re-render only on success (update() is a no-op while a pair loads).
+      // On failure the previous result stays on screen and — crucially — the
+      // error stays visible: a successful update() would hide the error box.
+      if (loaded && inThingi()) update();
     } else {
       source = 'builtin';
       saveSetting(DEMO, 'source', source);
