@@ -373,6 +373,38 @@ fn thingi_68730_repair_orientation_restores_material() {
 }
 
 const MODEL_36088: &[u8] = include_bytes!("testdata/36088.stl");
+const MODEL_301921: &[u8] = include_bytes!("testdata/301921.stl");
+
+/// Thingi10K #301921 ∪ its rotated copy (the sweep's standard pass): both
+/// operands are clean manifolds (self-overlap ratio 1.00), the arrangement
+/// is consistent, yet the robust union lost ~7% of its volume (0.4033 vs
+/// exact 0.4381; the Monte-Carlo referee sides with exact at 6.5σ). Surface
+/// area was almost unchanged — an interior region flipped outside.
+///
+/// The tolerance is 1e-3 relative, not exact agreement: both engines run a
+/// topology cleanup over their own tessellation of the same boundary, and
+/// those cleanups legitimately move the volume at the ~1e-4 scale (here the
+/// robust result is the raw extraction volume 0.438010 and the exact
+/// engine's cleanup moved its own result to 0.438066). Anything larger is a
+/// real defect — this gate catches both the original 8% class and the 0.6%
+/// `swap_degenerates` class (docs/CPP_DIVERGENCES.md entry 1) — and the
+/// Monte-Carlo referee (`examples/volume_referee.rs`) arbitrates disputes.
+#[test]
+fn thingi_301921_union_rotated_self_matches_exact() {
+    let a = import_stl_like_demo(MODEL_301921);
+    assert_eq!(a.status(), Error::NoError, "operand A import");
+    assert!(!a.as_impl().is_soup, "operand A should weld to a manifold");
+    let b = a.rotate(30.0, 45.0, 60.0).translate(Vec3::new(0.3, 0.0, 0.0));
+    let robust = a.union_with_engine(&b, BooleanEngine::Robust);
+    let exact = a.union_with_engine(&b, BooleanEngine::Exact);
+    assert_eq!(robust.status(), Error::NoError, "robust union status");
+    let (rv, ev) = (robust.volume(), exact.volume());
+    assert!(
+        (rv - ev).abs() <= 1e-3 * ev.abs(),
+        "robust volume {rv} != exact volume {ev}"
+    );
+}
+
 const MODEL_36374: &[u8] = include_bytes!("testdata/36374.stl");
 
 /// Thingi10K #36374 ∪ its rotated copy: returned NotClosed before the

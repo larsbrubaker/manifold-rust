@@ -66,13 +66,36 @@ impl CellComplex {
     }
 }
 
+/// The vertex tables the radial machinery reads: exact coordinates plus
+/// their cached correctly rounded f64 approximations. Passing them
+/// explicitly (rather than the whole `IntersectionGraph`) lets the output
+/// assembly reuse the fan sort on the extracted boundary, which has the same
+/// interned vertex ids but no graph of its own.
+#[derive(Clone, Copy)]
+pub struct VertTables<'a> {
+    pub verts: &'a [R3],
+    pub verts_f64: &'a [Vec3],
+}
+
+impl<'a> VertTables<'a> {
+    pub fn of(graph: &'a IntersectionGraph) -> Self {
+        VertTables {
+            verts: &graph.verts,
+            verts_f64: &graph.verts_f64,
+        }
+    }
+}
+
 /// One half-face incident to an arrangement edge.
-struct Inc {
-    piece: usize,
+pub struct Inc {
+    /// Caller-defined id of the half-face. [`build_cells`] passes the
+    /// piece index; the output pairing (`robust::pairing`) passes the
+    /// half-edge index — the fan sort itself never interprets it.
+    pub id: usize,
     /// Traversal runs key.0 → key.1 (the edge's canonical direction).
-    forward: bool,
+    pub forward: bool,
     /// Vertex id of the opposite (apex) vertex.
-    apex: u32,
+    pub apex: u32,
 }
 
 /// The side of a half-face that faces counter-clockwise (increasing radial
@@ -123,6 +146,7 @@ pub fn build_cells_with_token(
     token: Option<&crate::cancel::CancelToken>,
 ) -> Option<CellComplex> {
     let n = graph.pieces.len();
+    let vt = VertTables::of(graph);
     let ds = DisjointSets::new((2 * n).max(1) as u32);
 
     // Incident half-faces per edge, as one flat array sorted by edge rather
@@ -175,7 +199,7 @@ pub fn build_cells_with_token(
                 continue;
             }
         }
-        let Some((incs, groups)) = radial_fan(key.0, key.1, raw, graph) else {
+        let Some((incs, groups)) = radial_fan(key.0, key.1, raw, vt) else {
             continue;
         };
         for gi in 0..groups.len() {
@@ -183,12 +207,12 @@ pub fn build_cells_with_token(
             // All faces of a wall share the cell on each of its two sides.
             for k in s..e {
                 ds.unite(
-                    node(incs[s].piece, incs[s].ccw_side()),
-                    node(incs[k].piece, incs[k].ccw_side()),
+                    node(incs[s].id, incs[s].ccw_side()),
+                    node(incs[k].id, incs[k].ccw_side()),
                 );
                 ds.unite(
-                    node(incs[s].piece, incs[s].cw_side()),
-                    node(incs[k].piece, incs[k].cw_side()),
+                    node(incs[s].id, incs[s].cw_side()),
+                    node(incs[k].id, incs[k].cw_side()),
                 );
             }
             // The wedge between this wall and the next: CCW side of this
@@ -196,8 +220,8 @@ pub fn build_cells_with_token(
             let (ns, _) = groups[(gi + 1) % groups.len()];
             if groups.len() > 1 {
                 ds.unite(
-                    node(incs[s].piece, incs[s].ccw_side()),
-                    node(incs[ns].piece, incs[ns].cw_side()),
+                    node(incs[s].id, incs[s].ccw_side()),
+                    node(incs[ns].id, incs[ns].cw_side()),
                 );
             }
         }
@@ -228,27 +252,27 @@ pub fn build_cells_with_token(
 /// The f64 filter (on the cached correctly rounded approximations) certifies
 /// almost every query; only near-coplanar apex pairs escalate to the exact
 /// rational determinant.
-fn orient_edge(graph: &IntersectionGraph, k0: u32, k1: u32, a: u32, b: u32) -> Sign {
+fn orient_edge(vt: VertTables, k0: u32, k1: u32, a: u32, b: u32) -> Sign {
     let pt = |v: u32| {
-        let p = graph.verts_f64[v as usize];
+        let p = vt.verts_f64[v as usize];
         [p.x, p.y, p.z]
     };
     match super::exact::approx::orient3d_a(pt(k0), pt(k1), pt(a), pt(b)) {
         Some(s @ (Sign::Pos | Sign::Neg)) => s,
         _ => super::exact::predicates::orient3d_r(
-            &graph.verts[k0 as usize],
-            &graph.verts[k1 as usize],
-            &graph.verts[a as usize],
-            &graph.verts[b as usize],
+            &vt.verts[k0 as usize],
+            &vt.verts[k1 as usize],
+            &vt.verts[a as usize],
+            &vt.verts[b as usize],
         ),
     }
 }
 
 /// Exact radial direction of `a`'s apex about edge `k0 → k1`: the cross
 /// product `(k1−k0) × (a−k0)`. Zero iff the apex lies on the edge's axis.
-fn radial_cross(graph: &IntersectionGraph, k0: u32, k1: u32, a: u32) -> R3 {
-    let w = graph.verts[k1 as usize].sub(&graph.verts[k0 as usize]);
-    let d = graph.verts[a as usize].sub(&graph.verts[k0 as usize]);
+fn radial_cross(vt: VertTables, k0: u32, k1: u32, a: u32) -> R3 {
+    let w = vt.verts[k1 as usize].sub(&vt.verts[k0 as usize]);
+    let d = vt.verts[a as usize].sub(&vt.verts[k0 as usize]);
     w.cross(&d)
 }
 
@@ -297,9 +321,9 @@ impl Approx {
 }
 
 /// The three components of `(k1−k0) × (a−k0)` with error bounds.
-fn radial_cross_a(graph: &IntersectionGraph, k0: u32, k1: u32, a: u32) -> [Approx; 3] {
+fn radial_cross_a(vt: VertTables, k0: u32, k1: u32, a: u32) -> [Approx; 3] {
     let p = |v: u32| {
-        let p = graph.verts_f64[v as usize];
+        let p = vt.verts_f64[v as usize];
         [Approx::input(p.x), Approx::input(p.y), Approx::input(p.z)]
     };
     let (p0, p1, pa) = (p(k0), p(k1), p(a));
@@ -315,23 +339,23 @@ fn radial_cross_a(graph: &IntersectionGraph, k0: u32, k1: u32, a: u32) -> [Appro
 /// Is the apex on the edge's axis (a degenerate sliver with no wedge)?
 /// A certifiably nonzero cross component proves off-axis; only near-axis
 /// apexes pay for the exact cross.
-fn on_axis(graph: &IntersectionGraph, k0: u32, k1: u32, a: u32) -> bool {
-    if radial_cross_a(graph, k0, k1, a)
+fn on_axis(vt: VertTables, k0: u32, k1: u32, a: u32) -> bool {
+    if radial_cross_a(vt, k0, k1, a)
         .iter()
         .any(|c| c.sign().is_some())
     {
         return false;
     }
-    radial_cross(graph, k0, k1, a).is_zero()
+    radial_cross(vt, k0, k1, a).is_zero()
 }
 
 /// For two apexes whose radial directions are exactly parallel (orient_edge
 /// returned Zero), do they point the same way (`Pos`, a coincident stack) or
 /// opposite ways (`Neg`, a fold)? Sign of the dot of the two radial crosses;
 /// exact fallback only when the error-tracked f64 dot cannot certify.
-fn same_ray_sign(graph: &IntersectionGraph, k0: u32, k1: u32, a: u32, b: u32) -> Sign {
-    let ca = radial_cross_a(graph, k0, k1, a);
-    let cb = radial_cross_a(graph, k0, k1, b);
+fn same_ray_sign(vt: VertTables, k0: u32, k1: u32, a: u32, b: u32) -> Sign {
+    let ca = radial_cross_a(vt, k0, k1, a);
+    let cb = radial_cross_a(vt, k0, k1, b);
     let dot = ca[0]
         .mul(cb[0])
         .add(ca[1].mul(cb[1]))
@@ -339,8 +363,8 @@ fn same_ray_sign(graph: &IntersectionGraph, k0: u32, k1: u32, a: u32, b: u32) ->
     if let Some(s) = dot.sign() {
         return s;
     }
-    let ea = radial_cross(graph, k0, k1, a);
-    let eb = radial_cross(graph, k0, k1, b);
+    let ea = radial_cross(vt, k0, k1, a);
+    let eb = radial_cross(vt, k0, k1, b);
     let exact = &ea.x * &eb.x + &ea.y * &eb.y + &ea.z * &eb.z;
     Sign::of_rat(&exact)
 }
@@ -358,20 +382,16 @@ fn same_ray_sign(graph: &IntersectionGraph, k0: u32, k1: u32, a: u32, b: u32) ->
 /// order is immaterial to the wedge links, which lets the whole fan run on
 /// the f64 filter in the common case — the rational-basis construction this
 /// replaces dominated cell construction on self-intersecting scans.
-fn radial_fan(
+pub fn radial_fan(
     k0: u32,
     k1: u32,
     raw: &[(EdgeKey, usize, bool, u32)],
-    graph: &IntersectionGraph,
+    vt: VertTables,
 ) -> Option<(Vec<Inc>, Vec<(usize, usize)>)> {
     let mut incs: Vec<Inc> = raw
         .iter()
-        .filter(|&&(_, _, _, apex)| !on_axis(graph, k0, k1, apex))
-        .map(|&(_, piece, forward, apex)| Inc {
-            piece,
-            forward,
-            apex,
-        })
+        .filter(|&&(_, _, _, apex)| !on_axis(vt, k0, k1, apex))
+        .map(|&(_, id, forward, apex)| Inc { id, forward, apex })
         .collect();
     if incs.len() < 2 {
         return None;
@@ -384,10 +404,10 @@ fn radial_fan(
         if apex == r {
             return 0;
         }
-        match orient_edge(graph, k0, k1, r, apex) {
+        match orient_edge(vt, k0, k1, r, apex) {
             Sign::Pos => 1,
             Sign::Neg => 3,
-            Sign::Zero => match same_ray_sign(graph, k0, k1, r, apex) {
+            Sign::Zero => match same_ray_sign(vt, k0, k1, r, apex) {
                 Sign::Pos => 0,
                 Sign::Neg => 2,
                 Sign::Zero => unreachable!("parallel nonzero radial rays have nonzero dot"),
@@ -404,14 +424,14 @@ fn radial_fan(
                 } else {
                     // Within an open half turn, Zero means the same ray (the
                     // opposite ray would land in the other class).
-                    match orient_edge(graph, k0, k1, a.apex, b.apex) {
+                    match orient_edge(vt, k0, k1, a.apex, b.apex) {
                         Sign::Pos => Ordering::Less,
                         Sign::Neg => Ordering::Greater,
                         Sign::Zero => Ordering::Equal,
                     }
                 }
             })
-            .then_with(|| a.piece.cmp(&b.piece))
+            .then_with(|| a.id.cmp(&b.id))
     });
 
     // Equal-direction runs become the walls.
@@ -425,7 +445,7 @@ fn radial_fan(
                 && (ci == 0
                     || ci == 2
                     || incs[i].apex == incs[j].apex
-                    || orient_edge(graph, k0, k1, incs[i].apex, incs[j].apex) == Sign::Zero)
+                    || orient_edge(vt, k0, k1, incs[i].apex, incs[j].apex) == Sign::Zero)
         } {
             j += 1;
         }

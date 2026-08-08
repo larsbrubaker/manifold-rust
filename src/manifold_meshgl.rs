@@ -25,7 +25,7 @@ enum ImportMode {
 
 impl Manifold {
     pub fn from_mesh_gl(mesh: &MeshGL) -> Self {
-        Self::from_mesh_impl(mesh, ImportMode::Strict)
+        Self::from_mesh_impl(mesh, ImportMode::Strict, false)
     }
 
     /// Import a double-precision mesh directly into the f64 kernel. Unlike
@@ -35,7 +35,7 @@ impl Manifold {
     /// Indices still truncate to 32 bits exactly as the C++ import's
     /// `uint32_t` casts do — the kernel indexes vertices with 32 bits.
     pub fn from_mesh_gl64(mesh: &MeshGL64) -> Self {
-        Self::from_mesh_impl(mesh, ImportMode::Strict)
+        Self::from_mesh_impl(mesh, ImportMode::Strict, false)
     }
 
     /// Import that accepts non-manifold geometry for the robust boolean
@@ -47,17 +47,30 @@ impl Manifold {
     /// transforms, and mesh export; pairing-dependent operations return
     /// empty results with `Error::NotManifold`.
     pub fn from_mesh_gl_robust(mesh: &MeshGL) -> Self {
-        Self::from_mesh_impl(mesh, ImportMode::AllowSoup)
+        Self::from_mesh_impl(mesh, ImportMode::AllowSoup, false)
     }
 
     /// Double-precision variant of [`Self::from_mesh_gl_robust`].
     pub fn from_mesh_gl64_robust(mesh: &MeshGL64) -> Self {
-        Self::from_mesh_impl(mesh, ImportMode::AllowSoup)
+        Self::from_mesh_impl(mesh, ImportMode::AllowSoup, false)
+    }
+
+    /// [`Self::from_mesh_gl64_robust`] for meshes the robust boolean engine
+    /// assembled itself (`robust::assemble`), which skip
+    /// `edge_op::swap_degenerates`. See docs/CPP_DIVERGENCES.md entry 1: a
+    /// boolean result legitimately contains coplanar antiparallel
+    /// adjacencies, whose flood-filled face normals make the swap
+    /// misclassify large valid triangles and physically move the surface.
+    /// Every other import path — including user meshes coming in through
+    /// [`Self::from_mesh_gl_robust`] — is unaffected.
+    pub(crate) fn from_mesh_gl64_robust_assembled(mesh: &MeshGL64) -> Self {
+        Self::from_mesh_impl(mesh, ImportMode::AllowSoup, true)
     }
 
     fn from_mesh_impl<P: MeshPrecision, I: MeshIndex>(
         mesh: &MeshGLP<P, I>,
         mode: ImportMode,
+        skip_swap: bool,
     ) -> Self {
     let num_vert = mesh.num_vert() as u32;
     let num_tri = mesh.num_tri();
@@ -311,7 +324,15 @@ impl Manifold {
     imp.calculate_bbox();
     imp.set_epsilon(mesh.tolerance.to_f64(), false);
     imp.set_normals_and_coplanar();
-    crate::edge_op::remove_degenerates(&mut imp, 0);
+    if skip_swap {
+        // remove_degenerates without its swap_degenerates stage; see
+        // docs/CPP_DIVERGENCES.md entry 1.
+        crate::edge_op::cleanup_topology(&mut imp);
+        crate::edge_op::collapse_short_edges(&mut imp, 0);
+        crate::face_op::calculate_vert_normals(&mut imp);
+    } else {
+        crate::edge_op::remove_degenerates(&mut imp, 0);
+    }
     imp.remove_unreferenced_verts();
     imp.sort_geometry();
     Self { imp }

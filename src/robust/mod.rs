@@ -46,6 +46,7 @@ pub mod cdt;
 pub mod cells;
 pub mod exact;
 pub mod intersection_graph;
+pub mod pairing;
 pub mod ray_shoot;
 pub mod repair;
 pub mod soup;

@@ -27,6 +27,7 @@ use crate::linalg::Vec3;
 use crate::manifold::Manifold;
 use crate::types::MeshGL64;
 
+use super::cells::VertTables;
 use super::exact::rational::{rat_to_f64, R3};
 use super::intersection_graph::Piece;
 use super::tri_tri::dominant_axis;
@@ -117,42 +118,57 @@ pub fn assemble<F: Fn(usize) -> bool>(
 ) -> Manifold {
     let out_prop = props.map_or(0, |p| p.out_num_prop());
 
-    // Property-vertex identity: interned position id + property bit pattern
-    // (id equality is exact geometric identity — see VertInterner).
-    type Key = (u32, Vec<u64>);
+    let selected: Vec<&Piece> = pieces
+        .iter()
+        .enumerate()
+        .filter(|(pi, _)| select(*pi))
+        .map(|(_, piece)| piece)
+        .collect();
+    if selected.is_empty() {
+        return Manifold::empty();
+    }
+
+    // A boundary that touches itself along an edge carries more than two
+    // half-edges on that vertex-id edge, which the import's id-based pairing
+    // can only guess at. Splitting the pinched vertices into one copy per
+    // geometric fan makes that pairing reproduce the geometry. The plan is
+    // `None` — and everything below unchanged — for every mesh without such
+    // an edge.
+    let tris: Vec<[u32; 3]> = selected.iter().map(|piece| piece.vi).collect();
+    let plan = super::pairing::plan_vertex_splits(&tris, VertTables { verts, verts_f64 });
+
+    // Property-vertex identity: interned position id + fan copy + property
+    // bit pattern (id equality is exact geometric identity — see
+    // VertInterner).
+    type Key = (u32, u32, Vec<u64>);
     let mut vert_index: std::collections::HashMap<Key, u64> = std::collections::HashMap::new();
-    let mut vert_order: Vec<(u32, Vec<f64>)> = Vec::new();
+    let mut vert_order: Vec<(u32, u32, Vec<f64>)> = Vec::new();
     let mut tri_verts: Vec<u64> = Vec::new();
 
-    for (pi, piece) in pieces.iter().enumerate() {
-        if !select(pi) {
-            continue;
-        }
-        for &vid in &piece.vi {
+    for (t, piece) in selected.iter().enumerate() {
+        for (c, &vid) in piece.vi.iter().enumerate() {
+            let split = plan.as_ref().map_or(0, |p| p[3 * t + c]);
             let pvals = match props {
                 Some(ctx) if out_prop > 0 => {
                     interpolate_props(ctx, piece, &verts[vid as usize], out_prop)
                 }
                 _ => Vec::new(),
             };
-            let key = (vid, pvals.iter().map(|x| x.to_bits()).collect());
+            let key = (vid, split, pvals.iter().map(|x| x.to_bits()).collect());
             let next = vert_order.len() as u64;
             let id = *vert_index.entry(key).or_insert_with(|| {
-                vert_order.push((vid, pvals));
+                vert_order.push((vid, split, pvals));
                 next
             });
             tri_verts.push(id);
         }
-    }
-    if tri_verts.is_empty() {
-        return Manifold::empty();
     }
 
     let stride = 3 + out_prop;
     let mut mesh = MeshGL64::default();
     mesh.num_prop = stride as u64;
     mesh.vert_properties = Vec::with_capacity(stride * vert_order.len());
-    for (vid, pvals) in &vert_order {
+    for (vid, _, pvals) in &vert_order {
         let p = verts_f64[*vid as usize];
         mesh.vert_properties.extend([p.x, p.y, p.z]);
         mesh.vert_properties.extend(pvals.iter());
@@ -161,16 +177,19 @@ pub fn assemble<F: Fn(usize) -> bool>(
 
     // Coincident positions with different properties are distinct property
     // vertices; merge vectors tell the import they are topologically one.
+    // Keyed on the fan copy too, so split copies of a pinched vertex stay
+    // separate geometric vertices.
     if out_prop > 0 {
-        let mut by_pos: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
-        for (i, (vid, _)) in vert_order.iter().enumerate() {
-            match by_pos.get(vid) {
+        let mut by_pos: std::collections::HashMap<(u32, u32), u64> =
+            std::collections::HashMap::new();
+        for (i, (vid, split, _)) in vert_order.iter().enumerate() {
+            match by_pos.get(&(*vid, *split)) {
                 Some(&first) => {
                     mesh.merge_from_vert.push(i as u64);
                     mesh.merge_to_vert.push(first);
                 }
                 None => {
-                    by_pos.insert(*vid, i as u64);
+                    by_pos.insert((*vid, *split), i as u64);
                 }
             }
         }
@@ -179,15 +198,26 @@ pub fn assemble<F: Fn(usize) -> bool>(
     // The robust import handles everything rounding can produce: verts that
     // collapsed to identical f64 positions, exactly-degenerate triangles,
     // and non-manifold connectivity (kept as a soup impl).
-    let out = Manifold::from_mesh_gl64_robust(&mesh);
+    let out = Manifold::from_mesh_gl64_robust_assembled(&mesh);
 
     // Manifold results get the same topology simplification the exact
     // engine's boolean_result applies: without it the CDT's coplanar
     // subdivision vertices survive and the output carries more (redundant)
     // vertices than the exact engine produces for the same inputs.
+    //
+    // The one stage held back is `swap_degenerates` — the pieces of
+    // `simplify_topology` are composed here without it, matching the import
+    // above. See docs/CPP_DIVERGENCES.md entry 1: a boolean result
+    // legitimately contains coplanar antiparallel adjacencies, and the
+    // flood-filled face normals those produce make the swap misclassify
+    // large valid triangles and physically move the surface (−2.5e-3 of the
+    // volume on Thingi10K #301921 ∪ rotated-self).
     if out.status() == crate::types::Error::NoError && !out.as_impl().is_soup && !out.is_empty() {
         let mut imp = out.into_impl();
-        crate::edge_op::simplify_topology(&mut imp, 0);
+        crate::edge_op::cleanup_topology(&mut imp);
+        crate::edge_op::collapse_short_edges(&mut imp, 0);
+        crate::edge_op::collapse_colinear_edges(&mut imp, 0);
+        crate::face_op::calculate_vert_normals(&mut imp);
         imp.remove_unreferenced_verts();
         imp.calculate_bbox();
         imp.sort_geometry();
