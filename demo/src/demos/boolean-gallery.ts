@@ -7,7 +7,8 @@
 // report.
 
 import { ThreeViewer } from '../three-viewer.ts';
-import { createSlider, createDropdown, createCheckbox, createButton, createNumberInput, createReadout, updateReadout } from '../controls.ts';
+import { createSlider, createDropdown, createCheckbox, createButton, createNumberInput, createReadout } from '../controls.ts';
+import { BooleanReadout } from './boolean-readout.ts';
 import { type MeshData, type BooleanEngine } from '../wasm.ts';
 import { BooleanRunner, type ImportInfo, type OperandArrays, type RunParams } from '../boolean-runner.ts';
 import { loadSetting, saveSetting } from '../settings.ts';
@@ -193,15 +194,15 @@ export function init(container: HTMLElement): () => void {
 
   let lastDebugInfo: any = null;
   let frameCount = 0;
-  // Wall time of the most recent boolean evaluation (not mesh upload), shown
-  // in the info panel so slow pairs are visible at a glance.
-  let lastFrameMs: number | null = null;
 
   // Thingi mode is active only once a pair is actually loaded; while a pair
   // is in flight the built-in shapes stay on screen.
   const inThingi = () => source === 'thingi' && !!(thingiA && thingiB);
 
   const readout = createReadout();
+  // Owns the info rows *and* the "Last Frame" boolean timing, which has to
+  // keep updating (pending clock, failed, cancelled) between results.
+  const stats = new BooleanReadout(readout);
   const errorBox = document.createElement('div');
   errorBox.className = 'demo-note';
   errorBox.style.display = 'none';
@@ -258,24 +259,6 @@ export function init(container: HTMLElement): () => void {
     return info;
   }
 
-  function formatMs(ms: number): string {
-    return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms.toFixed(1)} ms`;
-  }
-
-  function showReadout(data: MeshData) {
-    errorBox.style.display = 'none';
-    const rows = [
-      { label: 'Vertices', value: String(data.num_vert) },
-      { label: 'Triangles', value: String(data.num_tri) },
-      { label: 'Volume', value: data.volume.toFixed(4) },
-      { label: 'Surface Area', value: data.surface_area.toFixed(4) },
-    ];
-    if (lastFrameMs !== null) {
-      rows.push({ label: 'Last Frame', value: formatMs(lastFrameMs) });
-    }
-    updateReadout(readout, rows);
-  }
-
   // ---- Worker-driven evaluation: the boolean runs off the main thread ----
 
   const runner = new BooleanRunner();
@@ -301,19 +284,20 @@ export function init(container: HTMLElement): () => void {
 
   runner.onResult = ({ data, elapsedMs }, params) => {
     const { info } = params.tag;
-    lastFrameMs = elapsedMs;
+    stats.setResult(elapsedMs);
     info.elapsed_ms = Math.round(elapsedMs * 10) / 10;
     info.result = { num_tri: data.num_tri, num_vert: data.num_vert, volume: data.volume };
     try { localStorage.setItem('boolean-gallery-debug', JSON.stringify(info)); } catch { /* ignore */ }
     viewer.setMesh(data as MeshData);
     viewer.setColor(OP_COLORS[params.op] || 0x4488cc);
     errorBox.style.display = 'none';
-    showReadout(data as MeshData);
+    stats.setMesh(data as MeshData);
     scheduleNextAnimateFrame(elapsedMs);
   };
 
   runner.onError = (error, params) => {
     const { info, silent } = params.tag;
+    stats.setFailed();
     info.error = error;
     try { localStorage.setItem('boolean-gallery-debug', JSON.stringify(info)); } catch { /* ignore */ }
     console.error('Boolean op failed:', info, error);
@@ -321,7 +305,9 @@ export function init(container: HTMLElement): () => void {
       errorBox.style.display = 'block';
       errorBox.innerHTML = `<strong>Boolean operation failed:</strong> ${error}<br>` +
         `Use <em>Copy Debug Info</em> to capture the inputs for a bug report.`;
-      updateReadout(readout, []);
+      // The mesh rows described a result that is gone; the timing row stays
+      // and now reads "failed".
+      stats.clear();
     }
     scheduleNextAnimateFrame(0);
   };
@@ -679,6 +665,9 @@ export function init(container: HTMLElement): () => void {
   let cancelShowTimer = 0;
   runner.onBusyChange = busy => {
     clearTimeout(cancelShowTimer);
+    // Keep the "Last Frame" row honest while the boolean runs: it shows a
+    // live pending clock instead of the previous run's stale duration.
+    stats.setBusy(busy);
     if (busy) {
       cancelShowTimer = window.setTimeout(() => { cancelBtn.style.display = ''; }, 400);
     } else {
@@ -686,6 +675,7 @@ export function init(container: HTMLElement): () => void {
     }
   };
   runner.onCancelled = () => {
+    stats.setCancelled();
     errorBox.style.display = 'block';
     errorBox.innerHTML = '<strong>Computation cancelled.</strong> The previous result stays on screen.';
   };
@@ -965,6 +955,7 @@ export function init(container: HTMLElement): () => void {
     animating = false;
     cancelAnimationFrame(animId);
     freeThingiPair();
+    stats.dispose();
     runner.dispose();
     viewer.dispose();
   };
