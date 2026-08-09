@@ -43,6 +43,9 @@ export interface RunParams {
   engine: BooleanEngine;
   /** Rewind inside-out shells of both operands before the boolean. */
   repair: boolean;
+  /** Robust engine only: treat {winding != 0} as solid instead of
+   *  {winding >= 1}, so inside-out geometry survives the boolean. */
+  nonzero: boolean;
   ox: number; oy: number; oz: number;
   rx: number; ry: number; rz: number;
   /** Opaque payload handed back with the result (debug info, flags). */

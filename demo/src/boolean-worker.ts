@@ -8,7 +8,7 @@
 //     between the dev server and the GitHub Pages subpath).
 //   { type: 'import', slot: 'a'|'b', positions, indices, want_self_intersecting }
 //   { type: 'run', seq, source: 'thingi'|'builtin', shapeA?, shapeB?,
-//     op, engine, repair, ox, oy, oz, rx, ry, rz }
+//     op, engine, repair, nonzero, ox, oy, oz, rx, ry, rz }
 // Replies (exactly one 'imported'/'result' per import/run message, in order,
 // plus any number of 'progress' notifications during a run):
 //   { type: 'imported', slot, ok, status, is_soup, self_intersecting,
@@ -108,13 +108,13 @@ async function handleMessage(msg: any) {
         raw = w.imported_boolean_progress(
           handles.a, handles.b, msg.op, msg.engine,
           msg.ox, msg.oy, msg.oz, msg.rx, msg.ry, msg.rz, msg.repair ?? false,
-          onProgress,
+          msg.nonzero ?? false, onProgress,
         );
       } else {
         raw = w.boolean_gallery_mesh_progress(
           msg.shapeA, msg.shapeB, msg.op,
           msg.ox, msg.oy, msg.oz, msg.rx, msg.ry, msg.rz, msg.engine,
-          msg.repair ?? false, onProgress,
+          msg.repair ?? false, msg.nonzero ?? false, onProgress,
         );
       }
       // Same extraction as wasm.ts toMeshData: capture the typed-array

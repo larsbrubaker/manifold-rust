@@ -163,6 +163,7 @@ export function init(container: HTMLElement): () => void {
   let op = loadSetting(DEMO, 'op', 0);
   let engine = loadSetting(DEMO, 'engine', 0) as BooleanEngine;
   let repairOrientation = loadSetting(DEMO, 'repairOrientation', false);
+  let nonzeroWinding = loadSetting(DEMO, 'nonzeroWinding', false);
   let offsetX = loadSetting(DEMO, 'offsetX', 0.3);
   let offsetY = loadSetting(DEMO, 'offsetY', 0.0);
   let offsetZ = loadSetting(DEMO, 'offsetZ', 0.0);
@@ -236,6 +237,7 @@ export function init(container: HTMLElement): () => void {
       source,
       engine: ENGINE_NAMES[engine],
       repair_orientation: repairOrientation,
+      nonzero_winding: nonzeroWinding,
       op: OP_NAMES[op] || op,
       offset: [offsetX, offsetY, offsetZ],
       rotation_degrees: [rotX, rotY, rotZ],
@@ -285,12 +287,12 @@ export function init(container: HTMLElement): () => void {
     const info = captureDebugInfo();
     const params: RunParams = inThingi()
       ? {
-          source: 'thingi', op, engine, repair: repairOrientation,
+          source: 'thingi', op, engine, repair: repairOrientation, nonzero: nonzeroWinding,
           ox: offsetX, oy: offsetY, oz: offsetZ, rx: rotX, ry: rotY, rz: rotZ,
           tag: { info, silent },
         }
       : {
-          source: 'builtin', shapeA, shapeB, op, engine, repair: repairOrientation,
+          source: 'builtin', shapeA, shapeB, op, engine, repair: repairOrientation, nonzero: nonzeroWinding,
           ox: offsetX, oy: offsetY, oz: offsetZ, rx: rotX, ry: rotY, rz: rotZ,
           tag: { info, silent },
         };
@@ -636,12 +638,22 @@ export function init(container: HTMLElement): () => void {
     saveSetting(DEMO, 'repairOrientation', v);
     update();
   });
+  // Where repair rewrites the operands, this changes what the robust engine
+  // counts as solid: {winding != 0} instead of {winding >= 1}. It is the only
+  // thing that saves a single shell wound correctly in one region and
+  // inside-out in another — exactly what repair (per shell) cannot fix.
+  const nonzeroBox = createCheckbox('Keep inside-out geometry (nonzero winding)', nonzeroWinding, v => {
+    nonzeroWinding = v;
+    saveSetting(DEMO, 'nonzeroWinding', v);
+    update();
+  });
   const opCtl = createDropdown('Operation', OPS, String(op), v => { op = parseInt(v); saveSetting(DEMO, 'op', op); update(); });
   const offXCtl = createSlider('Offset X ', -1.5, 1.5, offsetX, 0.1, v => { offsetX = v; saveSetting(DEMO, 'offsetX', v); update(); });
   const offYCtl = createSlider('Offset Y ', -1.5, 1.5, offsetY, 0.1, v => { offsetY = v; saveSetting(DEMO, 'offsetY', v); update(); });
   const offZCtl = createSlider('Offset Z ', -1.5, 1.5, offsetZ, 0.1, v => { offsetZ = v; saveSetting(DEMO, 'offsetZ', v); update(); });
   controlsEl.appendChild(engineCtl);
   controlsEl.appendChild(repairBox);
+  controlsEl.appendChild(nonzeroBox);
   controlsEl.appendChild(opCtl);
   controlsEl.appendChild(offXCtl);
   controlsEl.appendChild(offYCtl);
@@ -850,6 +862,11 @@ export function init(container: HTMLElement): () => void {
       repairOrientation = info.repair_orientation;
       saveSetting(DEMO, 'repairOrientation', repairOrientation);
       setCheckboxValue(repairBox, repairOrientation);
+    }
+    if (typeof info.nonzero_winding === 'boolean') {
+      nonzeroWinding = info.nonzero_winding;
+      saveSetting(DEMO, 'nonzeroWinding', nonzeroWinding);
+      setCheckboxValue(nonzeroBox, nonzeroWinding);
     }
     [offsetX, offsetY, offsetZ] = info.offset.map(Number) as [number, number, number];
     saveSetting(DEMO, 'offsetX', offsetX);

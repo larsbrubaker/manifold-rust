@@ -37,8 +37,12 @@ use crate::linalg::Vec3;
 
 use super::exact::rational::R3;
 use super::exact::Sign;
-use super::intersection_graph::{edge_key, EdgeKey, IntersectionGraph, Piece};
-use crate::types::OpType;
+use super::intersection_graph::{edge_key, EdgeKey, IntersectionGraph};
+// The result-extraction half of this module (the containment predicate and
+// the boundary walk that turns cell labels into output pieces) lives in
+// `cells_extract.rs`; it is re-exported here so callers still say
+// `cells::extract` / `cells::in_result`.
+pub use super::cells_extract::{extract, in_result};
 
 /// Side of a piece: `NORMAL` is the half-space its outward normal points
 /// into, `ANTI` the one behind it (inside the solid its operand bounds).
@@ -660,64 +664,6 @@ pub fn inconsistent_walls(
         }
     }
     bad
-}
-
-/// Does a cell with this winding vector lie inside the operation's result?
-///
-/// Each operand's solid is `{w ≥ 1}` — a negative winding is inverted
-/// geometry, never material. Expressing every operation as one predicate on
-/// the winding vector is what lets subtraction drop its operand-flip trick:
-/// P − Q is just "inside P and not inside Q".
-pub fn in_result(op: OpType, w: [i32; 2]) -> bool {
-    let (a, b) = (w[0] >= 1, w[1] >= 1);
-    match op {
-        OpType::Add => a || b,
-        OpType::Intersect => a && b,
-        OpType::Subtract => a && !b,
-    }
-}
-
-/// The boundary of the result: every wall whose two cells disagree about
-/// containment, wound so its normal points out of the solid.
-///
-/// Orientation is *derived* from the cell labels rather than inherited from
-/// the input face. That is what makes the output closed and consistently
-/// oriented no matter how the input was wound — an inverted region of a
-/// self-intersecting scan still lands in the right cells, and its emitted
-/// orientation is corrected on the way out. One representative per wall is
-/// emitted, so a coincident stack contributes a single face.
-pub fn extract(
-    graph: &IntersectionGraph,
-    complex: &CellComplex,
-    wind: &Windings,
-    op: OpType,
-) -> Vec<Piece> {
-    let mut out = Vec::new();
-    for &Wall { rep, .. } in &complex.walls {
-        let (cn, ca) = (complex.cell(rep, NORMAL), complex.cell(rep, ANTI));
-        if cn == ca || !wind.known[cn] || !wind.known[ca] {
-            continue;
-        }
-        let (in_n, in_a) = (in_result(op, wind.w[cn]), in_result(op, wind.w[ca]));
-        if in_n == in_a {
-            continue; // same material both sides: not a boundary
-        }
-        let piece = &graph.pieces[rep];
-        // The representative's normal points from its anti side toward its
-        // normal side. Material belongs behind the emitted normal, so the
-        // winding reverses when the solid is on the normal side instead.
-        let vi = if in_a {
-            piece.vi
-        } else {
-            [piece.vi[0], piece.vi[2], piece.vi[1]]
-        };
-        out.push(Piece {
-            mesh: piece.mesh,
-            tri: piece.tri,
-            vi,
-        });
-    }
-    out
 }
 
 /// One distinct triangle of the arrangement, with the coincident stack that

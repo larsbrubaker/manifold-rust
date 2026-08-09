@@ -8,7 +8,7 @@
 use super::*;
 use crate::linalg::Vec3;
 use crate::robust::intersection_graph::build_graph;
-use crate::types::{Error, OpType};
+use crate::types::{Error, OpType, WindingRule};
 
 /// An axis-aligned box as 12 outward-oriented triangles.
 fn cube(lo: Vec3, hi: Vec3) -> Vec<[Vec3; 3]> {
@@ -119,11 +119,77 @@ fn overlapping_cubes_wind_to_two_in_the_lens() {
 
 /// Run one operation end to end through the cell complex and assemble it.
 fn boolean_via_cells(p: &[[Vec3; 3]], q: &[[Vec3; 3]], op: OpType) -> crate::manifold::Manifold {
+    boolean_via_cells_rule(p, q, op, WindingRule::Positive)
+}
+
+fn boolean_via_cells_rule(
+    p: &[[Vec3; 3]],
+    q: &[[Vec3; 3]],
+    op: OpType,
+    rule: WindingRule,
+) -> crate::manifold::Manifold {
     let graph = build_graph(p, q);
     let complex = build_cells(&graph);
     let wind = all_windings(&graph, &complex, p, q);
-    let pieces = extract(&graph, &complex, &wind, op);
+    let pieces = extract(&graph, &complex, &wind, op, rule);
     crate::robust::assemble::assemble(&pieces, &graph.verts, &graph.verts_f64, |_| true, None)
+}
+
+/// The containment predicate under both rules, spelled out per operation.
+///
+/// Expected truth is derived from the rule definitions rather than copied
+/// from the implementation: `Positive` means `w >= 1`, `Nonzero` means
+/// `w != 0`, and each operation is the obvious boolean combination of the two
+/// operands' insideness.
+#[test]
+fn in_result_honors_the_winding_rule() {
+    let vectors = [[1, 0], [-1, 0], [2, 0], [0, -1], [-1, -1], [0, 0], [1, 1]];
+    for w in vectors {
+        for (rule, inside) in [
+            (WindingRule::Positive, (|v: i32| v >= 1) as fn(i32) -> bool),
+            (WindingRule::Nonzero, (|v: i32| v != 0) as fn(i32) -> bool),
+        ] {
+            let (a, b) = (inside(w[0]), inside(w[1]));
+            for (op, want) in [
+                (OpType::Add, a || b),
+                (OpType::Intersect, a && b),
+                (OpType::Subtract, a && !b),
+            ] {
+                assert_eq!(
+                    in_result(op, rule, w),
+                    want,
+                    "{op:?} {rule:?} on {w:?}"
+                );
+            }
+        }
+    }
+    // Spot-check the cases the rules actually disagree on, so a predicate
+    // that ignored its rule argument could not pass this test.
+    assert!(!in_result(OpType::Add, WindingRule::Positive, [-1, 0]));
+    assert!(in_result(OpType::Add, WindingRule::Nonzero, [-1, 0]));
+    assert!(!in_result(OpType::Subtract, WindingRule::Nonzero, [1, -1]));
+    assert!(in_result(OpType::Subtract, WindingRule::Positive, [1, -1]));
+    assert!(in_result(OpType::Intersect, WindingRule::Nonzero, [-1, -1]));
+    assert!(!in_result(OpType::Intersect, WindingRule::Positive, [-1, -1]));
+}
+
+/// An inverted shell is material under `Nonzero` and vacuum under
+/// `Positive` — the whole point of the rule. The inverted cube here is
+/// disjoint from P, so the expected volumes are exact.
+#[test]
+fn nonzero_rule_keeps_an_inverted_operand() {
+    let p = cube(Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 2.0, 2.0));
+    let q = cube(Vec3::new(5.0, 0.0, 0.0), Vec3::new(6.0, 1.0, 1.0));
+    let flipped: Vec<[Vec3; 3]> = q.iter().map(|t| [t[0], t[2], t[1]]).collect();
+
+    let positive = boolean_via_cells_rule(&p, &flipped, OpType::Add, WindingRule::Positive);
+    assert_eq!(positive.status(), Error::NoError);
+    assert!((positive.volume() - 8.0).abs() < 1e-9, "{}", positive.volume());
+
+    let nonzero = boolean_via_cells_rule(&p, &flipped, OpType::Add, WindingRule::Nonzero);
+    assert_eq!(nonzero.status(), Error::NoError);
+    assert!(!nonzero.as_impl().is_soup, "nonzero result must close");
+    assert!((nonzero.volume() - 9.0).abs() < 1e-9, "{}", nonzero.volume());
 }
 
 /// Two 2³ cubes overlapping in a 1³ corner: union 15, intersection 1,
@@ -166,6 +232,53 @@ fn inverted_operand_yields_the_same_union() {
     // the union is P alone, and critically the result still closes.
     assert!(!m.as_impl().is_soup, "result must still be a manifold");
     assert!((m.volume() - 8.0).abs() < 1e-9, "volume {}", m.volume());
+}
+
+/// Build a Manifold from a raw triangle soup, the way the demo imports STL.
+fn mesh_from_tris(tris: &[[Vec3; 3]]) -> crate::manifold::Manifold {
+    let mut mesh = crate::types::MeshGL::default();
+    mesh.num_prop = 3;
+    for t in tris {
+        for p in t {
+            mesh.vert_properties
+                .extend([p.x as f32, p.y as f32, p.z as f32]);
+        }
+    }
+    mesh.tri_verts = (0..(tris.len() * 3) as u32).collect();
+    mesh.merge();
+    crate::manifold::Manifold::from_mesh_gl_robust(&mesh)
+}
+
+/// End-to-end through the public API: one operand carries a correctly wound
+/// cube and an inside-out cube in the same soup — the shape of Thingi10K
+/// #51360 — and B is a bar crossing both.
+///
+/// Positive rule: A's solid is the wound cube alone (8), B adds 4 and
+/// overlaps it in 1 → 11. Nonzero rule: the inside-out cube is material too
+/// (16), B overlaps each of them in 1 → 18. Both are exact, so this pins the
+/// rule's effect rather than just its direction.
+#[test]
+fn nonzero_rule_keeps_inside_out_geometry_through_the_public_api() {
+    use crate::types::BooleanEngine;
+    let mut soup = cube(Vec3::new(0.0, 0.0, 0.0), Vec3::new(2.0, 2.0, 2.0));
+    let inverted = cube(Vec3::new(4.0, 0.0, 0.0), Vec3::new(6.0, 2.0, 2.0));
+    soup.extend(inverted.iter().map(|t| [t[0], t[2], t[1]]));
+    let a = mesh_from_tris(&soup);
+    // A bar from x=1 to x=5 through both cubes' interiors.
+    let b = mesh_from_tris(&cube(Vec3::new(1.0, 0.5, 0.5), Vec3::new(5.0, 1.5, 1.5)));
+
+    for (rule, want) in [
+        (WindingRule::Positive, 11.0),
+        (WindingRule::Nonzero, 18.0),
+    ] {
+        let out = a.boolean_with_engine_and_rule(&b, OpType::Add, BooleanEngine::Robust, rule);
+        assert_eq!(out.status(), Error::NoError, "{rule:?} status");
+        assert!(
+            (out.volume() - want).abs() < 1e-9,
+            "{rule:?} volume {}, want {want}",
+            out.volume()
+        );
+    }
 }
 
 /// A doubled shell must step the winding by two, not one — this is the

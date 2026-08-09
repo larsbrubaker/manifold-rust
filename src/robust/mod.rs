@@ -24,6 +24,8 @@
 //                        boxes, clips, filtered on-segment tests;
 //                        graph_self_cut — same-mesh narrow phase)
 //   cells              — arrangement cell complex + winding propagation
+//                        (cells_extract — containment predicate + boundary
+//                        extraction, re-exported through `cells`)
 //   ray_shoot          — exact winding numbers (residual component seeds)
 //   soup               — triangle-soup import (closed/orientable validation)
 //
@@ -32,9 +34,12 @@
 // both the paper's local Prop 2/3 ring walk and the per-component winding
 // queries this engine used before. The arrangement's cells carry a winding
 // number per operand, propagated combinatorially from the unbounded cell, so
-// adjacent regions cannot disagree; each operand's solid is {w ≥ 1}, so a
-// negative winding (an inverted region of a self-intersecting scan) is never
-// material. The output keeps a wall exactly where the operation's predicate
+// adjacent regions cannot disagree; each operand's solid is {w ≥ 1} by
+// default, so a negative winding (an inverted region of a self-intersecting
+// scan) is never material. `types::WindingRule::Nonzero` switches that
+// predicate to {w ≠ 0} per call, which keeps inside-out geometry solid; the
+// winding numbers themselves never depend on the rule. The output keeps a
+// wall exactly where the operation's predicate
 // differs across it, wound from the cell labels rather than from the input
 // face — which is what makes the result closed and consistently oriented no
 // matter how the input was wound.
@@ -48,6 +53,7 @@ pub mod arrangement;
 pub mod assemble;
 pub mod cdt;
 pub mod cells;
+pub mod cells_extract;
 pub mod exact;
 mod graph_geom;
 mod graph_self_cut;
@@ -62,7 +68,7 @@ pub mod tri_tri;
 use crate::cancel::CancelToken;
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::Vec3;
-use crate::types::{Error, OpType};
+use crate::types::{Error, OpType, WindingRule};
 
 
 
@@ -101,6 +107,29 @@ pub fn boolean_with_progress(
     a: &ManifoldImpl,
     b: &ManifoldImpl,
     op: OpType,
+    token: Option<&CancelToken>,
+    progress: Option<&crate::progress::ProgressReporter>,
+) -> ManifoldImpl {
+    boolean_with_rule(a, b, op, WindingRule::Positive, token, progress)
+}
+
+/// [`boolean_with_progress`] with an explicit winding rule.
+///
+/// The rule only reinterprets the arrangement's cell labels
+/// ([`cells::in_result`]); intersection, arrangement, cell complex, and
+/// winding propagation are all rule-independent, so
+/// [`WindingRule::Positive`] here is byte-for-byte the historical pipeline.
+///
+/// The bbox-disjoint fast paths do not consult the rule at all — they never
+/// classify anything, they concatenate or return an operand. That is exact
+/// for operands that are solid under the rule in force, and (as before this
+/// parameter existed) it passes an inverted operand through unchanged instead
+/// of dropping it, for either rule.
+pub fn boolean_with_rule(
+    a: &ManifoldImpl,
+    b: &ManifoldImpl,
+    op: OpType,
+    rule: WindingRule,
     token: Option<&CancelToken>,
     progress: Option<&crate::progress::ProgressReporter>,
 ) -> ManifoldImpl {
@@ -196,7 +225,7 @@ pub fn boolean_with_progress(
 
     // Boundary of the result, wound from the cell labels.
     begin_phase(progress, Phase::Assemble, 0);
-    let pieces = cells::extract(&graph, &complex, &wind, op);
+    let pieces = cells::extract(&graph, &complex, &wind, op, rule);
     let ctx = assemble::PropCtx {
         num_prop: [a.num_prop, b.num_prop],
         tris: [&p_tris, &q_tris],

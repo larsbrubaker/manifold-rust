@@ -98,6 +98,10 @@ typedef struct CancelTokenRs CancelTokenRs;
 #define MANIFOLD_RS_ENGINE_ROBUST 1 /* robust non-manifold engine */
 #define MANIFOLD_RS_ENGINE_AUTO 2   /* exact unless an operand is soup */
 
+/* Which winding numbers count as solid (robust engine only). */
+#define MANIFOLD_RS_WINDING_POSITIVE 0 /* {w >= 1} (default) */
+#define MANIFOLD_RS_WINDING_NONZERO 1  /* {w != 0}: keep inside-out geometry */
+
 /*
  * Static NUL-terminated version string, e.g.
  * "manifold-ffi 0.1.0 (manifold-rust 0.9.3)". Never NULL, never freed.
@@ -371,6 +375,28 @@ ManifoldRs* manifold_rs_boolean_progress(const ManifoldRs* a,
                                          const CancelTokenRs* token,
                                          ManifoldRsProgressFn progress,
                                          void* user);
+
+/*
+ * manifold_rs_boolean_progress with an explicit winding rule
+ * (MANIFOLD_RS_WINDING_*): which winding numbers count as solid material.
+ *
+ * MANIFOLD_RS_WINDING_POSITIVE ({w >= 1}) is the default everywhere else and
+ * makes this call identical to manifold_rs_boolean_progress.
+ * MANIFOLD_RS_WINDING_NONZERO ({w != 0}) keeps inside-out geometry as solid,
+ * for scans whose shells are wound inconsistently.
+ *
+ * The rule is a robust-engine semantic: MANIFOLD_RS_ENGINE_EXACT ignores it,
+ * and MANIFOLD_RS_ENGINE_AUTO resolves to the robust engine whenever the rule
+ * is nonzero. Returns NULL for an unknown rule value.
+ */
+ManifoldRs* manifold_rs_boolean_progress_rule(const ManifoldRs* a,
+                                              const ManifoldRs* b,
+                                              int32_t op,
+                                              int32_t engine,
+                                              int32_t winding_rule,
+                                              const CancelTokenRs* token,
+                                              ManifoldRsProgressFn progress,
+                                              void* user);
 
 /*
  * Export m as a mesh handle. A manifold with a non-zero status exports as an

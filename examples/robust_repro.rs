@@ -11,10 +11,15 @@
 // REPAIR=1 in the environment applies `Manifold::repair_orientation` to both
 // operands after import (rewinding inside-out shells), so the effect of the
 // repair on a logged frame can be compared against the same frame without it.
+//
+// WINDING=nonzero runs the boolean under the {w != 0} solid rule (inside-out
+// geometry stays material) instead of the default {w >= 1}; REFEREE_RULE
+// takes the same values and selects which rule the Monte-Carlo referee below
+// measures the ground truth under.
 
 use manifold_rust::linalg::Vec3;
 use manifold_rust::manifold::Manifold;
-use manifold_rust::types::{BooleanEngine, MeshGL, OpType};
+use manifold_rust::types::{BooleanEngine, MeshGL, OpType, WindingRule};
 
 fn import_stl(path: &str) -> Manifold {
     let data = std::fs::read(path).expect("STL file");
@@ -97,6 +102,13 @@ fn main() {
             new_prop[3] = al;
         })
     };
+    // WINDING=nonzero selects the {w != 0} solid rule (inside-out geometry
+    // counts as material); anything else keeps the default {w >= 1}.
+    let rule = if std::env::var("WINDING").is_ok_and(|v| v == "nonzero") {
+        WindingRule::Nonzero
+    } else {
+        WindingRule::Positive
+    };
     let repair = std::env::var("REPAIR").is_ok_and(|v| v == "1");
     let mut a0 = import_stl(&args[0]);
     let mut b0 = import_stl(&args[1]);
@@ -113,11 +125,11 @@ fn main() {
     };
     let b = b.rotate(rx, ry, rz).translate(Vec3::new(ox, oy, oz));
     println!(
-        "A: {} tris (status {:?}), B: {} tris (status {:?}), op {:?}, engine {:?}, rot ({rx},{ry},{rz}), off ({ox},{oy},{oz})",
-        a.num_tri(), a.status(), b.num_tri(), b.status(), op, engine,
+        "A: {} tris (status {:?}), B: {} tris (status {:?}), op {:?}, engine {:?}, winding {:?}, rot ({rx},{ry},{rz}), off ({ox},{oy},{oz})",
+        a.num_tri(), a.status(), b.num_tri(), b.status(), op, engine, rule,
     );
     let t0 = std::time::Instant::now();
-    let out = a.boolean_with_engine(&b, op, engine);
+    let out = a.boolean_with_engine_and_rule(&b, op, engine, rule);
     println!(
         "result: {} tris / {} verts, volume {:.7}, area {:.7}, status {:?}, {:.0} ms",
         out.num_tri(), out.num_vert(), out.volume(), out.surface_area(), out.status(),
@@ -152,6 +164,17 @@ fn main() {
         let ext = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
         let idx_p = WindingIndex::new(&p);
         let idx_q = WindingIndex::new(&q);
+        // REFEREE_RULE=nonzero measures the ground truth under {w != 0} so the
+        // referee can arbitrate either winding rule; default is {w >= 1}.
+        let ref_rule = if std::env::var("REFEREE_RULE").is_ok_and(|v| v == "nonzero") {
+            WindingRule::Nonzero
+        } else {
+            WindingRule::Positive
+        };
+        let solid = move |w: i32| match ref_rule {
+            WindingRule::Positive => w >= 1,
+            WindingRule::Nonzero => w != 0,
+        };
         // SplitMix64, fixed seed.
         let mut state = 0x5EED_CAFE_F00D_D1CEu64;
         let mut rand = move || {
@@ -168,8 +191,8 @@ fn main() {
                 min[1] + ext[1] * rand(),
                 min[2] + ext[2] * rand(),
             ));
-            if winding_number_indexed(&pt, &p, &idx_p) >= 1
-                || winding_number_indexed(&pt, &q, &idx_q) >= 1
+            if solid(winding_number_indexed(&pt, &p, &idx_p))
+                || solid(winding_number_indexed(&pt, &q, &idx_q))
             {
                 hits += 1;
             }
@@ -187,7 +210,7 @@ fn main() {
                 cells::inconsistent_walls(&complex, &wind).len()
             })
             .unwrap_or(usize::MAX);
-        println!("referee: volume {est:.7} ± {sigma:.7} ({samples} samples), inconsistent walls {bad}");
+        println!("referee ({ref_rule:?}): volume {est:.7} ± {sigma:.7} ({samples} samples), inconsistent walls {bad}");
         // Per-operand self-overlap: divergence-theorem volume (counts a
         // doubly-wound region twice) over sampled once-counted material.
         // A ratio away from 1.0 identifies the operand whose geometry
@@ -212,13 +235,13 @@ fn main() {
                     omin[1] + oext[1] * rand(),
                     omin[2] + oext[2] * rand(),
                 ));
-                if winding_number_indexed(&pt, tris, idx) >= 1 {
+                if solid(winding_number_indexed(&pt, tris, idx)) {
                     ohits += 1;
                 }
             }
             let sampled = oext[0] * oext[1] * oext[2] * ohits as f64 / n as f64;
             println!(
-                "operand {name}: divergence volume {:.7}, sampled {{w>=1}} {:.7}, overlap ratio {:.3}",
+                "operand {name} ({ref_rule:?}): divergence volume {:.7}, sampled solid {:.7}, overlap ratio {:.3}",
                 mani.volume(),
                 sampled,
                 mani.volume() / sampled

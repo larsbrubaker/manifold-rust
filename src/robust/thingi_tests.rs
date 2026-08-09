@@ -484,3 +484,58 @@ fn thingi_36088_arrangement_is_consistent() {
     let b = a.rotate(30.0, 45.0, 60.0).translate(Vec3::new(0.3, 0.0, 0.0));
     assert_arrangement_consistent(&a, &b, "36088 ∪ rotated self");
 }
+
+const TOP_WALLS_51360: &[u8] = include_bytes!("testdata/51360.stl");
+const MODEL_90225: &[u8] = include_bytes!("testdata/90225.stl");
+
+/// Thingi10K #51360 ("top walls") ∪ #90225, the user's logged demo frame.
+///
+/// #51360 fuses a correctly wound region with an inside-out region of nearly
+/// equal volume into one connected shell — so its divergence volume is ~0
+/// (the two halves cancel) and `repair_orientation` correctly declines to
+/// rewind a shell that is inverted only in part. Under the default
+/// `{w >= 1}` rule the inverted half is simply not material and the union
+/// drops it; `WindingRule::Nonzero` keeps it. The bands below are the frame's
+/// measured volumes, confirmed against the Monte-Carlo winding referee under
+/// each rule (`examples/robust_repro.rs`, REFEREE_RULE): 2.4981 for Positive
+/// and 2.8340 ± 0.0064 for Nonzero.
+#[test]
+fn thingi_51360_nonzero_rule_keeps_the_inverted_half() {
+    use crate::types::{OpType, WindingRule};
+    let a = import_stl_like_demo(TOP_WALLS_51360);
+    assert_eq!(a.status(), Error::NoError, "operand A import");
+    let b = import_stl_like_demo(MODEL_90225)
+        .rotate(340.0, 202.0, 341.0)
+        .translate(Vec3::new(0.7, -0.2, 0.4));
+    assert_eq!(b.status(), Error::NoError, "operand B import");
+
+    let positive =
+        a.boolean_with_engine_and_rule(&b, OpType::Add, BooleanEngine::Robust, WindingRule::Positive);
+    assert_eq!(positive.status(), Error::NoError, "positive-rule status");
+    let nonzero =
+        a.boolean_with_engine_and_rule(&b, OpType::Add, BooleanEngine::Robust, WindingRule::Nonzero);
+    assert_eq!(nonzero.status(), Error::NoError, "nonzero-rule status");
+
+    // The default rule must be untouched by the feature.
+    assert_eq!(
+        positive.volume(),
+        a.union_with_engine(&b, BooleanEngine::Robust).volume(),
+        "default engine path must equal the explicit Positive rule"
+    );
+    assert!(
+        (positive.volume() - 2.4981).abs() < 1e-3,
+        "positive-rule volume {}",
+        positive.volume()
+    );
+    assert!(
+        (nonzero.volume() - 2.8340).abs() < 5e-3,
+        "nonzero-rule volume {}",
+        nonzero.volume()
+    );
+    assert!(
+        nonzero.num_tri() > positive.num_tri(),
+        "nonzero keeps more surface: {} vs {}",
+        nonzero.num_tri(),
+        positive.num_tri()
+    );
+}

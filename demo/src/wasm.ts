@@ -114,9 +114,11 @@ export function booleanGalleryMeshEngine(shapeA: number, shapeB: number, op: num
   return toMeshData(getWasm().boolean_gallery_mesh_engine(shapeA, shapeB, op, ox, oy, oz, rx, ry, rz, engine));
 }
 
-/** booleanGalleryMeshEngine with the orientation-repair toggle applied to both operands. */
-export function booleanGalleryMeshRepair(shapeA: number, shapeB: number, op: number, ox: number, oy: number, oz: number, rx: number, ry: number, rz: number, engine: BooleanEngine, repair: boolean): MeshData {
-  return toMeshData(getWasm().boolean_gallery_mesh_repair(shapeA, shapeB, op, ox, oy, oz, rx, ry, rz, engine, repair));
+/** booleanGalleryMeshEngine with the orientation-repair toggle applied to both
+ *  operands, plus the nonzero-winding rule ({w != 0} counts as solid, so
+ *  inside-out geometry is kept — robust engine only). */
+export function booleanGalleryMeshRepair(shapeA: number, shapeB: number, op: number, ox: number, oy: number, oz: number, rx: number, ry: number, rz: number, engine: BooleanEngine, repair: boolean, nonzero = false): MeshData {
+  return toMeshData(getWasm().boolean_gallery_mesh_repair(shapeA, shapeB, op, ox, oy, oz, rx, ry, rz, engine, repair, nonzero));
 }
 
 /** Handle to a WASM-side imported mesh (possibly non-manifold triangle soup). */
@@ -139,9 +141,11 @@ export function importTriangleSoup(positions: Float32Array, indices: Uint32Array
 }
 
 /** Boolean between imported meshes; throws the status string on failure.
- *  `repair` rewinds inside-out shells of both operands first. */
-export function importedBoolean(a: ImportedMesh, b: ImportedMesh, op: number, engine: BooleanEngine, ox: number, oy: number, oz: number, rx: number, ry: number, rz: number, repair = false): MeshData {
-  return toMeshData(getWasm().imported_boolean(a, b, op, engine, ox, oy, oz, rx, ry, rz, repair));
+ *  `repair` rewinds inside-out shells of both operands first; `nonzero`
+ *  switches the robust engine's solid rule to {winding != 0}, keeping
+ *  inside-out geometry that {winding >= 1} would discard. */
+export function importedBoolean(a: ImportedMesh, b: ImportedMesh, op: number, engine: BooleanEngine, ox: number, oy: number, oz: number, rx: number, ry: number, rz: number, repair = false, nonzero = false): MeshData {
+  return toMeshData(getWasm().imported_boolean(a, b, op, engine, ox, oy, oz, rx, ry, rz, repair, nonzero));
 }
 
 /** Preview an imported mesh on its own (no boolean applied). */

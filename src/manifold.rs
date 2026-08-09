@@ -451,6 +451,41 @@ impl Manifold {
         ))
     }
 
+    /// [`Manifold::boolean_with_engine`] with an explicit winding rule.
+    ///
+    /// [`crate::types::WindingRule::Nonzero`] treats inside-out geometry as
+    /// solid (`w != 0` rather than `w >= 1`), which keeps the inverted regions
+    /// of inconsistently wound scans instead of dropping them. The rule is a
+    /// robust-engine semantic: the exact engine ignores it, and `Auto` routes
+    /// to the robust engine whenever the rule is `Nonzero` (see
+    /// [`crate::boolean3::boolean_dispatch_full`]).
+    pub fn boolean_with_engine_and_rule(
+        &self,
+        other: &Self,
+        op: OpType,
+        engine: crate::types::BooleanEngine,
+        rule: crate::types::WindingRule,
+    ) -> Self {
+        self.boolean_with_engine_rule_and_progress(other, op, engine, rule, None, None)
+    }
+
+    /// The full per-call boolean path: engine, winding rule, cancellation, and
+    /// progress. Every other boolean entry point on `Manifold` is this one with
+    /// defaults filled in.
+    pub fn boolean_with_engine_rule_and_progress(
+        &self,
+        other: &Self,
+        op: OpType,
+        engine: crate::types::BooleanEngine,
+        rule: crate::types::WindingRule,
+        token: Option<&crate::cancel::CancelToken>,
+        progress: Option<&crate::progress::ProgressReporter>,
+    ) -> Self {
+        Self::from_impl(boolean3::boolean_dispatch_full(
+            &self.imp, &other.imp, op, engine, rule, token, progress,
+        ))
+    }
+
     /// [`Manifold::batch_boolean`] with an explicit engine choice (pairwise
     /// left fold, like `batch_boolean`).
     pub fn batch_boolean_with_engine(

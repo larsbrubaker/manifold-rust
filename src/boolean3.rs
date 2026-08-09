@@ -433,11 +433,46 @@ pub fn boolean_dispatch_with_progress(
     token: Option<&CancelToken>,
     progress: Option<&crate::progress::ProgressReporter>,
 ) -> ManifoldImpl {
+    boolean_dispatch_full(
+        mesh_a,
+        mesh_b,
+        op,
+        engine,
+        crate::types::WindingRule::Positive,
+        token,
+        progress,
+    )
+}
+
+/// [`boolean_dispatch_with_progress`] with an explicit winding rule.
+///
+/// Winding rules are a robust-engine semantic: the exact engine has no cell
+/// labels to reinterpret and **ignores** `rule` entirely. Because of that,
+/// `Auto` with [`WindingRule::Nonzero`] resolves to `Robust` even for two
+/// clean manifold operands — nonzero semantics can only be honored there, and
+/// silently answering with positive-rule geometry would be worse than paying
+/// for the robust pipeline. An explicit `Exact` still runs the exact engine,
+/// rule and all, so a caller who pinned the engine gets exactly what it asked
+/// for.
+///
+/// [`WindingRule::Positive`] is byte-for-byte
+/// [`boolean_dispatch_with_progress`], including `Auto`'s resolution.
+pub fn boolean_dispatch_full(
+    mesh_a: &ManifoldImpl,
+    mesh_b: &ManifoldImpl,
+    op: OpType,
+    engine: crate::types::BooleanEngine,
+    rule: crate::types::WindingRule,
+    token: Option<&CancelToken>,
+    progress: Option<&crate::progress::ProgressReporter>,
+) -> ManifoldImpl {
     use crate::types::BooleanEngine as E;
+    use crate::types::WindingRule;
     let resolved = match engine {
         E::Auto => {
             use crate::robust::soup::has_self_intersections_with_token as self_isect;
-            if mesh_a.is_soup
+            if rule == WindingRule::Nonzero
+                || mesh_a.is_soup
                 || mesh_b.is_soup
                 || self_isect(mesh_a, token)
                 || self_isect(mesh_b, token)
@@ -454,7 +489,9 @@ pub fn boolean_dispatch_with_progress(
             crate::progress::begin_phase(progress, crate::progress::Phase::ExactBoolean, 0);
             boolean_with_token(mesh_a, mesh_b, op, token)
         }
-        E::Robust => crate::robust::boolean_with_progress(mesh_a, mesh_b, op, token, progress),
+        E::Robust => {
+            crate::robust::boolean_with_rule(mesh_a, mesh_b, op, rule, token, progress)
+        }
     }
 }
 

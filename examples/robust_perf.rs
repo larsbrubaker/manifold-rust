@@ -236,7 +236,7 @@ fn main() {
     let t_wind = t0.elapsed().as_secs_f64();
 
     let t0 = Instant::now();
-    let pieces = cells::extract(&graph, &complex, &wind, manifold_rust::types::OpType::Add);
+    let pieces = cells::extract(&graph, &complex, &wind, manifold_rust::types::OpType::Add, manifold_rust::types::WindingRule::Positive);
     let t_extract = t0.elapsed().as_secs_f64();
 
     let t0 = Instant::now();

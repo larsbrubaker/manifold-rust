@@ -40,15 +40,29 @@ pub(crate) fn op_with_engine_progress(
     b: &Manifold,
     op: i32,
     engine: i32,
+    nonzero: bool,
     progress: Option<&ProgressReporter>,
 ) -> Manifold {
-    a.boolean_with_engine_and_progress(
+    a.boolean_with_engine_rule_and_progress(
         b,
         op_from_i32(op),
         engine_from_i32(engine),
+        winding_rule(nonzero),
         None,
         progress,
     )
+}
+
+/// `nonzero` selects the {w != 0} solid rule, which keeps inside-out
+/// geometry as material instead of discarding it; the default {w >= 1} rule
+/// is what every other entry point uses.
+fn winding_rule(nonzero: bool) -> manifold_rust::types::WindingRule {
+    use manifold_rust::types::WindingRule;
+    if nonzero {
+        WindingRule::Nonzero
+    } else {
+        WindingRule::Positive
+    }
 }
 
 /// A mesh imported from arbitrary (possibly non-manifold) triangle soup,
@@ -128,7 +142,10 @@ impl ImportedMesh {
 /// 2=difference. engine: 0=Exact, 1=Robust, 2=Auto. When `repair` is set,
 /// `Manifold::repair_orientation` rewinds inside-out shells of both operands
 /// before the boolean, so inverted bodies contribute material instead of
-/// vanishing under the {winding >= 1} semantics. Throws the result's
+/// vanishing under the {winding >= 1} semantics. When `nonzero` is set the
+/// robust engine switches to the {winding != 0} solid rule instead, which
+/// keeps inside-out geometry even where per-shell repair cannot help (a
+/// single shell wound correctly in one region and inverted in another). Throws the result's
 /// status string when the operation yields an error (e.g. "Not Manifold"
 /// when the Exact engine is handed soup geometry).
 #[wasm_bindgen]
@@ -145,9 +162,10 @@ pub fn imported_boolean(
     rot_y: f64,
     rot_z: f64,
     repair: bool,
+    nonzero: bool,
 ) -> Result<MeshData, JsValue> {
     imported_boolean_impl(
-        a, b, op, engine, off_x, off_y, off_z, rot_x, rot_y, rot_z, repair, None,
+        a, b, op, engine, off_x, off_y, off_z, rot_x, rot_y, rot_z, repair, nonzero, None,
     )
 }
 
@@ -173,11 +191,12 @@ pub fn imported_boolean_progress(
     rot_y: f64,
     rot_z: f64,
     repair: bool,
+    nonzero: bool,
     on_progress: Option<js_sys::Function>,
 ) -> Result<MeshData, JsValue> {
     crate::progress::with_reporter(on_progress, |reporter| {
         imported_boolean_impl(
-            a, b, op, engine, off_x, off_y, off_z, rot_x, rot_y, rot_z, repair, reporter,
+            a, b, op, engine, off_x, off_y, off_z, rot_x, rot_y, rot_z, repair, nonzero, reporter,
         )
     })
 }
@@ -195,6 +214,7 @@ fn imported_boolean_impl(
     rot_y: f64,
     rot_z: f64,
     repair: bool,
+    nonzero: bool,
     progress: Option<&ProgressReporter>,
 ) -> Result<MeshData, JsValue> {
     let (a_in, b_in) = if repair {
@@ -220,7 +240,7 @@ fn imported_boolean_impl(
     let b_m = b_m
         .rotate(rot_x, rot_y, rot_z)
         .translate(Vec3::new(off_x, off_y, off_z));
-    let result = op_with_engine_progress(&a_m, &b_m, op, engine, progress);
+    let result = op_with_engine_progress(&a_m, &b_m, op, engine, nonzero, progress);
     if result.status() != Error::NoError {
         return Err(JsValue::from_str(result.status().to_str()));
     }

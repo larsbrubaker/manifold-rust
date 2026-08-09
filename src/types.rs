@@ -223,6 +223,26 @@ pub enum BooleanEngine {
     Auto,
 }
 
+/// Which winding numbers count as solid material.
+///
+/// The robust engine labels every cell of the arrangement with a winding
+/// number per operand; this rule turns that integer into "inside" or
+/// "outside". It is a *robust-engine* semantic only — the exact engine has no
+/// winding labels to reinterpret and ignores the rule entirely.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum WindingRule {
+    /// `w >= 1` (default). Inside-out geometry (negative winding) is not
+    /// material, so an inverted region of a self-intersecting scan is
+    /// discarded — the mathematically standard interpretation of orientation.
+    #[default]
+    Positive,
+    /// `w != 0`. Inside-out geometry is kept as solid, matching the intent of
+    /// scans and CAD exports whose shells are wound inconsistently. Chosen
+    /// per call for models where dropping the inverted chunk is not what the
+    /// user wants.
+    Nonzero,
+}
+
 static BOOLEAN_ENGINE_DEFAULT: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
 
 /// Process-global default engine, in the style of [`Quality`]: the plain

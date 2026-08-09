@@ -480,10 +480,12 @@ pub fn boolean_gallery_mesh_rotated(shape_a: i32, shape_b: i32, op: i32, offset_
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn boolean_gallery_mesh_engine(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32) -> MeshData {
-    boolean_gallery_mesh_repair(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, false)
+    boolean_gallery_mesh_repair(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, false, false)
 }
 
-/// [`boolean_gallery_mesh_engine`] with the orientation-repair toggle: when
+/// [`boolean_gallery_mesh_engine`] with the orientation-repair and
+/// nonzero-winding toggles. `nonzero` switches the robust engine's solid rule
+/// to {winding != 0} so inside-out geometry stays material. When
 /// `repair` is set, both operands pass through
 /// `Manifold::repair_orientation` before the boolean. Built-in shapes are
 /// already outward-wound, so this is a visible no-op here — the toggle
@@ -491,8 +493,8 @@ pub fn boolean_gallery_mesh_engine(shape_a: i32, shape_b: i32, op: i32, offset_x
 /// is honored uniformly so the demo's one switch drives both paths.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
-pub fn boolean_gallery_mesh_repair(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32, repair: bool) -> MeshData {
-    boolean_gallery_mesh_impl(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, repair, None)
+pub fn boolean_gallery_mesh_repair(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32, repair: bool, nonzero: bool) -> MeshData {
+    boolean_gallery_mesh_impl(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, repair, nonzero, None)
 }
 
 /// [`boolean_gallery_mesh_repair`] that reports pipeline progress to
@@ -500,14 +502,14 @@ pub fn boolean_gallery_mesh_repair(shape_a: i32, shape_b: i32, op: i32, offset_x
 /// `undefined` for the un-instrumented path.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
-pub fn boolean_gallery_mesh_progress(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32, repair: bool, on_progress: Option<js_sys::Function>) -> MeshData {
+pub fn boolean_gallery_mesh_progress(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32, repair: bool, nonzero: bool, on_progress: Option<js_sys::Function>) -> MeshData {
     progress::with_reporter(on_progress, |reporter| {
-        boolean_gallery_mesh_impl(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, repair, reporter)
+        boolean_gallery_mesh_impl(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, repair, nonzero, reporter)
     })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn boolean_gallery_mesh_impl(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32, repair: bool, reporter: Option<&manifold_rust::progress::ProgressReporter>) -> MeshData {
+fn boolean_gallery_mesh_impl(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32, repair: bool, nonzero: bool, reporter: Option<&manifold_rust::progress::ProgressReporter>) -> MeshData {
     // Distinct colors: shape A = blue (opaque), shape B = off-red (translucent)
     let mut a = make_shape(shape_a);
     let mut b = make_shape(shape_b);
@@ -519,7 +521,7 @@ fn boolean_gallery_mesh_impl(shape_a: i32, shape_b: i32, op: i32, offset_x: f64,
     let b = color_shape(&b, 0.85, 0.25, 0.25, 0.6);
     // Rotate shape B about its offset center, then translate
     let b = b.rotate(rot_x, rot_y, rot_z).translate(Vec3::new(offset_x, offset_y, offset_z));
-    let result = soup::op_with_engine_progress(&a, &b, op, engine, reporter);
+    let result = soup::op_with_engine_progress(&a, &b, op, engine, nonzero, reporter);
     mesh_data_from(&result)
 }
 

@@ -35,7 +35,7 @@ use std::sync::OnceLock;
 use manifold_rust::cancel::CancelToken;
 use manifold_rust::manifold::Manifold;
 use manifold_rust::progress::{Phase, ProgressReporter};
-use manifold_rust::types::{BooleanEngine, OpType};
+use manifold_rust::types::{BooleanEngine, OpType, WindingRule};
 
 use crate::cancel::CancelTokenRs;
 use crate::error::{guard, set_last_error};
@@ -132,6 +132,31 @@ pub unsafe extern "C" fn manifold_rs_boolean_progress(
     progress: ManifoldRsProgressFn,
     user: *mut c_void,
 ) -> *mut ManifoldRs {
+    // SAFETY: identical contract, forwarded unchanged.
+    unsafe { manifold_rs_boolean_progress_rule(a, b, op, engine, 0, token, progress, user) }
+}
+
+/// [`manifold_rs_boolean_progress`] with an explicit winding rule:
+/// 0 = positive (`w >= 1`, the default and the historical behavior),
+/// 1 = nonzero (`w != 0`, inside-out geometry stays solid).
+///
+/// The rule is a robust-engine semantic — the exact engine ignores it, and
+/// `engine = MANIFOLD_RS_ENGINE_AUTO` resolves to the robust engine whenever
+/// the rule is nonzero. Returns NULL for an unknown rule value.
+///
+/// # Safety
+/// Same contract as [`manifold_rs_boolean_progress`].
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_boolean_progress_rule(
+    a: *const ManifoldRs,
+    b: *const ManifoldRs,
+    op: i32,
+    engine: i32,
+    winding_rule: i32,
+    token: *const CancelTokenRs,
+    progress: ManifoldRsProgressFn,
+    user: *mut c_void,
+) -> *mut ManifoldRs {
     guard(ptr::null_mut(), || {
         let op = match op {
             0 => OpType::Add,
@@ -149,6 +174,16 @@ pub unsafe extern "C" fn manifold_rs_boolean_progress(
             other => {
                 set_last_error(format!(
                     "manifold_rs_boolean_progress: unknown engine {other}"
+                ));
+                return ptr::null_mut();
+            }
+        };
+        let rule = match winding_rule {
+            0 => WindingRule::Positive,
+            1 => WindingRule::Nonzero,
+            other => {
+                set_last_error(format!(
+                    "manifold_rs_boolean_progress: unknown winding rule {other}"
                 ));
                 return ptr::null_mut();
             }
@@ -177,10 +212,11 @@ pub unsafe extern "C" fn manifold_rs_boolean_progress(
             })
         });
 
-        let result: Manifold = a.inner.boolean_with_engine_and_progress(
+        let result: Manifold = a.inner.boolean_with_engine_rule_and_progress(
             &b.inner,
             op,
             engine,
+            rule,
             token,
             reporter.as_ref(),
         );

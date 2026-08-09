@@ -8,7 +8,7 @@ use manifold_rust::manifold::Manifold;
 use manifold_rust::robust::exact::rational::R3;
 use manifold_rust::robust::ray_shoot::{winding_number_indexed, WindingIndex};
 use manifold_rust::robust::{cells, intersection_graph, soup};
-use manifold_rust::types::{BooleanEngine, MeshGL, OpType};
+use manifold_rust::types::{BooleanEngine, MeshGL, OpType, WindingRule};
 
 fn import(path: &str) -> Manifold {
     let data = std::fs::read(path).expect("read stl");
@@ -103,7 +103,7 @@ fn main() {
 
     // Volume of the raw extraction, before assembly and simplification:
     // isolates whether the material is lost at classification or later.
-    let pieces = cells::extract(&graph, &complex, &wind, OpType::Add);
+    let pieces = cells::extract(&graph, &complex, &wind, OpType::Add, WindingRule::Positive);
     let mut vol6 = 0.0f64;
     for pc in &pieces {
         let v = [
@@ -231,8 +231,8 @@ fn main() {
             wind.w[cn],
             ca,
             wind.w[ca],
-            cells::in_result(OpType::Add, wind.w[cn]),
-            cells::in_result(OpType::Add, wind.w[ca]),
+            cells::in_result(OpType::Add, WindingRule::Positive, wind.w[cn]),
+            cells::in_result(OpType::Add, WindingRule::Positive, wind.w[ca]),
         );
     }
 }

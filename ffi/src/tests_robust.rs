@@ -216,3 +216,42 @@ fn has_self_intersections_flags_doubled_surface() {
         manifold_rs_destroy(doubled);
     }
 }
+
+/// The winding-rule entry point: an inside-out 2-cube at the origin unioned
+/// with a correctly wound 2-cube offset by one along each axis. Under the
+/// positive rule only the wound cube is material (volume 8); under the
+/// nonzero rule the inverted one counts too (8 + 8 - 1 overlap = 15), with
+/// its emitted orientation corrected so the signed volume stays positive.
+#[test]
+fn boolean_progress_rule_keeps_inside_out_geometry() {
+    use crate::progress::manifold_rs_boolean_progress_rule as boolean_rule;
+    let (verts, tris) = cube_mesh([0.0; 3], 2.0);
+    let inverted: Vec<u32> = tris
+        .chunks_exact(3)
+        .flat_map(|t| [t[0], t[2], t[1]])
+        .collect();
+    let a = unsafe {
+        manifold_rs_from_mesh(verts.as_ptr(), verts.len(), inverted.as_ptr(), inverted.len(), 3)
+    };
+    let b = super::tests::ffi_cube([1.0, 1.0, 1.0], 2.0);
+    assert_eq!(unsafe { manifold_rs_status(a) }, 0);
+    assert_eq!(unsafe { manifold_rs_status(b) }, 0);
+
+    let null = std::ptr::null();
+    let positive = unsafe { boolean_rule(a, b, 0, 1, 0, null, None, std::ptr::null_mut()) };
+    let nonzero = unsafe { boolean_rule(a, b, 0, 1, 1, null, None, std::ptr::null_mut()) };
+    assert!(!positive.is_null() && !nonzero.is_null());
+    let vp = unsafe { exported_signed_volume(positive) };
+    let vn = unsafe { exported_signed_volume(nonzero) };
+    assert!((vp - 8.0).abs() < 1e-6, "positive rule volume {vp}");
+    assert!((vn - 15.0).abs() < 1e-6, "nonzero rule volume {vn}");
+
+    // Unknown rule value is an argument error, not a panic.
+    assert!(unsafe { boolean_rule(a, b, 0, 1, 7, null, None, std::ptr::null_mut()) }.is_null());
+    unsafe {
+        manifold_rs_destroy(positive);
+        manifold_rs_destroy(nonzero);
+        manifold_rs_destroy(a);
+        manifold_rs_destroy(b);
+    }
+}
