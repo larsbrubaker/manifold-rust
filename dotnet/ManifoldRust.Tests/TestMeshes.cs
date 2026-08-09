@@ -226,6 +226,83 @@ namespace ManifoldRust.Tests
 		}
 
 		/// <summary>
+		/// The same mesh re-expressed as fully disconnected triangle soup (three
+		/// duplicated verts per triangle) — geometrically identical, guaranteed to
+		/// fail strict halfedge pairing.
+		/// </summary>
+		internal static (float[] VertProperties, uint[] TriVerts) AsSoup(float[] verts, uint[] tris)
+		{
+			float[] soupVerts = new float[tris.Length * 3];
+			for (int i = 0; i < tris.Length; i++)
+			{
+				int o = (int)tris[i] * 3;
+				soupVerts[(i * 3) + 0] = verts[o + 0];
+				soupVerts[(i * 3) + 1] = verts[o + 1];
+				soupVerts[(i * 3) + 2] = verts[o + 2];
+			}
+
+			uint[] soupTris = new uint[tris.Length];
+			for (uint i = 0; i < tris.Length; i++)
+			{
+				soupTris[i] = i;
+			}
+
+			return (soupVerts, soupTris);
+		}
+
+		/// <summary>
+		/// The same triangles wound the other way, which turns a solid into an
+		/// inside-out shell: the geometry is unchanged but its signed volume flips.
+		/// </summary>
+		internal static uint[] Inverted(uint[] tris)
+		{
+			uint[] flipped = new uint[tris.Length];
+			for (int i = 0; i < tris.Length; i += 3)
+			{
+				flipped[i] = tris[i];
+				flipped[i + 1] = tris[i + 2];
+				flipped[i + 2] = tris[i + 1];
+			}
+
+			return flipped;
+		}
+
+		/// <summary>
+		/// Signed volume of an exported mesh, by the divergence theorem: positive
+		/// for outward-wound material, negative for an inside-out shell.
+		/// </summary>
+		/// <remarks>
+		/// Computed here rather than asked of the kernel for the usual reason - the
+		/// tests must not measure the thing they are testing with itself - and in
+		/// double precision so the tolerance can be tight. It mirrors
+		/// <c>exported_signed_volume</c> in ffi/src/tests_robust.rs.
+		/// </remarks>
+		internal static double SignedVolume(MeshGL mesh)
+		{
+			int numProp = (int)mesh.NumProp;
+			double volume = 0.0;
+
+			for (int t = 0; t < mesh.TriVerts.Length; t += 3)
+			{
+				(double X, double Y, double Z) Point(uint index)
+				{
+					int o = (int)index * numProp;
+					return (mesh.VertProperties[o], mesh.VertProperties[o + 1], mesh.VertProperties[o + 2]);
+				}
+
+				(double X, double Y, double Z) a = Point(mesh.TriVerts[t]);
+				(double X, double Y, double Z) b = Point(mesh.TriVerts[t + 1]);
+				(double X, double Y, double Z) c = Point(mesh.TriVerts[t + 2]);
+
+				volume += ((a.X * ((b.Y * c.Z) - (b.Z * c.Y)))
+					- (a.Y * ((b.X * c.Z) - (b.Z * c.X)))
+					+ (a.Z * ((b.X * c.Y) - (b.Y * c.X)))) / 6.0;
+			}
+
+			return volume;
+		}
+
+		/// <summary>
 		/// A tetrahedron with one face wound the wrong way: four verts and four tris,
 		/// so it clears the size checks, but two half-edges then run in the same
 		/// direction and the topology check rejects it as not manifold.

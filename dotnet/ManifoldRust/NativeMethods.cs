@@ -194,6 +194,44 @@ namespace ManifoldRust
 
 		[LibraryImport(LibraryName)]
 		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial IntPtr manifold_rs_repair_orientation(IntPtr m);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial int manifold_rs_has_self_intersections(IntPtr m);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial IntPtr manifold_rs_progress_phase_name(uint phaseId);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial uint manifold_rs_progress_phase_count();
+
+		// The progress callback is an unmanaged function pointer rather than a
+		// managed delegate: the ABI can invoke it from an internal worker thread,
+		// and a reverse P/Invoke stub built from a delegate would have to be kept
+		// alive by hand for exactly that window. A static
+		// [UnmanagedCallersOnly] method has no lifetime at all, and it is the only
+		// shape that survives trimming and native AOT.
+		//
+		// Only the _rule form is declared: manifold_rs_boolean_progress is
+		// implemented natively by forwarding here with the positive rule, so
+		// declaring both would be two names for one call.
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial IntPtr manifold_rs_boolean_progress_rule(
+			IntPtr a,
+			IntPtr b,
+			int op,
+			int engine,
+			int windingRule,
+			IntPtr token,
+			delegate* unmanaged[Cdecl]<uint, double, void*, void> progress,
+			void* user);
+
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
 		internal static partial IntPtr manifold_rs_as_original(IntPtr m);
 
 		[LibraryImport(LibraryName)]

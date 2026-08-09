@@ -128,6 +128,9 @@ MeshGL mesh = result.GetMeshGL();
 | `Manifold.BatchBoolean(IReadOnlyList<Manifold>, ManifoldOpType)` | `Subtract` is the first operand minus the union of the rest. Operands are not consumed. |
 | `Manifold.BatchBoolean(IReadOnlyList<Manifold>, ManifoldOpType, CancellationToken)` | Throws `OperationCanceledException` if the token is signalled before the boolean finishes. See below. |
 | `Manifold.BatchBoolean(IReadOnlyList<Manifold>, ManifoldOpType, CancelToken)` | Lower level: reports cancellation as a result with `Status == Cancelled` instead of throwing. |
+| `Manifold.Boolean(Manifold, Manifold, ManifoldOpType, BooleanEngine, ...)` | Binary boolean with the engine pinned, plus optional `WindingRule`, progress sink and cancellation. `Union` / `Subtract` / `Intersect` are the named spellings. Use `BatchBoolean` for three or more operands: only it runs the CSG tree. |
+| `Manifold.RepairOrientation()` | Returns a **new** manifold with inside-out shells rewound so every body reads as solid under the `Positive` winding rule. A mesh that needs no repair comes back as a plain copy, so it is safe to call unconditionally. |
+| `Manifold.HasSelfIntersections` | Whether two of the mesh's own triangles genuinely cross, overlap or coincide — shared edges and vertices do not count. Cached natively, so repeated reads are free. |
 | `Manifold.GetMeshGL()` | Eagerly copies every array into managed memory and frees the native mesh before returning. |
 | `Manifold.GetMeshGL64()` | The same, with `double[]` coordinates. |
 | `Manifold.NativeVersion` | Version string of the loaded shared library. Reading it forces the load, so it is a cheap early check that the native library is findable. |
@@ -237,6 +240,47 @@ loses the ability to cancel that operation. The rule that actually matters:
 **do not race `Dispose` against `Cancel`/`IsCancelled` on the same token.** Keep
 the token alive until every call that might cancel through it has returned.
 
+## Progress reporting and winding rules
+
+The binary overloads take the engine explicitly and accept an
+`IProgress<(string Phase, double? Fraction)>`. A `null` `Fraction` is the ABI's
+*indeterminate*: the phase is running but has no meaningful ratio, so show a
+spinner rather than a bar.
+
+```csharp
+IProgress<(string Phase, double? Fraction)> report = new Progress<(string, double?)>(
+    p => status.Text = p.Item2 is double f ? $"{p.Item1} {f:P0}" : p.Item1);
+
+using Manifold result = Manifold.Subtract(
+    body, hole, BooleanEngine.Auto, WindingRule.Positive, report, cancellationToken);
+```
+
+**The callback may run on a native worker thread**, not the one that made the
+call — the pipeline is parallel. It is never re-entered concurrently, but a sink
+that touches UI state has to marshal itself; `System.Progress<T>` already posts
+to the synchronization context that created it, which is why the example uses
+it. Reporting never changes the result: the same inputs produce the same
+triangles with or without a sink attached, and a `null` sink is exactly the
+un-instrumented pipeline. An exception thrown by the sink cannot unwind through
+the native frame, so the first one is captured and rethrown from the call.
+
+`WindingRule` decides which winding numbers count as solid, and only the robust
+engine reads it (`Exact` ignores it; `Auto` resolves to `Robust` whenever the
+rule is `Nonzero`):
+
+- `Positive` — `{w >= 1}`, the default everywhere and the rule clean,
+  consistently wound data wants. An inside-out shell encloses `w = -1` and so
+  contributes nothing.
+- `Nonzero` — `{w != 0}`, which keeps inside-out shells as material. For scans
+  and third-party geometry wound inconsistently that cannot be repaired first.
+
+`RepairOrientation()` is the alternative to `Nonzero`: it rewinds the shells once
+so every later operation can keep using `Positive`, instead of changing what
+"solid" means for the whole call. `HasSelfIntersections` answers the other
+question worth asking before a boolean — geometry that overlaps itself breaks the
+exact engine's winding integral, which is why `BooleanEngine.Auto` routes it to
+`Robust`.
+
 ## Caveat: check `Status` on every input before `BatchBoolean`
 
 An operand carrying a non-zero `Status` is absorbed as **empty geometry** and
@@ -266,9 +310,12 @@ The package is published by `.github/workflows/release-nuget.yml`, which runs on
 a pushed tag of the form `nuget-v<version>`:
 
 1. Bump `<Version>` in `ManifoldRust/ManifoldRust.csproj`, and `version` in
-   `../ffi/Cargo.toml` if the ABI changed — the two are compared at run time by
-   the version handshake above, so they move together. Update
-   `NativeVersionCheck.ExpectedPrefix` to match.
+   `../ffi/Cargo.toml` if the ABI changed — update `NativeVersionCheck.ExpectedPrefix`
+   to match when that is a major.minor change, since the handshake above compares
+   that prefix. The package version may also move on its own when the managed
+   surface grows over an unchanged ABI (0.3.1 → 0.4.0 was exactly that), so the
+   two numbers are not required to be equal — only the handshake prefix is
+   binding.
 2. Commit, then tag: `git tag nuget-v0.2.0 && git push origin nuget-v0.2.0`.
 3. CI, in order: checks that the tag version matches the csproj version; runs
    the full Rust and .NET test suites **at the tagged commit**; builds

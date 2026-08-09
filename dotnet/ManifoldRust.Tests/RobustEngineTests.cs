@@ -33,22 +33,9 @@ namespace ManifoldRust.Tests
 		/// </summary>
 		private static (float[] VertProperties, uint[] TriVerts) AsSoup(float[] verts, uint[] tris)
 		{
-			float[] soupVerts = new float[tris.Length * 3];
-			for (int i = 0; i < tris.Length; i++)
-			{
-				int o = (int)tris[i] * 3;
-				soupVerts[(i * 3) + 0] = verts[o + 0];
-				soupVerts[(i * 3) + 1] = verts[o + 1];
-				soupVerts[(i * 3) + 2] = verts[o + 2];
-			}
-
-			uint[] soupTris = new uint[tris.Length];
-			for (uint i = 0; i < tris.Length; i++)
-			{
-				soupTris[i] = i;
-			}
-
-			return (soupVerts, soupTris);
+			// The construction moved to TestMeshes once a second test file needed it;
+			// this stays as the local spelling every test in this class already uses.
+			return TestMeshes.AsSoup(verts, tris);
 		}
 
 		[Test]

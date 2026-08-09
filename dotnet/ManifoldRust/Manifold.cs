@@ -37,7 +37,11 @@ namespace ManifoldRust
 	/// goes missing from the output instead of raising an error - check
 	/// <see cref="Status"/> on every operand before combining them.
 	/// </remarks>
-	public sealed class Manifold : IDisposable
+	// Partial: the shell-repair and self-intersection queries live in
+	// ManifoldRepair.cs and the binary boolean with engine, winding rule and
+	// progress reporting lives in ManifoldBoolean.cs, so no one file carries the
+	// whole type.
+	public sealed partial class Manifold : IDisposable
 	{
 		private readonly ManifoldHandle handle;
 
