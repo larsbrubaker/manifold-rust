@@ -356,21 +356,35 @@ fn incircle_matches_exact_and_handles_cocircular() {
 
 #[test]
 fn filter_hit_rate_is_high_on_generic_input() {
-    filtered::stats::reset();
+    // Measured from this test's own calls only: the filter helpers return
+    // `None` exactly when the public predicates would escalate to the exact
+    // tier. (An earlier version read process-global counters, which other
+    // tests running concurrently in the same process polluted.)
+    let (mut fast, mut exact) = (0u64, 0u64);
+    let mut tally = |filtered_sign: Option<Sign>, exact_sign: Sign| {
+        match filtered_sign {
+            // A resolved filter must agree with the predicate's final answer.
+            Some(s) => {
+                assert_eq!(s, exact_sign);
+                fast += 1;
+            }
+            None => exact += 1,
+        }
+    };
     let mut rng = Lcg::new(99);
     for _ in 0..10000 {
         let p = |rng: &mut Lcg| {
             Vec3::new(rng.next_f64(50.0), rng.next_f64(50.0), rng.next_f64(50.0))
         };
         let (a, b, c, d) = (p(&mut rng), p(&mut rng), p(&mut rng), p(&mut rng));
-        let _ = orient3d(a, b, c, d);
-        let _ = orient2d(
+        tally(filtered::orient3d_filter(a, b, c, d), orient3d(a, b, c, d));
+        let (a2, b2, c2) = (
             Vec2::new(a.x, a.y),
             Vec2::new(b.x, b.y),
             Vec2::new(c.x, c.y),
         );
+        tally(filtered::orient2d_filter(a2, b2, c2), orient2d(a2, b2, c2));
     }
-    let (fast, exact) = filtered::stats::snapshot();
     let rate = fast as f64 / (fast + exact) as f64;
     assert!(
         rate > 0.99,
