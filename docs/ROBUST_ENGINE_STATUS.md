@@ -177,19 +177,31 @@ cosmetic arbiter artifact: #79187 reports "neither" because robust's
 1e-5 residual sliver exceeds the referee's zero-hit absolute band —
 robust is right there to 1e-5 absolute.
 
+## Backend swap done: dashu (2026-08-09, `8db4323`)
+
+The exact-arithmetic backend is dashu-int/dashu-ratio behind the
+`exact/backend.rs` seam (phase 1 `0f79228`). Small values store inline,
+which was the profiled dominant shared cost. Verified bit-identical at
+every gate (695 tests both modes, referee table digit-identical vs the
+pre-swap build, 100-slowest corpus slice 100/100, rat_to_f64 byte-equal
+against dashu's converter across ~12k cases — kept as a permanent test
+oracle). Measured: heavy fixture −33%, corpus 100-slowest mean robust
+time 7.5 s → 4.2 s (1.77×); wasm expected to gain more (32-bit inline
+words, no compiler-rt allocation churn).
+
 ## Open items
 
-1. **43 timeouts** on very large self-intersecting meshes. Roadmap from
-   instrumentation: 55% of exact orient3d calls fall through to BigInt
-   because one near-zero full-mantissa coordinate inflates the shared
-   dyadic scale — the levers are fewer filter escalations or a
-   Shewchuk-style adaptive-expansion tier, plus (architectural) a
-   small-value-inline bigint backend to cut allocation churn. The i64
-   predicate tier (native-neutral, big wasm win) is already in.
-2. **Progress API** is in (library → FFI 0.3.1 → wasm → demo busy card).
-   A progress-capable *batch* boolean needs `csg_tree.rs`.
-3. `robust/intersection_graph.rs` is over the 800-line limit (~1,110)
-   and needs splitting before further additions.
+1. **Timeouts on very large self-intersecting meshes** (43 pre-swap;
+   re-count after the 1.77×). Remaining levers: fewer orient3d filter
+   escalations or a Shewchuk-style adaptive-expansion tier (55% of
+   exact orient3d calls genuinely exceed the i128 budget due to
+   shared-scale inflation).
+2. **Progress API** is in end-to-end. A progress-capable *batch*
+   boolean needs `csg_tree.rs`.
+3. `demo/src/demos/boolean-gallery.ts` (~956 lines) is over the file
+   limit and owed a split. Flaky wall-clock assertion in
+   `cancel_from_another_thread_interrupts_a_boolean_in_flight` is worth
+   hardening (pre-existing, timing-ratio based).
 
 ## Reproducing the data
 
