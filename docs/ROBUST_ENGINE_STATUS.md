@@ -191,9 +191,16 @@ words, no compiler-rt allocation churn).
 
 ## Open items
 
-1. **Timeouts on very large self-intersecting meshes**: 17 (was 43
-   pre-swap; the dashu backend cleared 26 at the 120 s budget, and every
-   newly-completed mesh with a volume gap arbitrated robust-right). Remaining levers: fewer orient3d filter
+1. **Timeouts on very large self-intersecting meshes**: down to **6**
+   (was 43 pre-swap): 26 cleared by the dashu backend under 4-way batch
+   contention, 11 more complete solo at 120 s. The survivors are all
+   giants — 247516 (182k tris), 247517 (146k), 252784 (889k), 789801
+   (548k), 1602764 (210k), 1716279 (389k). Every newly-completed mesh
+   with a volume gap arbitrated robust-right. The lever for the six is
+   monster-arrangement scalability: a few triangles carry ~450k
+   segments through the O(n²) CDT insertion/crossings sweeps (measured
+   on the #42322 family) — walk-based CDT point location and a
+   sweep-line crossings pass are the identified fixes. Remaining levers: fewer orient3d filter
    escalations or a Shewchuk-style adaptive-expansion tier (55% of
    exact orient3d calls genuinely exceed the i128 budget due to
    shared-scale inflation).
