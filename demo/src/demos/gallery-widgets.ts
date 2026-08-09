@@ -143,29 +143,68 @@ export function createChip(label: string, title: string, onClick: () => void): H
   return button('bgw-chip', label, title, onClick);
 }
 
+/// Inline icon geometry, all on a 16x16 viewBox.
+///
+/// `reload` is a 280° arc of the circle centred at (8,8) with r = 5.5 — the
+/// arc's centre is the viewBox centre *by construction*, so a rotation of the
+/// (square) svg box turns the mark about its own axis. A text glyph (⟳) could
+/// not do this: its ink sits off-centre in the character's em box and wobbled
+/// visibly while spinning. Endpoints are the circle points at θ = -50° and
+/// θ = 230°, leaving an 80° gap centred on the top of the screen; the head is
+/// a triangle at the arc's leading (θ = 230°) end, pointing along the tangent.
+export const ICONS = {
+  reload:
+    '<path class="bgw-icon-stroke" d="M11.5353 3.7868A5.5 5.5 0 1 1 4.4647 3.7868"/>' +
+    '<path class="bgw-icon-fill" d="M6.303 2.244 3.243 2.331 5.686 5.242Z"/>',
+  swap:
+    '<path class="bgw-icon-stroke" d="M3.5 6.2h8M9.2 3.9l2.3 2.3-2.3 2.3"/>' +
+    '<path class="bgw-icon-stroke" d="M12.5 10.8h-8M6.8 8.5l-2.3 2.3 2.3 2.3"/>',
+} as const;
+
+export type IconName = keyof typeof ICONS;
+
+/// One inline SVG icon. The box is square and `display: block` (see the
+/// stylesheet), so it carries no baseline or line-height offset that would
+/// shift its centre away from the button's.
+export function createIcon(name: IconName, cls: string, size = 16): Element {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('width', String(size));
+  svg.setAttribute('height', String(size));
+  svg.setAttribute('class', cls);
+  svg.setAttribute('aria-hidden', 'true');
+  svg.innerHTML = ICONS[name];
+  return svg;
+}
+
 export interface IconButton {
   el: HTMLButtonElement;
-  /** The glyph itself — the only part that spins while busy. */
-  glyph: HTMLElement;
+  /** The icon itself — the only part that spins while busy. */
+  glyph: Element;
   setBusy(busy: boolean): void;
 }
 
-/// Square icon button (Load Random Pair's ⟳). The glyph lives in its own
-/// span so the busy animation turns the mark and leaves the button box
-/// square and still.
-export function createIconButton(glyph: string, title: string, onClick: () => void): IconButton {
+/// Square icon button (Load Random Pair, and the primitives Swap). The icon
+/// is its own element so the busy animation turns the mark and leaves the
+/// button box static.
+export function createIconButton(icon: IconName, title: string, onClick: () => void): IconButton {
   const el = button('bgw-iconbtn', '', title, onClick);
   el.setAttribute('aria-label', title);
-  const mark = document.createElement('span');
-  mark.className = 'bgw-iconbtn-glyph';
-  mark.textContent = glyph;
-  mark.setAttribute('aria-hidden', 'true');
+  const mark = createIcon(icon, 'bgw-iconbtn-glyph');
   el.appendChild(mark);
   return {
     el,
     glyph: mark,
     setBusy(busy: boolean) { mark.classList.toggle('is-spinning', busy); },
   };
+}
+
+/// Chip-sized icon button (the operand card's Swap).
+export function createIconChip(icon: IconName, title: string, onClick: () => void): HTMLButtonElement {
+  const el = button('bgw-chip bgw-chip-icon', '', title, onClick);
+  el.setAttribute('aria-label', title);
+  el.appendChild(createIcon(icon, 'bgw-chip-glyph', 12));
+  return el;
 }
 
 export interface CheckRow {
@@ -302,11 +341,17 @@ export interface OperandCard {
 }
 
 /// Inset card describing the two operands — plain information, not an alert.
-export function createOperandCard(): OperandCard {
+/// `onSwap` backs the chip that sits on the divider between the two rows and
+/// trades which mesh is A and which is B; it only appears once both rows are
+/// there to trade.
+export function createOperandCard(onSwap: () => void): OperandCard {
   const el = document.createElement('div');
   el.className = 'bgw-operands';
   const rows = document.createElement('div');
   rows.className = 'bgw-op-rows';
+  const swapLine = document.createElement('div');
+  swapLine.className = 'bgw-op-swapline';
+  swapLine.appendChild(createIconChip('swap', 'Swap A and B', onSwap));
   const rot = document.createElement('div');
   rot.className = 'bgw-op-rot bgw-mono';
   const msg = document.createElement('div');
@@ -320,6 +365,8 @@ export function createOperandCard(): OperandCard {
     setLines(lines: OperandLine[], rotation: string | null) {
       rows.replaceChildren();
       for (const line of lines) {
+        // The swap chip rides the rule between the two mesh rows.
+        if (rows.children.length === 1) rows.appendChild(swapLine);
         const row = document.createElement('div');
         row.className = 'bgw-op-row';
         const swatch = document.createElement('span');

@@ -51,6 +51,8 @@ export interface PanelHandlers {
   onShape(slot: 'a' | 'b', value: number): void;
   onPairMode(mode: PairMode): void;
   onLoadRandom(): void;
+  /** Trade which mesh (or which primitive) is A and which is B. */
+  onSwap(): void;
   onTrouble(value: string): void;
   onPickId(slot: 'a' | 'b', value: number): void;
   onLoadPicked(): void;
@@ -154,8 +156,12 @@ export function buildPanel(root: HTMLElement, state: PanelState, h: PanelHandler
     a: createSelect(SHAPES, String(state.shapeA), v => h.onShape('a', parseInt(v)), 'Shape A'),
     b: createSelect(SHAPES, String(state.shapeB), v => h.onShape('b', parseInt(v)), 'Shape B'),
   };
-  const loadBtn = createIconButton('⟳', 'Load random pair', h.onLoadRandom);
-  const pairRow = row('bgw-row', pairSelect.el, shapeSelects.a.el, shapeSelects.b.el, loadBtn.el);
+  const loadBtn = createIconButton('reload', 'Load random pair', h.onLoadRandom);
+  // Primitives have no operand card to hang a swap chip on, so the swap lives
+  // in the pair row, in the slot the ⟳ button occupies for Thingi10K.
+  const swapBtn = createIconButton('swap', 'Swap A and B', h.onSwap);
+  const pairRow = row('bgw-row', pairSelect.el, shapeSelects.a.el, shapeSelects.b.el,
+    swapBtn.el, loadBtn.el);
   inputBand.appendChild(pairRow);
 
   const troubleSelect = createSelect(state.troubleOptions, state.troubleCase, h.onTrouble,
@@ -170,7 +176,7 @@ export function buildPanel(root: HTMLElement, state: PanelState, h: PanelHandler
   const pickRow = row('bgw-row', pickInputs.a, pickInputs.b, pickBtn);
   inputBand.appendChild(pickRow);
 
-  const operands = createOperandCard();
+  const operands = createOperandCard(h.onSwap);
   inputBand.appendChild(operands.el);
 
   // ---- Band 2: Operation ----
@@ -254,6 +260,7 @@ export function buildPanel(root: HTMLElement, state: PanelState, h: PanelHandler
     shapeSelects.a.el.style.display = thingi ? 'none' : '';
     shapeSelects.b.el.style.display = thingi ? 'none' : '';
     loadBtn.el.style.display = thingi && random ? '' : 'none';
+    swapBtn.el.style.display = thingi ? 'none' : '';
     troubleSelect.el.style.display = thingi && currentMode === 'trouble' ? '' : 'none';
     pickRow.style.display = thingi && currentMode === 'pick' ? '' : 'none';
     operands.setVisible(thingi);

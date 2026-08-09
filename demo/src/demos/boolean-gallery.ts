@@ -110,6 +110,7 @@ export function init(container: HTMLElement): () => void {
     },
     onPairMode: mode => setPairMode(mode, true),
     onLoadRandom: () => { loadRandomPair(); },
+    onSwap: () => { swapOperands(); },
     onTrouble: v => {
       if (!v) return;
       troubleCase = v;
@@ -367,6 +368,32 @@ export function init(container: HTMLElement): () => void {
       { slot: 'b', title: thingiB.model.name, meta: b.text, caution: b.caution },
     ], `rot [${Math.round(rotX)}, ${Math.round(rotY)}, ${Math.round(rotZ)}]°`);
     panel.operands.setMessage(message);
+  }
+
+  /// Trade which mesh is A and which is B, so Difference subtracts the other
+  /// way round. The slots keep their identity — swatch colours, the offset and
+  /// the rotation all belong to the slot, so B's transform now applies to the
+  /// mesh that just moved into B. The worker's operand slots have to follow
+  /// (its 'a'/'b' meshes are what the boolean reads); the messages are queued
+  /// before the run below, and the worker processes them in order.
+  function swapOperands() {
+    if (loadingPair) return;
+    if (source === 'thingi') {
+      if (!thingiA || !thingiB) return;
+      [thingiA, thingiB] = [thingiB, thingiA];
+      void runner.importOperand('a', thingiA.arrays, wantSelfIntersecting());
+      void runner.importOperand('b', thingiB.arrays, wantSelfIntersecting());
+      showOperands();
+    } else {
+      [shapeA, shapeB] = [shapeB, shapeA];
+      saveSetting(DEMO, 'shapeA', shapeA);
+      saveSetting(DEMO, 'shapeB', shapeB);
+      panel.setShape('a', shapeA);
+      panel.setShape('b', shapeB);
+    }
+    // The debug record is rebuilt from this state, so it simply describes the
+    // new assignment.
+    update();
   }
 
   // Some dataset models flagged "closed" still fail the robust importer's

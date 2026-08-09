@@ -32,6 +32,17 @@
   --bg-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, 'SF Mono', Consolas,
     'Liberation Mono', monospace;
 
+  /* One control height for the whole panel, pinned to an explicit recipe:
+     7px padding x2 + 18px line box + 1px border x2 = 34px. Both the select
+     and the square icon button beside it are set from this, and the line box
+     is stated explicitly (--bg-control-line) so a font change cannot make
+     the two drift apart. Deriving the button from the select's rendered
+     height (align-self: stretch + aspect-ratio) matched the height but not
+     the width: Chromium takes the flex base size from the content, so the
+     transferred aspect-ratio size never becomes the main size. */
+  --bg-control-line: 18px;
+  --bg-control-h: 34px;
+
   display: flex;
   flex-direction: column;
   align-self: start;
@@ -172,6 +183,8 @@
 
 .bgw-select select {
   width: 100%;
+  height: var(--bg-control-h);
+  line-height: var(--bg-control-line);
   padding: 7px 22px 7px 9px;
   font: inherit;
   font-size: 13px;
@@ -188,6 +201,8 @@
 .bgw-num {
   flex: 1 1 0;
   min-width: 0;
+  height: var(--bg-control-h);
+  line-height: var(--bg-control-line);
   padding: 7px 9px;
   font: inherit;
   font-size: 12.5px;
@@ -197,15 +212,15 @@
   border-radius: 6px;
 }
 
-/* Square icon button at the panel's control height (30px), so it lines up
-   with the select beside it. */
+/* Square icon button, both axes from the shared control height so it is
+   exactly as tall as the select beside it and exactly as wide as it is tall. */
 .bgw-iconbtn {
   flex: none;
+  width: var(--bg-control-h);
+  height: var(--bg-control-h);
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
   padding: 0;
   color: #fff;
   background: var(--bg-accent);
@@ -214,10 +229,25 @@
   cursor: pointer;
 }
 
+/* display: block removes the inline baseline gap, so the 16x16 icon box is
+   centred in the button and its centre is the rotation centre. */
 .bgw-iconbtn-glyph {
   display: block;
-  font-size: 16px;
-  line-height: 1;
+  width: 16px;
+  height: 16px;
+  transform-origin: 50% 50%;
+}
+
+.bgw-icon-stroke {
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.bgw-icon-fill {
+  fill: currentColor;
 }
 
 .bgw-iconbtn:disabled,
@@ -226,9 +256,15 @@
   cursor: default;
 }
 
-/* The mark turns; the button box stays put. */
+/* The mark turns about its own centre; the button box stays put. */
 .bgw-iconbtn-glyph.is-spinning {
   animation: bgw-spin 1s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bgw-iconbtn-glyph.is-spinning {
+    animation-duration: 3s;
+  }
 }
 
 @keyframes bgw-spin {
@@ -259,9 +295,35 @@
   min-width: 0;
 }
 
-.bgw-op-row + .bgw-op-row {
-  padding-top: 7px;
-  border-top: 1px solid var(--bg-divider);
+/* The divider between the two mesh rows is drawn by the swap line, which
+   carries the chip that trades A and B. */
+.bgw-op-swapline {
+  position: relative;
+  height: 1px;
+  background: var(--bg-divider);
+}
+
+.bgw-chip-icon {
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 6px;
+  color: var(--bg-muted);
+  /* Card fill, so the rule stops at the chip rather than running under it. */
+  background: var(--bg-inset);
+}
+
+.bgw-chip-icon:hover {
+  color: var(--bg-accent-text);
+  border-color: var(--bg-accent);
+}
+
+.bgw-chip-glyph {
+  display: block;
 }
 
 .bgw-swatch {
