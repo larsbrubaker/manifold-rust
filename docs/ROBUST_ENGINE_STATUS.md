@@ -164,7 +164,7 @@ per mesh:
 | status | count |
 |---|---|
 | NoError | 8,823 |
-| Cancelled (120 s, large self-intersecting inputs) | 43 |
+| Cancelled (only #252784 remains, at 570 s solo) | 1 |
 | **NotClosed** | **0** (was 174 at pre-fix code) |
 | import failures (unreadable/unimportable, no engine attempt) | 1,039 |
 
@@ -191,15 +191,24 @@ words, no compiler-rt allocation churn).
 
 ## Open items
 
-1. **Timeouts**: down to **2** after the monster-arrangement work
-   (`63b60d7`): 247516/247517/789801/1602764 now complete (147–208 s).
-   #252784 (889 k tris) hits a pre-existing split-registry **memory
-   wall** (exposed, not caused, by the speedups); #1716279 needs the
-   **incircle filter lever** — 22% of its 9M incircle calls escalate to
-   exact because `incircle_a`'s bound uses absolute coordinate
-   magnitudes, which dwarf the determinant for clusters far from the
-   origin (a Shewchuk-style bound for exact-f64 points is the fix;
-   soundness-critical, shared filter). Also latent:
+1. **Timeouts**: down to **1** — #252784 alone. The incircle
+   **translated-coordinate filter** (`ea806f1`: filter bounds now scale
+   with cluster extent, not world-origin distance; plus exact-input
+   Shewchuk-style bounds for round-tripping f64 points) and the
+   **PointTable registry interning** (`ea806f1` second commit: ids
+   instead of ~19M live rational clones; #789801 peak RSS 3.5 GB →
+   1.9 GB) landed together, all gates bit-identical (702/702 both
+   modes, heavy fixture exact, corpus 100-slowest 100/100). #1716279
+   now completes in **365 s** solo (was Cancelled at 570 s; exact and
+   robust volumes agree to full precision, no referee needed).
+   #252784 (889 k tris, extreme self-intersection) gets through the
+   registries (119 s, formerly its point of death) but still exceeds
+   570 s in arrangements/CDT; its cancel also **overshot to 1188 s**
+   — the registry/phase-5 merge loops need cancel checks. Remaining
+   levers for it: translation lever for `arrangement.rs` sweeps (needs
+   its own soundness pass — box tests are not translation-invariant),
+   cheaper exact tier for genuine degeneracies, prims-duplication
+   memory, phase-5 materialization chunking. Also latent:
    `triangulate_pseudo` recursion depth on 15 k-point arrangements.
    Previous note, now historical: was **6**
    (was 43 pre-swap): 26 cleared by the dashu backend under 4-way batch
