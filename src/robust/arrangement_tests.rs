@@ -224,3 +224,83 @@ fn constraint_edges_reference_valid_points() {
     }
     validate(&arr);
 }
+
+/// The interval sweep that replaced the O(S²) all-pairs scans is only sound
+/// because it reproduces that scan's output *pair for pair and in order* —
+/// downstream point indices and CDT insertion order depend on the enumeration
+/// order, so a permuted (even if equal) pair set would change the result mesh.
+/// This pins both the set and the order against the naive reference, across
+/// sizes on both sides of the sweep's small-input cutoff and over box layouts
+/// (clustered, spanning, duplicated, degenerate) that stress the active-list
+/// purge and the sweep-axis choice.
+#[test]
+fn box_pair_sweep_matches_the_naive_scan_exactly() {
+    use super::{boxes_overlap, overlapping_box_pairs};
+
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> f64 {
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (self.0 >> 11) as f64 / (1u64 << 53) as f64
+        }
+    }
+
+    let mut rng = Lcg(0x5EED_1234);
+    // (count, extent scale) — tiny extents make the sweep prune almost
+    // everything; extents near 1.0 make nearly every pair overlap.
+    for &(n, scale) in &[
+        (3usize, 0.5f64),
+        (64, 0.02),
+        (65, 0.02),
+        (200, 0.005),
+        (200, 0.5),
+        (150, 1.0),
+        (120, 0.001),
+    ] {
+        let mut boxes: Vec<[f64; 4]> = Vec::with_capacity(n);
+        for k in 0..n {
+            let (cx, cy) = (rng.next(), rng.next());
+            // Every 11th box is a zero-extent point, every 17th a duplicate of
+            // its predecessor: exact ties in the sweep-axis sort order.
+            let (ex, ey) = if k % 11 == 0 {
+                (0.0, 0.0)
+            } else {
+                (rng.next() * scale, rng.next() * scale)
+            };
+            if k % 17 == 0 && k > 0 {
+                boxes.push(boxes[k - 1]);
+            } else {
+                boxes.push([cx - ex, cy - ey, cx + ex, cy + ey]);
+            }
+        }
+
+        let mut want: Vec<(usize, usize)> = Vec::new();
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if boxes_overlap(&boxes[i], &boxes[j]) {
+                    want.push((i, j));
+                }
+            }
+        }
+        let got: Vec<(usize, usize)> = overlapping_box_pairs(&boxes, None).unwrap().iter().collect();
+        assert_eq!(got, want, "n={n} scale={scale}");
+    }
+}
+
+/// A cancelled token must abort the sweep rather than return a partial set.
+#[test]
+fn box_pair_sweep_honours_cancellation() {
+    use super::overlapping_box_pairs;
+    let boxes: Vec<[f64; 4]> = (0..500)
+        .map(|k| {
+            let x = k as f64 * 0.001;
+            [x, 0.0, x + 0.5, 1.0]
+        })
+        .collect();
+    let token = crate::cancel::CancelToken::new();
+    token.cancel();
+    assert!(overlapping_box_pairs(&boxes, Some(&token)).is_none());
+}

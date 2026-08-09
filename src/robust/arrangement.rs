@@ -127,6 +127,185 @@ fn box_contains(b: &[f64; 4], p: [f64; 2]) -> bool {
     p[0] >= b[0] && p[0] <= b[2] && p[1] >= b[1] && p[1] <= b[3]
 }
 
+/// Every index pair `i < j` whose conservative boxes overlap, stored as CSR
+/// rows: `partners[starts[i]..starts[i + 1]]` holds `i`'s partners in
+/// ascending order.
+///
+/// Iterating rows in index order therefore yields exactly `(i, ascending j)`
+/// lexicographic order — the enumeration order of the O(S²) nested loops this
+/// replaces. The exact predicate stack downstream sees the identical sequence
+/// of surviving pairs and constructs identical points in identical order, so
+/// the acceleration is invisible to the output by construction.
+///
+/// CSR rather than a `Vec<(u32, u32)>`: a monster triangle can produce tens of
+/// millions of overlapping pairs, and storing only the partner index halves
+/// the peak footprint and removes a global sort of that whole list.
+struct BoxPairs {
+    starts: Vec<u32>,
+    partners: Vec<u32>,
+}
+
+impl BoxPairs {
+    fn iter(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        (0..self.starts.len() - 1).flat_map(move |i| {
+            self.partners[self.starts[i] as usize..self.starts[i + 1] as usize]
+                .iter()
+                .map(move |&j| (i, j as usize))
+        })
+    }
+}
+
+/// Interval sweep producing [`BoxPairs`]. Returns `None` only when `token` is
+/// cancelled: a monster triangle can hold thousands of segments and the sweep
+/// itself must stay interruptible.
+fn overlapping_box_pairs(
+    boxes: &[[f64; 4]],
+    token: Option<&crate::cancel::CancelToken>,
+) -> Option<BoxPairs> {
+    let n = boxes.len();
+    let mut starts = vec![0u32; n + 1];
+    // Below this size the sweep's sorts cost more than the scan they save.
+    if n <= 64 {
+        let mut partners: Vec<u32> = Vec::new();
+        for i in 0..n {
+            starts[i] = partners.len() as u32;
+            for j in (i + 1)..n {
+                if boxes_overlap(&boxes[i], &boxes[j]) {
+                    partners.push(j as u32);
+                }
+            }
+        }
+        starts[n] = partners.len() as u32;
+        return Some(BoxPairs { starts, partners });
+    }
+    // Sweep along whichever axis packs the boxes more thinly: the expected
+    // active-list length is (sum of box extents) / (total span).
+    let mut lo = [f64::INFINITY; 2];
+    let mut hi = [f64::NEG_INFINITY; 2];
+    let mut width = [0.0f64; 2];
+    for b in boxes {
+        for k in 0..2 {
+            lo[k] = lo[k].min(b[k]);
+            hi[k] = hi[k].max(b[k + 2]);
+            width[k] += b[k + 2] - b[k];
+        }
+    }
+    let density = |k: usize| -> f64 {
+        let span = hi[k] - lo[k];
+        if span > 0.0 && span.is_finite() && width[k].is_finite() {
+            width[k] / span
+        } else {
+            f64::INFINITY
+        }
+    };
+    let axis = if density(1) < density(0) { 1 } else { 0 };
+    let (slo, shi) = (axis, axis + 2);
+    let (olo, ohi) = (1 - axis, 3 - axis);
+
+    // Ties broken by index so the sweep is a deterministic function of the
+    // boxes (NaN coordinates, which the old scan rejected outright, sort to
+    // one end under total_cmp and never satisfy an overlap test).
+    let mut order: Vec<u32> = (0..n as u32).collect();
+    order.sort_unstable_by(|&a, &b| {
+        boxes[a as usize][slo]
+            .total_cmp(&boxes[b as usize][slo])
+            .then(a.cmp(&b))
+    });
+
+    // The sweep is run twice — once to size each CSR row, once to fill it —
+    // so the pair list is never materialized as (i, j) tuples.
+    let mut active: Vec<u32> = Vec::new();
+    let mut sweep = |emit: &mut dyn FnMut(u32, u32)| -> Option<()> {
+        active.clear();
+        for (step, &c) in order.iter().enumerate() {
+            if step % 1024 == 0 && crate::cancel::is_cancelled(token) {
+                return None;
+            }
+            let cb = &boxes[c as usize];
+            // Retire boxes that ended before this one starts; what survives
+            // already overlaps on the sweep axis (their low ends precede
+            // cb[slo]), so only the other axis is left to test.
+            active.retain(|&a| boxes[a as usize][shi] >= cb[slo]);
+            for &a in &active {
+                let ab = &boxes[a as usize];
+                if ab[olo] <= cb[ohi] && cb[olo] <= ab[ohi] {
+                    emit(a.min(c), a.max(c));
+                }
+            }
+            active.push(c);
+        }
+        Some(())
+    };
+
+    sweep(&mut |i, _j| starts[i as usize + 1] += 1)?;
+    for i in 0..n {
+        starts[i + 1] += starts[i];
+    }
+    let total = starts[n] as usize;
+    let mut partners = vec![0u32; total];
+    let mut cursor: Vec<u32> = starts[..n].to_vec();
+    sweep(&mut |i, j| {
+        partners[cursor[i as usize] as usize] = j;
+        cursor[i as usize] += 1;
+    })?;
+    // The sweep visits each row's partners in sweep order, not index order.
+    for i in 0..n {
+        partners[starts[i] as usize..starts[i + 1] as usize].sort_unstable();
+    }
+    Some(BoxPairs { starts, partners })
+}
+
+/// Static x-sorted index over the registered points, for the point-on-segment
+/// sweep: replaces the O(P) rescan of every point per segment with a range
+/// query over the segment's conservative box. Query results are re-sorted
+/// into ascending point index, which is the order the old inner loop visited
+/// them in, so the filtered predicates run in an unchanged sequence.
+struct PointIndex {
+    by_x: Vec<u32>,
+}
+
+impl PointIndex {
+    fn build(apts: &[[f64; 2]]) -> Self {
+        let mut by_x: Vec<u32> = (0..apts.len() as u32).collect();
+        by_x.sort_unstable_by(|&a, &b| {
+            apts[a as usize][0]
+                .total_cmp(&apts[b as usize][0])
+                .then(a.cmp(&b))
+        });
+        Self { by_x }
+    }
+
+    fn query(&self, apts: &[[f64; 2]], b: &[f64; 4], out: &mut Vec<usize>) {
+        out.clear();
+        // `by_x` is ordered by `total_cmp`, so partitioning on that same total
+        // order is well defined whatever the coordinates are; the rewind then
+        // restores plain numeric semantics at the low end (−0.0 and +0.0 are
+        // equal to `box_contains` but not to `total_cmp`). The result is a
+        // superset of what the old full rescan's `box_contains` accepted,
+        // which is all conservativeness requires.
+        let mut start = self
+            .by_x
+            .partition_point(|&i| apts[i as usize][0].total_cmp(&b[0]).is_lt());
+        while start > 0 && apts[self.by_x[start - 1] as usize][0] >= b[0] {
+            start -= 1;
+        }
+        for &i in &self.by_x[start..] {
+            let p = apts[i as usize];
+            // Numeric test at the high end: the slice is numerically
+            // non-decreasing (`total_cmp` only reorders values that compare
+            // equal), so this never stops early, and a hypothetical NaN
+            // simply fails the test and costs a wasted `box_contains`.
+            if p[0] > b[2] {
+                break;
+            }
+            if box_contains(b, p) {
+                out.push(i as usize);
+            }
+        }
+        out.sort_unstable();
+    }
+}
+
 /// Build the arrangement of `input` on triangle `tri`. Primitives must
 /// already be clipped to the triangle (tri_tri output is), with rational
 /// coordinates on its plane.
@@ -224,37 +403,35 @@ pub fn build(
         .iter()
         .map(|s| approx_box(&[apts[s.a], apts[s.b]]))
         .collect();
-    for i in 0..segs.len() {
-        if crate::cancel::is_cancelled(token) {
+    // A strict crossing lies in both exact boxes, which sit inside these
+    // inflated ones, so the box prefilter is conservative; the sweep emits
+    // the surviving pairs in the same (i, ascending j) order the old nested
+    // loops used, keeping point construction order identical.
+    let pairs = overlapping_box_pairs(&seg_boxes, token)?;
+    for (k, (i, j)) in pairs.iter().enumerate() {
+        if k % 1024 == 0 && crate::cancel::is_cancelled(token) {
             return None;
         }
-        for j in (i + 1)..segs.len() {
-            // A strict crossing lies in both exact boxes, which sit inside
-            // these inflated ones — the reject is conservative.
-            if !boxes_overlap(&seg_boxes[i], &seg_boxes[j]) {
-                continue;
-            }
-            let (ia, ib) = (segs[i].a, segs[i].b);
-            let (ic, id) = (segs[j].a, segs[j].b);
-            let sc = o2(&apts, &homogs, ia, ib, ic);
-            let sd = o2(&apts, &homogs, ia, ib, id);
-            let sa = o2(&apts, &homogs, ic, id, ia);
-            let sb = o2(&apts, &homogs, ic, id, ib);
-            // Strict crossing only — endpoint contacts and collinear overlap
-            // are handled by the point-on-segment sweep below.
-            if sc != Sign::Zero && sd != Sign::Zero && sc != sd
-                && sa != Sign::Zero && sb != Sign::Zero && sa != sb
-            {
-                let x2 = line_line_intersect_2d(
-                    &points2[segs[i].a],
-                    &points2[segs[i].b],
-                    &points2[segs[j].a],
-                    &points2[segs[j].b],
-                )
-                .expect("properly crossing segments are not parallel");
-                let x3 = lift_to_plane(&x2, axis, &corners[0], &normal);
-                add_point(x3, &mut points3, &mut points2);
-            }
+        let (ia, ib) = (segs[i].a, segs[i].b);
+        let (ic, id) = (segs[j].a, segs[j].b);
+        let sc = o2(&apts, &homogs, ia, ib, ic);
+        let sd = o2(&apts, &homogs, ia, ib, id);
+        let sa = o2(&apts, &homogs, ic, id, ia);
+        let sb = o2(&apts, &homogs, ic, id, ib);
+        // Strict crossing only — endpoint contacts and collinear overlap
+        // are handled by the point-on-segment sweep below.
+        if sc != Sign::Zero && sd != Sign::Zero && sc != sd
+            && sa != Sign::Zero && sb != Sign::Zero && sa != sb
+        {
+            let x2 = line_line_intersect_2d(
+                &points2[segs[i].a],
+                &points2[segs[i].b],
+                &points2[segs[j].a],
+                &points2[segs[j].b],
+            )
+            .expect("properly crossing segments are not parallel");
+            let x3 = lift_to_plane(&x2, axis, &corners[0], &normal);
+            add_point(x3, &mut points3, &mut points2);
         }
     }
     // Points added by crossings need homogs and approximations too.
@@ -275,11 +452,13 @@ pub fn build(
     // Subdivide each segment at every registered point lying exactly on it;
     // consecutive point pairs become constraint edges carrying provenance.
     let mut constraints: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
-    for seg in &segs {
+    let pindex = PointIndex::build(&apts);
+    let mut cand: Vec<usize> = Vec::new();
+    for (si, seg) in segs.iter().enumerate() {
         if crate::cancel::is_cancelled(token) {
             return None;
         }
-        let sbox = approx_box(&[apts[seg.a], apts[seg.b]]);
+        let sbox = seg_boxes[si];
         let (ha, hb) = (&homogs[seg.a], &homogs[seg.b]);
         // Segment direction cleared of denominators: v = (pb−pa)·(Bw·Aw).
         let vx = &hb.0 * &ha.2 - &ha.0 * &hb.2;
@@ -290,12 +469,13 @@ pub fn build(
         // cross-multiplication with the positive denominators, no canonical
         // rationals anywhere.
         let mut on_seg: Vec<(Int, Int, usize)> = Vec::new();
-        for (idx, hp) in homogs.iter().enumerate() {
-            // A point on the segment lies in its exact box, so the inflated
-            // box test cannot reject a true hit.
-            if !box_contains(&sbox, apts[idx]) {
-                continue;
-            }
+        // A point on the segment lies in its exact box, so the inflated box
+        // test cannot reject a true hit; the range query returns exactly the
+        // points that pass it, re-sorted into the ascending index order the
+        // old full rescan visited.
+        pindex.query(&apts, &sbox, &mut cand);
+        for &idx in &cand {
+            let hp = &homogs[idx];
             // Approx filter next: almost every remaining point is certifiably
             // off the segment's line; only near-collinear candidates pay for
             // Int.
@@ -413,37 +593,35 @@ pub fn candidate_points(
         .iter()
         .map(|(a, b)| approx_box(&[*a, *b]))
         .collect();
-    for i in 0..segs2.len() {
-        if crate::cancel::is_cancelled(token) {
+    // Same order-restoring sweep as build(): pairs come back in (i, ascending
+    // j) order, so `out` receives the same crossings in the same sequence.
+    let pairs = overlapping_box_pairs(&seg_boxes, token)?;
+    for (k, (i, j)) in pairs.iter().enumerate() {
+        if k % 1024 == 0 && crate::cancel::is_cancelled(token) {
             return None;
         }
-        for j in (i + 1)..segs2.len() {
-            if !boxes_overlap(&seg_boxes[i], &seg_boxes[j]) {
-                continue;
-            }
-            let (a, b) = (
-                (apts[i].0, &homogs[i].0),
-                (apts[i].1, &homogs[i].1),
+        let (a, b) = (
+            (apts[i].0, &homogs[i].0),
+            (apts[i].1, &homogs[i].1),
+        );
+        let (c, d) = (
+            (apts[j].0, &homogs[j].0),
+            (apts[j].1, &homogs[j].1),
+        );
+        let sc = o2(a, b, c);
+        let sd = o2(a, b, d);
+        let sa = o2(c, d, a);
+        let sb = o2(c, d, b);
+        if sc != Sign::Zero && sd != Sign::Zero && sc != sd
+            && sa != Sign::Zero && sb != Sign::Zero && sa != sb
+        {
+            let x2 = line_line_intersect_2d(&segs2[i].0, &segs2[i].1, &segs2[j].0, &segs2[j].1)
+                .expect("properly crossing segments are not parallel");
+            add(
+                lift_to_plane(&x2, axis, &corners[0], &normal),
+                &mut out,
+                &mut seen,
             );
-            let (c, d) = (
-                (apts[j].0, &homogs[j].0),
-                (apts[j].1, &homogs[j].1),
-            );
-            let sc = o2(a, b, c);
-            let sd = o2(a, b, d);
-            let sa = o2(c, d, a);
-            let sb = o2(c, d, b);
-            if sc != Sign::Zero && sd != Sign::Zero && sc != sd
-                && sa != Sign::Zero && sb != Sign::Zero && sa != sb
-            {
-                let x2 = line_line_intersect_2d(&segs2[i].0, &segs2[i].1, &segs2[j].0, &segs2[j].1)
-                    .expect("properly crossing segments are not parallel");
-                add(
-                    lift_to_plane(&x2, axis, &corners[0], &normal),
-                    &mut out,
-                    &mut seen,
-                );
-            }
         }
     }
     Some(out)
