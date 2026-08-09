@@ -72,6 +72,13 @@ export class BooleanRunner {
     this.indicator?.setCancel(() => this.cancel());
   }
 
+  /** Anchor the busy overlay to the demo's 3D viewport element so it sits at
+   *  that pane's top-left instead of a window corner. Without this the
+   *  indicator finds the viewer pane itself, falling back to fixed placement. */
+  attachBusyIndicator(container: HTMLElement | null) {
+    this.indicator?.attach(container);
+  }
+
   /** Single funnel for busy transitions: keeps the overlay in sync no matter
    *  what the consumer does with the public onBusyChange hook. */
   private setBusy(busy: boolean, params: RunParams | null) {

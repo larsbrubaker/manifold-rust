@@ -277,6 +277,8 @@ export function init(container: HTMLElement): () => void {
   // ---- Worker-driven evaluation: the boolean runs off the main thread ----
 
   const runner = new BooleanRunner();
+  // Busy overlay sits at the top-left of the 3D pane, over the scene.
+  runner.attachBusyIndicator(viewerEl);
 
   function update(silent = false) {
     if (source === 'thingi' && (!inThingi() || loadingPair)) return; // pair still loading

@@ -612,14 +612,22 @@ input[type="number"] {
    Overlay shown by src/busy-indicator.ts while a boolean computes. The card
    keeps a constant footprint (fixed width, always-present phase line and
    progress track) so a real per-phase progress API can fill in the label and
-   switch the bar to determinate without any relayout. */
+   switch the bar to determinate without any relayout.
+
+   Default placement is fixed at the top-left of the content column (used only
+   when no viewer container was attached). `.anchored` is the normal case: the
+   card is absolutely positioned inside the 3D pane (.demo-canvas-area is
+   position: relative), so it tracks that pane. The card ignores pointer
+   events — only its cancel button takes them — so orbit drags on the canvas
+   underneath keep working. */
 
 .busy-indicator {
   position: fixed;
-  right: 20px;
-  bottom: 20px;
+  top: 16px;
+  left: calc(var(--sidebar-width) + 16px);
   z-index: 150;
   width: 268px;
+  pointer-events: none;
   padding: 12px 14px;
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -628,8 +636,14 @@ input[type="number"] {
   font-size: 0.85rem;
   opacity: 0;
   visibility: hidden;
-  transform: translateY(6px);
+  transform: translateY(-6px);
   transition: opacity 0.15s, transform 0.15s, visibility 0.15s;
+}
+
+.busy-indicator.anchored {
+  position: absolute;
+  top: 12px;
+  left: 12px;
 }
 
 .busy-indicator.visible {
@@ -734,6 +748,7 @@ input[type="number"] {
   border-radius: 4px;
   font-size: 0.78rem;
   cursor: pointer;
+  pointer-events: auto; /* the one part of the card that is clickable */
   transition: background 0.15s, color 0.15s;
 }
 
@@ -750,10 +765,19 @@ input[type="number"] {
 }
 
 @media (max-width: 900px) {
+  /* Sidebar is off-canvas here; keep the fixed fallback clear of the
+     hamburger button at the top-left. */
   .busy-indicator {
-    right: 12px;
-    bottom: 12px;
-    width: calc(100% - 24px);
+    top: 56px;
+    left: 12px;
+    width: calc(100vw - 24px);
+    max-width: 268px;
+  }
+
+  .busy-indicator.anchored {
+    top: 8px;
+    left: 8px;
+    width: calc(100% - 16px);
     max-width: 268px;
   }
 }

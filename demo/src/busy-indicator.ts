@@ -7,10 +7,18 @@
 // a phase label and a progress track (indeterminate until a fraction arrives) —
 // so `setPhase()` can fill them in later without the card resizing or moving.
 //
+// It anchors to the top-left of the 3D viewport: attach(container) parents the
+// card inside the viewer element (`.demo-canvas-area`, already position:
+// relative) so it tracks that pane's position and size. With no container it
+// falls back to a fixed top-left card next to the sidebar. The card is
+// pointer-events: none except for its cancel button, so it never steals orbit
+// drags from the canvas underneath.
+//
 // Dependency-free: styles live in styles/main.css (.busy-indicator*).
 
 export class BusyIndicator {
   private root: HTMLElement | null = null;
+  private container: HTMLElement | null = null;
   private titleEl!: HTMLElement;
   private phaseEl!: HTMLElement;
   private elapsedEl!: HTMLElement;
@@ -71,9 +79,34 @@ export class BusyIndicator {
     root.appendChild(head);
     root.appendChild(this.trackEl);
     root.appendChild(this.cancelBtn);
-    document.body.appendChild(root);
     this.root = root;
+    this.mount();
     return root;
+  }
+
+  /**
+   * Anchor the card inside a viewer container (the three.js canvas wrapper).
+   * Pass null to fall back to the fixed viewport-corner placement. Safe to
+   * call before or after the DOM has been built.
+   */
+  attach(container: HTMLElement | null) {
+    this.container = container;
+    if (this.root) this.mount();
+  }
+
+  /** Parent the card under the attached container, or — when none was given —
+   *  under whatever viewer pane the page happens to show, so demos that never
+   *  call attach() still get an in-viewport indicator. */
+  private mount() {
+    const root = this.root;
+    if (!root) return;
+    const host = this.container
+      ?? (document.querySelector('.demo-canvas-area') as HTMLElement | null);
+    const parent = host ?? document.body;
+    if (host) root.classList.add('anchored');
+    else root.classList.remove('anchored');
+    // Re-appending an existing child would restart the CSS transition.
+    if (root.parentElement !== parent) parent.appendChild(root);
   }
 
   /** Cancel affordance: pass null (or omit) to hide the button entirely. */
@@ -89,6 +122,7 @@ export class BusyIndicator {
    */
   show(title: string, phase = 'Working…') {
     const root = this.ensureDom();
+    this.mount(); // host may have changed (demo re-created its viewer)
     this.titleEl.textContent = title;
     this.phaseEl.textContent = phase;
     this.cancelBtn.style.display = this.onCancel ? '' : 'none';
