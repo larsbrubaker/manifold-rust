@@ -290,3 +290,45 @@ fn fuzz_random_constraints() {
         validate(&pts, &con, &tris);
     }
 }
+
+/// `is_exact` gates the exact-input filters, so it must never call an
+/// inexactly-rounded rational exact. Checked against the correctly rounded
+/// conversion in both directions: every accepted value round-trips, and the
+/// values it rejects are only ever a lost optimization.
+#[test]
+fn is_exact_only_accepts_values_that_round_trip() {
+    use super::super::exact::backend::{rat_eq, rat_from_f64, rat_new, Int};
+    use super::super::exact::rational::rat_to_f64;
+    use super::is_exact;
+
+    let mut accepted = 0usize;
+    let mut lcg = 0x1234_5678_9abc_def0u64;
+    let mut next = || {
+        lcg = lcg
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        lcg
+    };
+    for i in 0..20_000u64 {
+        // A mix of exact f64s, integer ratios (mostly non-dyadic), and
+        // deliberately huge-denominator constructions.
+        let r: Rational = match i % 4 {
+            0 => rat_from_f64(f64::from_bits(next() | (1 << 52)) % 1e6).unwrap_or_default(),
+            1 => rat_new(
+                Int::from((next() % 100_000) as i64),
+                Int::from((next() % 100_000 + 1) as i64),
+            ),
+            2 => rat_new(Int::from((next() % 1000) as i64), Int::from(3u8).pow(40)),
+            _ => rat_from_f64(((next() % 2000) as f64 - 1000.0) / 64.0).unwrap(),
+        };
+        let f = rat_to_f64(&r);
+        if is_exact(&r) {
+            accepted += 1;
+            assert!(
+                f.is_finite() && rat_eq(&rat_from_f64(f).unwrap(), &r),
+                "is_exact accepted a value that does not round-trip: {r:?}"
+            );
+        }
+    }
+    assert!(accepted > 5_000, "test should exercise the accept path ({accepted})");
+}

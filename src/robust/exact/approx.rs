@@ -79,6 +79,90 @@ pub fn incircle_a(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> Option<
     certify(det, 64.0 * EPS * lift * mx * my)
 }
 
+// ─── Tight filters for EXACTLY representable inputs ─────────────────────────
+//
+// The filters above must cover input perturbation: an approximate coordinate
+// x̃ = x(1+δ) carries an error proportional to |x|, so a determinant of points
+// clustered far from the origin is swamped by a bound built from absolute
+// coordinate magnitudes — every such call escalates even though the float
+// arithmetic itself is nearly exact. When all inputs are exactly representable
+// f64 (mesh vertices, and constructed rationals whose rounding happened to be
+// exact) there is NO input error, so the only error is the arithmetic
+// roundoff of the predicate's own evaluation, and a Shewchuk-style permanent
+// built from the COMPUTED differences is sound and vastly tighter: for points
+// clustered within h of each other at distance M from the origin, the incircle
+// bound shrinks from O(M⁴) to O(h⁴).
+//
+// These may only be called when the exact value of every input coordinate
+// equals the f64 passed in. They are otherwise unsound.
+
+/// Filtered orient2d for EXACTLY representable f64 inputs.
+///
+/// Error derivation. Write L = fl(fl(ax−cx)·fl(by−cy)) and
+/// R = fl(fl(ay−cy)·fl(bx−cx)); det = fl(L−R). Inputs are exact, so each
+/// difference is the exact difference times (1+e), |e| ≤ ε, and each product
+/// adds one more rounding: L = L*(1+e)³ with L* the exact product, likewise R.
+/// Hence |L−L*| ≤ γ₃|L| and |R−R*| ≤ γ₃|R| with γ₃ = 3ε/(1−3ε). The final
+/// subtraction contributes ε|L−R|. Since |L*−R*| is what we want the sign of,
+/// |det − (L*−R*)| ≤ (γ₃(|L|+|R|))(1+ε) + ε(|L|+|R|) < 4.1ε·(|L|+|R|)
+/// for ε = 2⁻⁵³. We use 8ε for slack (this also absorbs the rounding of the
+/// permanent's own additions).
+#[inline]
+pub fn orient2d_a_exact(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> Option<Sign> {
+    let left = (a[0] - c[0]) * (b[1] - c[1]);
+    let right = (a[1] - c[1]) * (b[0] - c[0]);
+    let det = left - right;
+    let permanent = left.abs() + right.abs();
+    certify(det, 8.0 * EPS * permanent)
+}
+
+/// Filtered incircle for EXACTLY representable f64 inputs (a,b,c CCW ⇒
+/// Pos = d strictly inside), or None when uncertain.
+///
+/// Error derivation. All six differences adx…cdy are exact differences times
+/// (1+e), |e| ≤ ε. Then:
+///   * each cross product (e.g. bdx·cdy) is its exact counterpart times
+///     (1+e)³, i.e. relative error ≤ γ₃ ≈ 3ε;
+///   * each lift alift = fl(fl(adx²)+fl(ady²)) sums two NON-NEGATIVE terms of
+///     relative error ≤ γ₃ each, so its relative error is ≤ γ₄ ≈ 4ε (no
+///     cancellation);
+///   * each 2×2 minor fl(P₁−P₂) has ABSOLUTE error ≤ γ₄·(|P₁|+|P₂|) — the
+///     γ₃ relative errors of the two products plus the subtraction's own ε,
+///     all measured against S = |P₁|+|P₂| ≥ |P₁−P₂|;
+///   * the term fl(alift·minor) then deviates from the exact
+///     alift*·minor* by at most alift·(γ₄|minor| + γ₄S) + ε|alift·minor|
+///     ≤ (2γ₄ + ε + O(ε²))·alift·S < 9.1ε·alift·S;
+///   * the two final additions add ≤ γ₂ ≈ 2ε times the sum of the three
+///     terms' magnitudes, each of which is ≤ alift·S for its own group.
+/// Total: |det − det*| < 11.2ε·permanent, permanent = Σ liftᵢ·Sᵢ. We use 16ε,
+/// which also covers the (relative-ε) error of the computed permanent itself.
+#[inline]
+pub fn incircle_a_exact(a: [f64; 2], b: [f64; 2], c: [f64; 2], d: [f64; 2]) -> Option<Sign> {
+    let adx = a[0] - d[0];
+    let ady = a[1] - d[1];
+    let bdx = b[0] - d[0];
+    let bdy = b[1] - d[1];
+    let cdx = c[0] - d[0];
+    let cdy = c[1] - d[1];
+
+    let bdxcdy = bdx * cdy;
+    let cdxbdy = cdx * bdy;
+    let cdxady = cdx * ady;
+    let adxcdy = adx * cdy;
+    let adxbdy = adx * bdy;
+    let bdxady = bdx * ady;
+
+    let alift = adx * adx + ady * ady;
+    let blift = bdx * bdx + bdy * bdy;
+    let clift = cdx * cdx + cdy * cdy;
+
+    let det = alift * (bdxcdy - cdxbdy) + blift * (cdxady - adxcdy) + clift * (adxbdy - bdxady);
+    let permanent = (bdxcdy.abs() + cdxbdy.abs()) * alift
+        + (cdxady.abs() + adxcdy.abs()) * blift
+        + (adxbdy.abs() + bdxady.abs()) * clift;
+    certify(det, 16.0 * EPS * permanent)
+}
+
 /// Filtered orient3d over approximate coordinates: sign of
 /// dot(cross(b−a, c−a), d−a), or None when uncertain. Conservative 32ε·P.
 #[inline]
@@ -276,6 +360,203 @@ mod tests {
             certified > 3900,
             "filter should certify generic input ({certified}/4000)"
         );
+    }
+
+    // ─── Exact-input filters ────────────────────────────────────────────────
+
+    /// Exact f64 → exact rational (the filters' precondition holds by
+    /// construction: the point IS its own approximation).
+    fn ex2(p: [f64; 2]) -> R2 {
+        R2::new(rat_from_f64(p[0]).unwrap(), rat_from_f64(p[1]).unwrap())
+    }
+
+    /// Iteration count for the differential sweeps; raise via
+    /// `MANIFOLD_FILTER_STRESS=2000000` to run the multi-million-case version.
+    fn stress_n(default: usize) -> usize {
+        std::env::var("MANIFOLD_FILTER_STRESS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(default)
+    }
+
+    /// A point at `base + k·ulp` on both axes: consecutive f64 values around a
+    /// far-from-origin center, so the coordinates are exact by construction
+    /// while the differences are as tiny as f64 allows. This is the clustered
+    /// arrangement geometry that makes the magnitude-based filter useless.
+    fn clustered(base: [f64; 2], ulp: f64, k: [i64; 2]) -> [f64; 2] {
+        [base[0] + k[0] as f64 * ulp, base[1] + k[1] as f64 * ulp]
+    }
+
+    #[test]
+    fn exact_filters_never_miscertify() {
+        let mut rng = Lcg(0x5EED_1234);
+        // (base, ulp, spread) regimes: origin-local, far-and-clustered
+        // (coordinates ~1e6 with spacing at the 2⁻³² ulp ≈ 2.3e-10), and
+        // far-and-wide.
+        let regimes: [([f64; 2], f64, i64); 4] = [
+            ([0.0, 0.0], 1.0, 1 << 20),
+            ([1.0e6, -2.0e6], 2f64.powi(-32), 1000),
+            ([1.0e6, -2.0e6], 2f64.powi(-32), 4),
+            ([12345.0, 6789.0], 2f64.powi(-20), 1 << 16),
+        ];
+        let n = stress_n(20_000);
+        let mut tight_certified = 0usize;
+        let mut loose_certified = 0usize;
+        for (ri, &(base, ulp, spread)) in regimes.iter().enumerate() {
+            for _ in 0..n {
+                let mut kk = || (rng.next_f64(1.0) * spread as f64) as i64;
+                let p: Vec<[f64; 2]> = (0..4)
+                    .map(|_| clustered(base, ulp, [kk(), kk()]))
+                    .collect();
+                let r: Vec<R2> = p.iter().map(|q| ex2(*q)).collect();
+                // Coincident points make the predicates degenerate; skip.
+                if (0..4).any(|i| (i + 1..4).any(|j| p[i] == p[j])) {
+                    continue;
+                }
+                let truth = incircle_r(&r[0], &r[1], &r[2], &r[3]);
+                if let Some(s) = incircle_a_exact(p[0], p[1], p[2], p[3]) {
+                    assert_eq!(s, truth, "incircle_a_exact regime {ri} {p:?}");
+                    tight_certified += 1;
+                }
+                if incircle_a(p[0], p[1], p[2], p[3]).is_some() {
+                    loose_certified += 1;
+                }
+                let otruth = orient2d_r(&r[0], &r[1], &r[2]);
+                if let Some(s) = orient2d_a_exact(p[0], p[1], p[2]) {
+                    assert_eq!(s, otruth, "orient2d_a_exact regime {ri} {p:?}");
+                }
+            }
+        }
+        // The whole point of the tight filter: it certifies the clustered
+        // far-from-origin cases the magnitude filter cannot.
+        assert!(
+            tight_certified > loose_certified * 2,
+            "tight filter should dominate ({tight_certified} vs {loose_certified})"
+        );
+    }
+
+    /// Integer points on the circle of radius 65 centered at the origin —
+    /// 65 = 5·13 has two distinct Pythagorean representations, giving eight
+    /// lattice points per quadrant-pair. Every coordinate is a small integer,
+    /// so all four inputs are exact and the true incircle sign is Zero.
+    const CIRCLE65: [[i64; 2]; 8] = [
+        [65, 0], [63, 16], [60, 25], [52, 39], [39, 52], [25, 60], [16, 63], [0, 65],
+    ];
+
+    /// A filter must NEVER certify a nonzero sign for exactly cocircular
+    /// points.
+    #[test]
+    fn exact_incircle_declines_on_true_cocircular() {
+        let pts: Vec<[f64; 2]> = CIRCLE65
+            .iter()
+            .map(|&[x, y]| [x as f64, y as f64])
+            .collect();
+        let mut seen = 0usize;
+        for i in 0..pts.len() {
+            for j in 0..pts.len() {
+                for k in 0..pts.len() {
+                    for l in 0..pts.len() {
+                        if i == j || i == k || i == l || j == k || j == l || k == l {
+                            continue;
+                        }
+                        let (a, b, c, d) = (pts[i], pts[j], pts[k], pts[l]);
+                        let truth = incircle_r(&ex2(a), &ex2(b), &ex2(c), &ex2(d));
+                        assert_eq!(truth, Sign::Zero, "test setup: not cocircular");
+                        assert_eq!(
+                            incircle_a_exact(a, b, c, d),
+                            None,
+                            "certified a sign for cocircular points {a:?} {b:?} {c:?} {d:?}"
+                        );
+                        seen += 1;
+                    }
+                }
+            }
+        }
+        assert!(seen > 1000, "expected a full permutation sweep ({seen})");
+    }
+
+    /// Threshold sweep: walk `d` away from an exactly cocircular position in
+    /// steps of 2⁻⁴⁰ (exact: |coords| < 2¹³, so 53 bits still cover them) and
+    /// check the whole transition. Certified signs must always match the exact
+    /// predicate; the exact-zero crossing must be declined; and far enough out
+    /// the filter must certify, or it would be useless.
+    #[test]
+    fn exact_incircle_threshold_sweep() {
+        let step = 2f64.powi(-40);
+        let f = |v: [i64; 2]| [v[0] as f64, v[1] as f64];
+        let (a, b, c) = (f(CIRCLE65[0]), f(CIRCLE65[3]), f(CIRCLE65[6]));
+        let base = f(CIRCLE65[5]);
+        let mut declined_at_zero = false;
+        for mag in 0..=24 {
+            for sign in [-1i64, 1] {
+                let k = sign * (1i64 << mag) * if mag == 0 { 0 } else { 1 };
+                let d = [base[0], base[1] + k as f64 * step];
+                let truth = incircle_r(&ex2(a), &ex2(b), &ex2(c), &ex2(d));
+                match incircle_a_exact(a, b, c, d) {
+                    Some(s) => assert_eq!(s, truth, "k={k} d={d:?}"),
+                    None => {
+                        if truth == Sign::Zero {
+                            declined_at_zero = true;
+                        }
+                    }
+                }
+                if truth == Sign::Zero {
+                    assert_eq!(incircle_a_exact(a, b, c, d), None, "cocircular k={k}");
+                }
+                // Well past the bound (|det| ≈ 10³·|k|·2⁻⁴⁰ vs a bound of
+                // ~7e-8) the filter must decide.
+                if mag >= 12 {
+                    assert!(
+                        incircle_a_exact(a, b, c, d).is_some(),
+                        "filter failed to certify a clearly nonzero case k={k}"
+                    );
+                }
+            }
+        }
+        assert!(declined_at_zero, "the cocircular case must be declined");
+    }
+
+    /// Random near-degenerate quadruples built by placing `d` at ±few ulp from
+    /// a genuinely cocircular position on an integer-coordinate circle.
+    #[test]
+    fn exact_incircle_adversarial_near_cocircular() {
+        let mut rng = Lcg(0xC0FFEE_11);
+        for _ in 0..stress_n(5_000) {
+            let pick = |rng: &mut Lcg| {
+                let i = ((rng.next_f64(1.0).abs() * 8.0) as usize).min(7);
+                CIRCLE65[i]
+            };
+            let (mut p, mut q, mut r, mut s) =
+                (pick(&mut rng), pick(&mut rng), pick(&mut rng), pick(&mut rng));
+            // Distinct picks only.
+            if p == q || p == r || p == s || q == r || q == s || r == s {
+                continue;
+            }
+            // Sign flips keep them on the same circle (radius 65).
+            for v in [&mut p, &mut q, &mut r, &mut s] {
+                if rng.next_f64(1.0) < 0.0 {
+                    v[0] = -v[0];
+                }
+                if rng.next_f64(1.0) < 0.0 {
+                    v[1] = -v[1];
+                }
+            }
+            let f = |v: [i64; 2]| [v[0] as f64, v[1] as f64];
+            let (a, b, c) = (f(p), f(q), f(r));
+            let nudge = (rng.next_f64(1.0) * 4.0) as i64;
+            let d = [f(s)[0], f(s)[1] + nudge as f64 * f64::EPSILON * 64.0];
+            let (ra, rb, rc, rd) = (ex2(a), ex2(b), ex2(c), ex2(d));
+            if a == b || a == c || a == d || b == c || b == d || c == d {
+                continue;
+            }
+            let truth = incircle_r(&ra, &rb, &rc, &rd);
+            if let Some(sgn) = incircle_a_exact(a, b, c, d) {
+                assert_eq!(sgn, truth, "{a:?} {b:?} {c:?} {d:?}");
+            }
+            if let Some(sgn) = orient2d_a_exact(a, b, c) {
+                assert_eq!(sgn, orient2d_r(&ra, &rb, &rc));
+            }
+        }
     }
 
     #[test]

@@ -19,7 +19,8 @@
 // remains superlinear is per-operation and bounded by local complexity
 // (corridor length, pseudo-polygon chain length), not by the arena size.
 
-use super::exact::approx::{incircle_a, orient2d_a};
+use super::exact::approx::{incircle_a, incircle_a_exact, orient2d_a, orient2d_a_exact};
+use super::exact::backend::{denom, numer, Rational, ToPrimitive};
 use super::exact::predicates::{homog2_of, incircle_h, orient2d_h, Homog2, TriLoc};
 use super::exact::rational::{rat_to_f64, R2};
 use super::exact::Sign;
@@ -38,11 +39,19 @@ struct Tri {
 struct Cdt {
     /// Homogenized once per triangulation; exact predicates reuse these.
     pts: Vec<Homog2>,
-    /// Correctly rounded f64 approximations (relative error ≤ ε), computed
-    /// once; the semi-static filters in exact/approx.rs certify most
-    /// predicate signs from these alone, escalating to `pts` only on
-    /// near-degeneracies.
+    /// Correctly rounded f64 approximations (relative error ≤ ε) of the points
+    /// TRANSLATED by `points[0]`, computed once; the semi-static filters in
+    /// exact/approx.rs certify most predicate signs from these alone,
+    /// escalating to `pts` only on near-degeneracies. See `triangulate` for
+    /// why translating first is both sound and the difference between a
+    /// usable and a useless filter on arrangements far from the origin.
     apts: Vec<[f64; 2]>,
+    /// True where `apts[i]` is EXACTLY the translated point (both coordinates
+    /// round-trip), which lets the predicates use the far tighter exact-input
+    /// filters in exact/approx.rs — those assume zero input perturbation, so
+    /// it is the TRANSLATED value that must be exact, since that is what the
+    /// filters see.
+    exact: Vec<bool>,
     tris: Vec<Tri>,
     /// Suspect triangles for queue-based Lawson legalization.
     suspects: Vec<usize>,
@@ -80,10 +89,30 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
         corners.swap(1, 2);
     }
 
-    let apts: Vec<[f64; 2]> = points
-        .iter()
-        .map(|p| [rat_to_f64(&p.x), rat_to_f64(&p.y)])
-        .collect();
+    // Approximations are taken of the points TRANSLATED by points[0], with the
+    // subtraction done exactly in rationals and only the result rounded.
+    //
+    // Both filters (orient2d, incircle) are translation invariant, so the sign
+    // they certify for the translated configuration is the sign of the
+    // original one — but their error bounds are not: a rounded coordinate
+    // carries a perturbation proportional to its own magnitude, so for an
+    // arrangement sitting far from the world origin the untranslated bound is
+    // built from |p| while the determinant is built from the (tiny) spacing
+    // within the cluster, and every call escalates to the bignum tier.
+    // Translating first replaces |p| by the cluster extent: a third of the
+    // exact-tier incircle escalations disappear on the #42322 family, and
+    // #1716279 (1.44M arrangement points) spends 127s in this stage instead
+    // of 491s.
+    // The exact-input path stays sound under the same argument: what it
+    // requires is that the f64 it sees be exactly the value whose determinant
+    // it is bounding, which after translation is the translated rational.
+    let origin = &points[0];
+    let (mut apts, mut exact) = (Vec::with_capacity(points.len()), Vec::with_capacity(points.len()));
+    for p in points {
+        let t = p.sub(origin);
+        apts.push([rat_to_f64(&t.x), rat_to_f64(&t.y)]);
+        exact.push(is_exact(&t.x) && is_exact(&t.y));
+    }
     let mut by_coord: Vec<usize> = (0..points.len()).collect();
     by_coord.sort_by(|&i, &j| {
         points[i]
@@ -98,6 +127,7 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
     let mut cdt = Cdt {
         pts: hom,
         apts,
+        exact,
         tris: vec![Tri {
             v: corners,
             adj: [-1, -1, -1],
@@ -126,12 +156,39 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
     cdt.tris.iter().filter(|t| t.alive).map(|t| t.v).collect()
 }
 
+/// Is `r` exactly representable in f64 — i.e. is `rat_to_f64(r)` equal to `r`?
+/// Only then may the exact-input filters run: they assume zero input
+/// perturbation.
+///
+/// Deliberately CONSERVATIVE and allocation-free: rationals are stored fully
+/// reduced, so `n/d` is exactly representable whenever `|n| < 2⁵³` and `d` is
+/// a power of two (the value then has ≤ 53 significant bits and, with both
+/// parts inside 64 bits, an exponent nowhere near the f64 range limits). Any
+/// value that fails this test — including the representable-but-huge ones like
+/// 2⁶⁰ — is simply reported inexact, which costs an optimization, never
+/// correctness. The two `to_*` conversions reject on word count alone, so
+/// constructed intersection points (huge numerators) bail in a few
+/// instructions with no bignum work at all; this precompute runs once per
+/// point per triangulation, against O(n log n) predicate calls.
+#[inline]
+fn is_exact(r: &Rational) -> bool {
+    match (numer(r).to_i64(), denom(r).to_u64()) {
+        (Some(n), Some(d)) => d.is_power_of_two() && n.unsigned_abs() < (1u64 << 53),
+        _ => false,
+    }
+}
+
 impl Cdt {
     /// orient2d with the approx filter first, exact fallback. All CDT sign
     /// tests funnel through here (and `nondelaunay`) so generic-position
     /// queries never touch the bignum tier.
     #[inline]
     fn o2(&self, i: usize, j: usize, k: usize) -> Sign {
+        if self.exact[i] && self.exact[j] && self.exact[k] {
+            if let Some(s) = orient2d_a_exact(self.apts[i], self.apts[j], self.apts[k]) {
+                return s;
+            }
+        }
         orient2d_a(self.apts[i], self.apts[j], self.apts[k])
             .unwrap_or_else(|| orient2d_h(&self.pts[i], &self.pts[j], &self.pts[k]))
     }
@@ -141,6 +198,18 @@ impl Cdt {
     /// `Zero` is an exact cocircular tie.
     #[inline]
     fn incircle(&self, tri: [usize; 3], d: usize) -> Sign {
+        if self.exact[tri[0]] && self.exact[tri[1]] && self.exact[tri[2]] && self.exact[d] {
+            // Tight arithmetic-only bound; neither filter dominates the other
+            // (their permanents differ), so fall through to the general one.
+            if let Some(s) = incircle_a_exact(
+                self.apts[tri[0]],
+                self.apts[tri[1]],
+                self.apts[tri[2]],
+                self.apts[d],
+            ) {
+                return s;
+            }
+        }
         match incircle_a(
             self.apts[tri[0]],
             self.apts[tri[1]],
