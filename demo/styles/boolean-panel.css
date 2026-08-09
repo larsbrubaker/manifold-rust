@@ -197,17 +197,27 @@
   border-radius: 6px;
 }
 
+/* Square icon button at the panel's control height (30px), so it lines up
+   with the select beside it. */
 .bgw-iconbtn {
   flex: none;
-  width: 38px;
-  height: 38px;
-  font-size: 16px;
-  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
   color: #fff;
   background: var(--bg-accent);
   border: none;
   border-radius: 6px;
   cursor: pointer;
+}
+
+.bgw-iconbtn-glyph {
+  display: block;
+  font-size: 16px;
+  line-height: 1;
 }
 
 .bgw-iconbtn:disabled,
@@ -216,7 +226,8 @@
   cursor: default;
 }
 
-.bgw-iconbtn.is-busy {
+/* The mark turns; the button box stays put. */
+.bgw-iconbtn-glyph.is-spinning {
   animation: bgw-spin 1s linear infinite;
 }
 

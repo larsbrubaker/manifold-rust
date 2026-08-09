@@ -155,7 +155,7 @@ export function buildPanel(root: HTMLElement, state: PanelState, h: PanelHandler
     b: createSelect(SHAPES, String(state.shapeB), v => h.onShape('b', parseInt(v)), 'Shape B'),
   };
   const loadBtn = createIconButton('⟳', 'Load random pair', h.onLoadRandom);
-  const pairRow = row('bgw-row', pairSelect.el, shapeSelects.a.el, shapeSelects.b.el, loadBtn);
+  const pairRow = row('bgw-row', pairSelect.el, shapeSelects.a.el, shapeSelects.b.el, loadBtn.el);
   inputBand.appendChild(pairRow);
 
   const troubleSelect = createSelect(state.troubleOptions, state.troubleCase, h.onTrouble,
@@ -253,7 +253,7 @@ export function buildPanel(root: HTMLElement, state: PanelState, h: PanelHandler
     pairSelect.el.style.display = thingi ? '' : 'none';
     shapeSelects.a.el.style.display = thingi ? 'none' : '';
     shapeSelects.b.el.style.display = thingi ? 'none' : '';
-    loadBtn.style.display = thingi && random ? '' : 'none';
+    loadBtn.el.style.display = thingi && random ? '' : 'none';
     troubleSelect.el.style.display = thingi && currentMode === 'trouble' ? '' : 'none';
     pickRow.style.display = thingi && currentMode === 'pick' ? '' : 'none';
     operands.setVisible(thingi);
@@ -313,8 +313,9 @@ export function buildPanel(root: HTMLElement, state: PanelState, h: PanelHandler
     },
     setAnimate(on) { pills.animate.set(on); },
     setLoading(loading) {
-      loadBtn.disabled = loading;
-      loadBtn.classList.toggle('is-busy', loading);
+      loadBtn.el.disabled = loading;
+      // Only the glyph turns: a spinning button box reads as a broken layout.
+      loadBtn.setBusy(loading);
       pickBtn.disabled = loading;
       pasteChip.disabled = loading;
     },

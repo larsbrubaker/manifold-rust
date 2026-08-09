@@ -143,11 +143,29 @@ export function createChip(label: string, title: string, onClick: () => void): H
   return button('bgw-chip', label, title, onClick);
 }
 
-/// Square icon button (Load Random Pair's ⟳).
-export function createIconButton(glyph: string, title: string, onClick: () => void): HTMLButtonElement {
-  const b = button('bgw-iconbtn', glyph, title, onClick);
-  b.setAttribute('aria-label', title);
-  return b;
+export interface IconButton {
+  el: HTMLButtonElement;
+  /** The glyph itself — the only part that spins while busy. */
+  glyph: HTMLElement;
+  setBusy(busy: boolean): void;
+}
+
+/// Square icon button (Load Random Pair's ⟳). The glyph lives in its own
+/// span so the busy animation turns the mark and leaves the button box
+/// square and still.
+export function createIconButton(glyph: string, title: string, onClick: () => void): IconButton {
+  const el = button('bgw-iconbtn', '', title, onClick);
+  el.setAttribute('aria-label', title);
+  const mark = document.createElement('span');
+  mark.className = 'bgw-iconbtn-glyph';
+  mark.textContent = glyph;
+  mark.setAttribute('aria-hidden', 'true');
+  el.appendChild(mark);
+  return {
+    el,
+    glyph: mark,
+    setBusy(busy: boolean) { mark.classList.toggle('is-spinning', busy); },
+  };
 }
 
 export interface CheckRow {
