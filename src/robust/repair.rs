@@ -25,6 +25,34 @@
 // Blanket-flipping negative-signed-volume shells would instead turn every
 // legitimate cavity inside out; the depth rule is what keeps voids voids.
 //
+// The depth rule is applied asymmetrically, because only one of its two
+// verdicts can restore lost material. Rewinding an *inverted* shell where the
+// nesting wants a solid gives material back, so it is always done. Rewinding
+// an *outward* shell where the nesting wants a cavity takes material away —
+// and a nested outward shell is genuinely ambiguous ({w >= 1} reads its
+// interior as solid winding 2, which is a perfectly valid mesh). We only do
+// that on strong evidence that the whole stack arrived mirrored: some
+// container of the shell is itself inverted at a depth that wants a solid.
+// That is a prior, not a proof — {-1 at depth 0, +1 at depth 1} could equally
+// be a lone inverted body with a legitimate inner solid — but it is the
+// reading that keeps the two shells consistent with each other.
+//
+// The invariant this buys: every material-*removing* flip requires a
+// container with sign -1 at even depth, and such a container always takes the
+// unconditional restoring flip. So a removal never happens without a strictly
+// larger addition above it in the same containment stack, and the net effect
+// of a repair on a stack is never a loss. Thingi10K #61459 — a correctly
+// wound body carrying a nested outward shell, 80% of whose material the old
+// symmetric rule destroyed — cannot recur.
+//
+// Known conservative false negative: a mirrored sub-assembly hanging under a
+// correctly wound parent ({+1 at depth 0, +1 at depth 1, -1 at depth 2}) is
+// read as two nested solids with an inverted island, not as a void containing
+// an island, because evidence is only searched *upward* through containers.
+// Nothing is destroyed — the mesh keeps all its material — but the intended
+// void stays filled. Propagating a descendant-inverted signal downward is the
+// fix if that class ever shows up in practice.
+//
 // `Manifold::repair_orientation` applies the plan by rewinding whole shells
 // in place (`apply_flips`), which preserves halfedge pairing exactly because
 // a paired edge always joins two triangles of the same shell.
@@ -200,8 +228,14 @@ fn classify_shell(geom: &ShellGeom) -> Option<Classified> {
 }
 
 /// Decide which shells to flip so the mesh's solid reads correctly under
-/// {winding >= 1}: shells at even containment depth wind outward (+1),
-/// shells at odd depth (cavity boundaries) wind inward (-1).
+/// {winding >= 1}. The target from containment depth is the classic one —
+/// even depth winds outward (+1), odd depth (cavity boundaries) winds inward
+/// (-1) — but it is enforced *asymmetrically*: an inverted shell that should
+/// be solid is always rewound (that restores material), while an outward
+/// shell that a cavity target disagrees with is only rewound on evidence that
+/// its containment stack arrived mirrored (that removes material, and a
+/// nested outward shell is a legitimate mesh on its own). See the module
+/// header for the full rule and the invariant it guarantees.
 pub fn plan_repair(tris: &[[Vec3; 3]]) -> RepairPlan {
     let (shell_of, num_shells) = connected_shells(tris);
     let mut members: Vec<Vec<usize>> = vec![Vec::new(); num_shells];
@@ -212,25 +246,50 @@ pub fn plan_repair(tris: &[[Vec3; 3]]) -> RepairPlan {
     let geoms: Vec<ShellGeom> = members.iter().map(|m| ShellGeom::new(tris, m)).collect();
     let classified: Vec<Option<Classified>> = geoms.iter().map(classify_shell).collect();
 
-    let mut flip_shell = vec![false; num_shells];
-    let mut flipped_shells = 0usize;
+    // Containment: which *other* shells hold the point just off this shell's
+    // exterior. Winding != 0 rather than >= 1, so an inverted (not-yet-
+    // repaired) container still counts as containing.
+    let mut containers: Vec<Vec<usize>> = vec![Vec::new(); num_shells];
     for s in 0..num_shells {
         let Some(c) = &classified[s] else { continue };
-        // Containment depth: how many *other* shells hold the point just off
-        // this shell's exterior. Winding != 0 rather than >= 1, so an
-        // inverted (not-yet-repaired) container still counts as containing.
-        let depth = (0..num_shells)
+        containers[s] = (0..num_shells)
             .filter(|&o| o != s)
             .filter(|&o| {
                 let g = &geoms[o];
                 winding_off_surface(&c.probe, &c.exterior, &g.tris_r, &g.tris_f64, &g.boxes) != 0
             })
-            .count();
-        let target = if depth % 2 == 0 { 1 } else { -1 };
-        if c.sign != target {
-            flip_shell[s] = true;
-            flipped_shells += 1;
+            .collect();
+    }
+    let depth = |s: usize| containers[s].len();
+
+    let mut flip_shell = vec![false; num_shells];
+    let mut flipped_shells = 0usize;
+    for s in 0..num_shells {
+        let Some(c) = &classified[s] else { continue };
+        let target = if depth(s) % 2 == 0 { 1 } else { -1 };
+        if c.sign == target {
+            continue;
         }
+        // An outward-wound shell at odd depth is ambiguous: it may be a
+        // cavity that was saved inside-out, or a nested solid that simply
+        // winds its interior to 2 — both read the same. Rewinding it can only
+        // *remove* material that the mesh currently has, so we only do it when
+        // the shell sits under demonstrably inside-out geometry: a container
+        // that is itself inverted where it should be solid (an even-depth
+        // shell with sign -1), i.e. the whole nesting stack arrived mirrored.
+        // Without that evidence we leave the nested solid alone — Thingi10K
+        // #61459 is a correctly wound body with an inner shell, and flipping
+        // it carved away 80% of the model.
+        if c.sign == 1 {
+            let mirrored_stack = containers[s].iter().any(|&o| {
+                classified[o].as_ref().is_some_and(|co| co.sign == -1) && depth(o) % 2 == 0
+            });
+            if !mirrored_stack {
+                continue;
+            }
+        }
+        flip_shell[s] = true;
+        flipped_shells += 1;
     }
 
     RepairPlan {

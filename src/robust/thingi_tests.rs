@@ -372,6 +372,56 @@ fn thingi_68730_repair_orientation_restores_material() {
     );
 }
 
+const CUBOCTAHEDRON_61459: &[u8] = include_bytes!("testdata/61459.stl");
+
+/// Thingi10K #61459 ("cuboctahedron less faces"): a valid, correctly wound
+/// solid that additionally carries a smaller **nested outward-wound shell**
+/// (20 of its 176 triangles) strictly inside the 156-triangle body. Under
+/// {w >= 1} that inner shell is harmless — its interior simply winds 2 — so
+/// the mesh's material is the outer body's 3.2 units³.
+///
+/// The depth-parity rule alone read the inner shell as a first-level cavity
+/// and rewound it, carving 2.58 units³ of real material out of the model
+/// (~80% loss, visible in the demo's Boolean Gallery). Repair must be a
+/// material no-op here: nothing is inside-out, so there is nothing to fix.
+#[test]
+fn thingi_61459_repair_preserves_nested_solid() {
+    let m = import_stl_like_demo(CUBOCTAHEDRON_61459);
+    assert_eq!(m.status(), Error::NoError, "import");
+    assert!(!m.as_impl().is_soup, "61459 welds to manifold connectivity");
+
+    const SAMPLES: usize = 40_000;
+    let div_before = signed_volume(&m);
+    let (mat_before, _) = sampled_material(&m, SAMPLES);
+    assert!(
+        mat_before > 3.0,
+        "fixture regressed: {mat_before} of material expected before repair"
+    );
+
+    // Plan level: nothing here is inside-out, so no shell may be rewound.
+    let plan = crate::robust::repair::plan_repair(&crate::robust::soup::impl_to_tris(m.as_impl()));
+    assert_eq!(plan.num_shells, 2, "156-tri body plus a 20-tri nested shell");
+    assert_eq!(plan.flipped_shells, 0, "repair must be a no-op on 61459");
+
+    let repaired = m.repair_orientation();
+    assert_eq!(repaired.status(), Error::NoError, "repair status");
+    assert_eq!(repaired.num_tri(), m.num_tri());
+
+    let div_after = signed_volume(&repaired);
+    let (mat_after, _) = sampled_material(&repaired, SAMPLES);
+    assert!(
+        (div_after - div_before).abs() <= 0.01 * div_before.abs(),
+        "repair changed divergence volume {div_before} -> {div_after}"
+    );
+    // The two estimates are paired — same seed, same bounding box (repair
+    // never moves a vertex) — so they sample identical points and no
+    // Monte-Carlo slack is needed on top of the 1% tolerance.
+    assert!(
+        (mat_after - mat_before).abs() <= 0.01 * mat_before,
+        "repair destroyed material {mat_before} -> {mat_after}"
+    );
+}
+
 const MODEL_36088: &[u8] = include_bytes!("testdata/36088.stl");
 const MODEL_301921: &[u8] = include_bytes!("testdata/301921.stl");
 

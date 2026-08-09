@@ -99,6 +99,24 @@ fn fully_inverted_nested_pair_is_repaired() {
     assert!(plan.flip.iter().all(|&f| f));
 }
 
+/// The other half of the ambiguity table above: same nesting, but the outer
+/// shell is *correct*. Two outward-wound shells, one inside the other, are a
+/// valid solid whose inner region simply winds 2 — there is no inversion to
+/// undo, and rewinding the inner one would carve real material out (the
+/// Thingi10K #61459 failure). Evidence of a mirrored stack is required before
+/// a material-removing flip, and there is none here.
+#[test]
+fn nested_outward_solid_is_not_turned_into_a_cavity() {
+    let mut tris = cube_tris(0.0, 6.0);
+    tris.extend(cube_tris(2.0, 4.0));
+    let plan = plan_repair(&tris);
+    assert_eq!(plan.num_shells, 2);
+    assert_eq!(
+        plan.flipped_shells, 0,
+        "a nested outward solid must keep its material"
+    );
+}
+
 #[test]
 fn solid_nested_inside_cavity_winds_positive_again() {
     // Depth 0 solid [0,10], depth 1 cavity [2,8], depth 2 solid [4,6] — the
