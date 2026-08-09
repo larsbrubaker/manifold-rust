@@ -1,5 +1,5 @@
-// Info panel for the Boolean Gallery: the Vertices / Triangles / Volume /
-// Surface Area rows plus the "Last Frame" timing row.
+// Result band of the Boolean Gallery sidebar: the Verts / Tris / Vol / Area
+// stats grid plus the "Last frame" timing row underneath it.
 //
 // Split out of boolean-gallery.ts because the timing row has a lifecycle of
 // its own. "Last Frame" is the *boolean's* wall time (BooleanRunner reports
@@ -16,7 +16,6 @@
 // own schedule.
 
 import type { MeshData } from '../wasm.ts';
-import { updateReadout } from '../controls.ts';
 
 export type FrameStatus = 'idle' | 'computing' | 'failed' | 'cancelled';
 
@@ -32,22 +31,54 @@ export function formatMs(ms: number): string {
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)} s` : `${ms.toFixed(1)} ms`;
 }
 
-/// The "Last Frame" row, or null when there is nothing truthful to say yet
+/// The "Last frame" row, or null when there is nothing truthful to say yet
 /// (no run has ever started). Exported for tests.
 export function frameStatRow(stat: FrameStat, nowMs: number): { label: string; value: string } | null {
   const previous = stat.lastMs === null ? '' : ` (last ${formatMs(stat.lastMs)})`;
   switch (stat.status) {
     case 'computing': {
       const elapsed = Math.max(0, nowMs - stat.startedMs);
-      return { label: 'Last Frame', value: `computing… ${formatMs(elapsed)}${previous}` };
+      return { label: 'Last frame', value: `computing… ${formatMs(elapsed)}${previous}` };
     }
     case 'failed':
-      return { label: 'Last Frame', value: `failed${previous}` };
+      return { label: 'Last frame', value: `failed${previous}` };
     case 'cancelled':
-      return { label: 'Last Frame', value: `cancelled${previous}` };
+      return { label: 'Last frame', value: `cancelled${previous}` };
     default:
-      return stat.lastMs === null ? null : { label: 'Last Frame', value: formatMs(stat.lastMs) };
+      return stat.lastMs === null ? null : { label: 'Last frame', value: formatMs(stat.lastMs) };
   }
+}
+
+/** Above this, the timing value is painted in the panel's warning colour. */
+export const SLOW_FRAME_MS = 500;
+
+/// Whether the timing row should read as a warning: a slow duration (running
+/// or finished), or a run that did not produce a result at all.
+export function frameIsSlow(stat: FrameStat, nowMs: number): boolean {
+  switch (stat.status) {
+    case 'computing':
+      return Math.max(0, nowMs - stat.startedMs) > SLOW_FRAME_MS;
+    case 'failed':
+    case 'cancelled':
+      return true;
+    default:
+      return stat.lastMs !== null && stat.lastMs > SLOW_FRAME_MS;
+  }
+}
+
+/** Thousands-separated integer, e.g. `8,649`. */
+function count(n: number): string {
+  return Math.round(n).toLocaleString('en-US');
+}
+
+/** Fixed 4-decimal measure with thousands separators, e.g. `1,024.5312`. */
+function measure(n: number): string {
+  return n.toLocaleString('en-US', { minimumFractionDigits: 4, maximumFractionDigits: 4 });
+}
+
+function cell(label: string, title: string, value: string): string {
+  return `<div class="bgr-cell"><span class="bgr-label" title="${title}">${label}</span>` +
+    `<span class="bgr-val bgr-mono">${value}</span></div>`;
 }
 
 /** Repaint interval of the ticking clock while a boolean computes. */
@@ -130,18 +161,24 @@ export class BooleanReadout {
   }
 
   private render() {
-    const rows: { label: string; value: string }[] = [];
+    const parts: string[] = [];
     const data = this.mesh;
     if (data) {
-      rows.push(
-        { label: 'Vertices', value: String(data.num_vert) },
-        { label: 'Triangles', value: String(data.num_tri) },
-        { label: 'Volume', value: data.volume.toFixed(4) },
-        { label: 'Surface Area', value: data.surface_area.toFixed(4) },
-      );
+      parts.push('<div class="bgr-grid">' +
+        cell('Verts', 'Vertices', count(data.num_vert)) +
+        cell('Tris', 'Triangles', count(data.num_tri)) +
+        cell('Vol', 'Volume', measure(data.volume)) +
+        cell('Area', 'Surface area', measure(data.surface_area)) +
+        '</div>');
     }
-    const frame = frameStatRow(this.stat, this.now());
-    if (frame) rows.push(frame);
-    updateReadout(this.element, rows);
+    const now = this.now();
+    const frame = frameStatRow(this.stat, now);
+    if (frame) {
+      const warn = frameIsSlow(this.stat, now) ? ' is-warn' : '';
+      parts.push(`<div class="bgr-frame"><span class="bgr-label" ` +
+        `title="Wall time of the last boolean evaluation">${frame.label}</span>` +
+        `<span class="bgr-val bgr-mono${warn}">${frame.value}</span></div>`);
+    }
+    this.element.innerHTML = parts.join('');
   }
 }

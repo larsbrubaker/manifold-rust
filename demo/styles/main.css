@@ -1,5 +1,9 @@
 /* Manifold.rs Demo — Main Stylesheet */
 
+/* Boolean Gallery's banded sidebar keeps its own sheet (this file is already
+   at its length budget, and those rules are demo-specific). */
+@import url('./boolean-panel.css');
+
 :root {
   --sidebar-width: 260px;
   --bg: #fafafa;

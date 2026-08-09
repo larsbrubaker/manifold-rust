@@ -1,0 +1,555 @@
+/* Boolean Gallery sidebar — "layout 2a"
+ *
+ * Four bands (Input → Operation → View → Result) inside one 320px card,
+ * separated by full-bleed rules. Built by src/demos/boolean-panel.ts from the
+ * widgets in src/demos/gallery-widgets.ts; the Result band's numbers come
+ * from src/demos/boolean-readout.ts.
+ *
+ * Everything here is self-contained: no web fonts are fetched, the numeric
+ * face falls back to whatever monospace the system provides.
+ */
+
+.bg-panel {
+  --bg-accent: #2f7ad6;
+  --bg-accent-text: #1f5aa8;
+  --bg-accent-tint: #eaf2fc;
+  --bg-neutral-sel: #5a6570;
+  --bg-text: #1c2128;
+  --bg-secondary: #4a5560;
+  --bg-muted: #7b848e;
+  --bg-heading: #8a929b;
+  --bg-faintest: #9aa3ac;
+  --bg-control-border: #ccd2d8;
+  --bg-check-border: #b6bec6;
+  --bg-divider: #e4e8ec;
+  --bg-divider-light: #eceef1;
+  --bg-inset: #f6f8fa;
+  --bg-disc: #fafbfc;
+  --bg-unselected: #f4f6f8;
+  --bg-swatch-a: #6f9fc4;
+  --bg-swatch-b: #c98079;
+  --bg-warning: #b1642f;
+  --bg-mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, 'SF Mono', Consolas,
+    'Liberation Mono', monospace;
+
+  display: flex;
+  flex-direction: column;
+  align-self: start;
+  max-height: 100%;
+  overflow-y: auto;
+  font-family: 'Inter Tight', 'Segoe UI', system-ui, sans-serif;
+  font-size: 12.5px;
+  line-height: 1.35;
+  color: var(--bg-text);
+  background: #fff;
+  border: 1px solid #d8dce1;
+  border-radius: 8px;
+}
+
+/* The gallery's own column width (the shared demo layout uses 280px). */
+.demo-layout.bool-layout {
+  grid-template-columns: 1fr 320px;
+}
+
+.bg-band {
+  display: flex;
+  flex-direction: column;
+  gap: 11px;
+  padding: 14px;
+}
+
+.bg-band + .bg-band {
+  border-top: 1px solid var(--bg-divider);
+}
+
+.bg-band-view { gap: 10px; }
+.bg-band-result { gap: 9px; }
+
+.bg-band-h {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--bg-heading);
+}
+
+.bgw-mono,
+.bgr-mono {
+  font-family: var(--bg-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Rows ---------- */
+
+.bgw-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.bgw-inline {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bgw-inline-label {
+  font-size: 12.5px;
+  color: var(--bg-secondary);
+}
+
+.bgw-flags {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+/* ---------- Segmented control ---------- */
+
+.bgw-seg {
+  display: flex;
+  border: 1px solid var(--bg-control-border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.bgw-seg-btn {
+  flex: 1 1 0;
+  padding: 7px 0;
+  font: inherit;
+  font-size: 13px;
+  color: var(--bg-secondary);
+  background: var(--bg-unselected);
+  border: none;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+
+.bgw-seg-btn + .bgw-seg-btn {
+  border-left: 1px solid var(--bg-control-border);
+}
+
+.bgw-seg-btn.is-on {
+  background: var(--bg-accent);
+  color: #fff;
+  font-weight: 500;
+}
+
+/* Inline variant (Engine): neutral selected fill, sized to its text. */
+.bgw-seg-compact {
+  flex: none;
+}
+
+.bgw-seg-compact .bgw-seg-btn {
+  flex: none;
+  padding: 5px 11px;
+  font-size: 12px;
+}
+
+.bgw-seg-compact .bgw-seg-btn.is-on {
+  background: var(--bg-neutral-sel);
+}
+
+/* ---------- Selects, numeric fields, icon button ---------- */
+
+.bgw-select {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.bgw-select::after {
+  content: '▾';
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  transform: translateY(-50%);
+  font-size: 10px;
+  color: var(--bg-heading);
+  pointer-events: none;
+}
+
+.bgw-select select {
+  width: 100%;
+  padding: 7px 22px 7px 9px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--bg-secondary);
+  background: #fff;
+  border: 1px solid var(--bg-control-border);
+  border-radius: 6px;
+  appearance: none;
+  -webkit-appearance: none;
+  cursor: pointer;
+  text-overflow: ellipsis;
+}
+
+.bgw-num {
+  flex: 1 1 0;
+  min-width: 0;
+  padding: 7px 9px;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--bg-secondary);
+  background: #fff;
+  border: 1px solid var(--bg-control-border);
+  border-radius: 6px;
+}
+
+.bgw-iconbtn {
+  flex: none;
+  width: 38px;
+  height: 38px;
+  font-size: 16px;
+  line-height: 1;
+  color: #fff;
+  background: var(--bg-accent);
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.bgw-iconbtn:disabled,
+.bgw-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.bgw-iconbtn.is-busy {
+  animation: bgw-spin 1s linear infinite;
+}
+
+@keyframes bgw-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* ---------- Operand card ---------- */
+
+.bgw-operands {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 10px;
+  background: var(--bg-inset);
+  border: 1px solid var(--bg-divider);
+  border-radius: 6px;
+}
+
+.bgw-op-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.bgw-op-row {
+  display: flex;
+  gap: 8px;
+  min-width: 0;
+}
+
+.bgw-op-row + .bgw-op-row {
+  padding-top: 7px;
+  border-top: 1px solid var(--bg-divider);
+}
+
+.bgw-swatch {
+  flex: none;
+  width: 9px;
+  height: 9px;
+  margin-top: 4px;
+  border-radius: 2px;
+}
+
+.bgw-swatch-a { background: var(--bg-swatch-a); }
+.bgw-swatch-b { background: var(--bg-swatch-b); }
+
+.bgw-op-text {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bgw-op-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--bg-text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.bgw-op-meta {
+  font-size: 11px;
+  color: var(--bg-muted);
+}
+
+.bgw-op-meta.is-caution {
+  color: var(--bg-warning);
+}
+
+.bgw-op-rot {
+  font-size: 10.5px;
+  color: var(--bg-faintest);
+}
+
+.bgw-op-msg {
+  font-size: 11px;
+  color: var(--bg-muted);
+}
+
+/* ---------- Operation grid ---------- */
+
+.bgw-ops {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.bgw-op {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 10px 0 7px;
+  background: #fff;
+  border: 1px solid #d8dce1;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.bgw-op-label {
+  font: inherit;
+  font-size: 11px;
+  color: var(--bg-secondary);
+}
+
+.bgw-op.is-on {
+  border-color: var(--bg-accent);
+  background: var(--bg-accent-tint);
+}
+
+.bgw-op.is-on .bgw-op-label {
+  color: var(--bg-accent-text);
+  font-weight: 600;
+}
+
+.bgw-op-glyph .vs { fill: var(--bg-neutral-sel); }
+.bgw-op.is-on .bgw-op-glyph .vs { fill: var(--bg-accent); }
+.bgw-op-glyph .vo { fill: none; stroke: var(--bg-faintest); stroke-width: 1; }
+.bgw-op-glyph .vw { fill: #fff; }
+
+/* ---------- Checkboxes ---------- */
+
+.bgw-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--bg-secondary);
+  cursor: pointer;
+}
+
+.bgw-check.is-disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.bgw-check input {
+  flex: none;
+  width: 13px;
+  height: 13px;
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+  background: #fff;
+  border: 1px solid var(--bg-check-border);
+  border-radius: 3px;
+  cursor: inherit;
+  position: relative;
+}
+
+.bgw-check input:checked {
+  background: var(--bg-accent);
+  border-color: var(--bg-accent);
+}
+
+.bgw-check input:checked::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 3px;
+  height: 6px;
+  border: solid #fff;
+  border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg);
+}
+
+/* ---------- Offset disclosure ---------- */
+
+.bgw-disc-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  height: 30px;
+  padding: 8px 9px;
+  background: var(--bg-disc);
+  border: 1px solid var(--bg-divider);
+  border-radius: 6px;
+  cursor: pointer;
+  font: inherit;
+}
+
+.bgw-disc-left {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.bgw-caret {
+  font-size: 10px;
+  color: var(--bg-heading);
+  transition: transform 0.12s;
+}
+
+.bgw-disc.is-open .bgw-caret {
+  transform: rotate(90deg);
+}
+
+.bgw-disc-title {
+  font-size: 12.5px;
+  color: var(--bg-secondary);
+}
+
+.bgw-disc-sum {
+  font-size: 11.5px;
+  color: var(--bg-muted);
+}
+
+.bgw-disc-sum.is-muted {
+  color: var(--bg-faintest);
+}
+
+.bgw-disc-body {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 10px 1px 2px;
+}
+
+.bgw-disc-body .control-group label {
+  font-size: 12px;
+  color: var(--bg-secondary);
+}
+
+/* ---------- View pills ---------- */
+
+.bgw-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.bgw-pill {
+  padding: 5px 11px;
+  font: inherit;
+  font-size: 12px;
+  color: var(--bg-secondary);
+  background: transparent;
+  border: 1px solid var(--bg-control-border);
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.bgw-pill.is-on {
+  background: var(--bg-accent);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 500;
+}
+
+/* ---------- Result band ---------- */
+
+.bgw-result-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.bgw-chips {
+  display: flex;
+  gap: 5px;
+}
+
+.bgw-chip {
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: var(--bg-secondary);
+  background: #fff;
+  border: 1px solid var(--bg-control-border);
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.bgr-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px 12px;
+}
+
+.bgr-cell,
+.bgr-frame {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12.5px;
+}
+
+.bgr-frame {
+  margin-top: 7px;
+  padding-top: 7px;
+  border-top: 1px solid var(--bg-divider-light);
+}
+
+.bgr-label {
+  color: var(--bg-muted);
+}
+
+.bgr-val {
+  font-size: 12px;
+  color: var(--bg-secondary);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.bgr-val.is-warn {
+  color: var(--bg-warning);
+}
+
+/* ---------- Notice (errors, cancellations) ---------- */
+
+.bgw-notice {
+  padding: 8px 10px;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: #6d4c00;
+  background: #fff8e1;
+  border: 1px solid #ffe082;
+  border-radius: 6px;
+}
+
+@media (max-width: 900px) {
+  .demo-layout.bool-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .bg-panel {
+    max-height: none;
+  }
+}

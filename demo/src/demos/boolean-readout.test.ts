@@ -9,7 +9,7 @@
 // The panel only touches innerHTML, so a one-field stub stands in for the DOM.
 
 import { expect, test } from 'bun:test';
-import { BooleanReadout, frameStatRow, formatMs } from './boolean-readout.ts';
+import { BooleanReadout, frameStatRow, formatMs, frameIsSlow } from './boolean-readout.ts';
 import type { MeshData } from '../wasm.ts';
 
 function fakeEl(): HTMLElement {
@@ -106,4 +106,49 @@ test('mesh rows survive timing-row updates', () => {
 test('formatMs switches to seconds at 1000 ms', () => {
   expect(formatMs(999.94)).toBe('999.9 ms');
   expect(formatMs(1000)).toBe('1.00 s');
+});
+
+// ---- Result band presentation (layout 2a) ----
+
+test('counts are printed with thousands separators', () => {
+  const h = harness();
+  h.readout.setMesh({ num_vert: 8649, num_tri: 17294, volume: 1234.5, surface_area: 6 } as unknown as MeshData);
+  expect(h.text()).toContain('8,649');
+  expect(h.text()).toContain('17,294');
+  expect(h.text()).toContain('1,234.5000');
+  h.readout.dispose();
+});
+
+test('abbreviated labels keep the full word as a tooltip', () => {
+  const h = harness();
+  h.readout.setMesh(MESH);
+  expect(h.text()).toContain('title="Triangles">Tris<');
+  expect(h.text()).toContain('title="Surface area">Area<');
+  h.readout.dispose();
+});
+
+test('a slow frame is flagged for the warning colour, a fast one is not', () => {
+  const idle = (ms: number) => ({ status: 'idle' as const, lastMs: ms, startedMs: 0 });
+  expect(frameIsSlow(idle(120), 0)).toBe(false);
+  expect(frameIsSlow(idle(501), 0)).toBe(true);
+  // A run that is *already* over the budget warns while it is still running.
+  expect(frameIsSlow({ status: 'computing', lastMs: null, startedMs: 0 }, 400)).toBe(false);
+  expect(frameIsSlow({ status: 'computing', lastMs: null, startedMs: 0 }, 900)).toBe(true);
+  // Failure and cancellation are never "a normal frame time".
+  expect(frameIsSlow({ status: 'failed', lastMs: 10, startedMs: 0 }, 0)).toBe(true);
+  expect(frameIsSlow({ status: 'cancelled', lastMs: 10, startedMs: 0 }, 0)).toBe(true);
+});
+
+test('the warning class only reaches the DOM for slow frames', () => {
+  const h = harness();
+  h.readout.setBusy(true);
+  h.readout.setResult(120);
+  h.readout.setBusy(false);
+  expect(h.text()).not.toContain('is-warn');
+
+  h.readout.setBusy(true);
+  h.readout.setResult(880);
+  h.readout.setBusy(false);
+  expect(h.text()).toContain('is-warn');
+  h.readout.dispose();
 });

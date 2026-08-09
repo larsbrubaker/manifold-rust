@@ -1,132 +1,23 @@
 // Boolean Gallery: booleans on either built-in primitives or random
 // Thingi10K mesh pairs, with a choice of boolean engine (Exact / Robust /
-// Auto). A Source dropdown switches between the two mesh sources; every
-// other control — operation, engine, offsets, animate, wireframe — applies
-// to whichever source is active. Every operation's inputs are captured for
-// the Copy Debug Info button so failures can be reproduced from a pasted
-// report.
+// Auto). The sidebar (boolean-panel.ts) is banded Input → Operation → View →
+// Result; this file owns the state behind it, the worker-driven evaluation
+// loop, and the debug-info capture/restore path, so any failure can be
+// reproduced from a pasted report.
 
 import { ThreeViewer } from '../three-viewer.ts';
-import { createSlider, createDropdown, createCheckbox, createButton, createNumberInput, createReadout } from '../controls.ts';
 import { BooleanReadout } from './boolean-readout.ts';
+import { buildPanel, type GalleryPanel, type Source } from './boolean-panel.ts';
 import { type MeshData, type BooleanEngine } from '../wasm.ts';
 import { BooleanRunner, type ImportInfo, type OperandArrays, type RunParams } from '../boolean-runner.ts';
 import { loadSetting, saveSetting } from '../settings.ts';
 import { pickRandomModel, pairOperandKinds, fetchMesh, meshZipUrl, findModelById, type ThingiModel, type PairKind } from '../thingi.ts';
-
-/// Rebuild a ThingiModel from a Copy-Debug-Info operand record: the URL
-/// carries the repo and format, so a pasted report reproduces without the
-/// metadata index (whose pools might have changed since the capture).
-function modelFromDebugRecord(rec: any): ThingiModel {
-  if (typeof rec?.id !== 'number' || typeof rec?.url !== 'string') {
-    throw new Error('operand record is missing id/url');
-  }
-  const repoMatch = /Thingi10K-meshes-(\d+)@/.exec(rec.url);
-  const formatMatch = /\.(\w+)\.zip$/.exec(rec.url);
-  if (!repoMatch) throw new Error(`unrecognized mesh URL: ${rec.url}`);
-  return {
-    id: rec.id,
-    thing_id: 0,
-    name: rec.name ?? `#${rec.id}`,
-    format: formatMatch ? formatMatch[1] : 'stl',
-    repo: parseInt(repoMatch[1]),
-    closed: true,
-    edge_manifold: !!rec.edge_manifold,
-    vertex_manifold: !!rec.vertex_manifold,
-    faces: rec.faces ?? 0,
-    vertices: 0,
-  };
-}
+import {
+  ENGINE_NAMES, OP_COLORS, OP_NAMES, SHAPE_NAMES, TROUBLE_CASES,
+  isRandomMode, modelFromDebugRecord, type PairMode,
+} from './boolean-gallery-data.ts';
 
 const DEMO = 'boolean-gallery';
-
-const SOURCES = [
-  { value: 'builtin', text: 'Built In' },
-  { value: 'thingi', text: 'Thingi10K' },
-];
-
-const SHAPES = [
-  { value: '0', text: 'Cube' },
-  { value: '1', text: 'Sphere' },
-  { value: '2', text: 'Cylinder' },
-  { value: '3', text: 'Spiky Dodecahedron' },
-];
-
-const OPS = [
-  { value: '0', text: 'Union' },
-  { value: '1', text: 'Intersection' },
-  { value: '2', text: 'Difference' },
-];
-
-const ENGINES = [
-  { value: '0', text: 'Exact (C++-matching)' },
-  { value: '1', text: 'Robust (non-manifold)' },
-  { value: '2', text: 'Auto' },
-];
-
-const PAIR_KINDS = [
-  { value: 'mm', text: 'Manifold + Manifold' },
-  { value: 'mn', text: 'Manifold + Non-manifold' },
-  { value: 'nn', text: 'Non-manifold + Non-manifold' },
-];
-
-/// Pair Type is really a mode selector: the three kinds above roll a random
-/// pair, while the two below reveal a sub-control that names an exact pair
-/// instead — a curated trouble case, or model ids typed in by hand.
-type PairMode = PairKind | 'trouble' | 'pick';
-
-const PAIR_MODES = PAIR_KINDS.concat([
-  { value: 'trouble', text: 'Trouble Cases…' },
-  { value: 'pick', text: 'Pick Models…' },
-]);
-
-const isRandomMode = (m: PairMode): m is PairKind =>
-  m === 'mm' || m === 'mn' || m === 'nn';
-
-/// Known Thingi10K trouble cases — the pairs the perf and bug hunts keep
-/// returning to. Selecting one loads the exact configuration (models by id,
-/// op, engine, offsets, rotation) through the same path as Use Debug Info.
-const TROUBLE_CASES: {
-  value: string; text: string; a: number; b: number;
-  op: string; engine: string; offset: [number, number, number];
-  rot: [number, number, number]; pairKind: PairKind;
-}[] = [
-  {
-    value: '1663774-51334',
-    text: '1663774 ∪ 51334 — heavy fins (slowest known)',
-    a: 1663774, b: 51334, op: 'union', engine: 'robust',
-    offset: [0.3, 0, 0], rot: [231.39999999999753, 124, 273.6000000000049], pairKind: 'nn',
-  },
-  {
-    value: '91946-61459',
-    text: '91946 ∪ 61459 — doubled-surface windows (perf)',
-    a: 91946, b: 61459, op: 'union', engine: 'robust',
-    offset: [0.3, 0, 0], rot: [236, 231, 42], pairKind: 'nn',
-  },
-  {
-    value: '939888-93557',
-    text: '939888 ∪ 93557 — self-overlapping operand',
-    a: 939888, b: 93557, op: 'union', engine: 'robust',
-    offset: [0.3, 0, 0], rot: [356, 140, 322], pairKind: 'nn',
-  },
-  {
-    value: '1075458-91115',
-    text: '1075458 − 91115 — CDT constraint recovery (fixed)',
-    a: 1075458, b: 91115, op: 'difference', engine: 'robust',
-    offset: [0.7, -0.2, 0.4], rot: [311, 55, 345], pairKind: 'mn',
-  },
-  {
-    value: '92068-39926',
-    text: '92068 ∪ 39926 — tripled facets (fixed NotClosed)',
-    a: 92068, b: 39926, op: 'union', engine: 'robust',
-    offset: [0.3, 0, 0], rot: [0, 0, 0], pairKind: 'nn',
-  },
-];
-
-const OP_COLORS = [0x4488cc, 0x44aa44, 0xcc4444];
-const OP_NAMES = ['union', 'intersection', 'difference'];
-const ENGINE_NAMES = ['exact', 'robust', 'auto'];
-const SHAPE_NAMES = ['cube', 'sphere', 'cylinder', 'spiky-dodecahedron'];
 
 interface ThingiOperand {
   model: ThingiModel;
@@ -147,9 +38,9 @@ export function init(container: HTMLElement): () => void {
         ones) — and the engine: the exact C++-matching pipeline or the robust engine that
         accepts non-manifold input.</p>
       </div>
-      <div class="demo-layout">
+      <div class="demo-layout bool-layout">
         <div class="demo-canvas-area" id="viewer-container"></div>
-        <div class="demo-controls" id="controls"></div>
+        <div id="controls"></div>
       </div>
     </div>
   `;
@@ -158,7 +49,7 @@ export function init(container: HTMLElement): () => void {
   const controlsEl = document.getElementById('controls')!;
   const viewer = new ThreeViewer(viewerEl);
 
-  let source = loadSetting(DEMO, 'source', 'builtin') as 'builtin' | 'thingi';
+  let source = loadSetting(DEMO, 'source', 'builtin') as Source;
   let shapeA = loadSetting(DEMO, 'shapeA', 3);
   let shapeB = loadSetting(DEMO, 'shapeB', 3);
   let op = loadSetting(DEMO, 'op', 0);
@@ -168,6 +59,7 @@ export function init(container: HTMLElement): () => void {
   let offsetX = loadSetting(DEMO, 'offsetX', 0.3);
   let offsetY = loadSetting(DEMO, 'offsetY', 0.0);
   let offsetZ = loadSetting(DEMO, 'offsetZ', 0.0);
+  let offsetsOpen = loadSetting(DEMO, 'offsetsOpen', false);
   let wireframe = loadSetting(DEMO, 'wireframe', false);
   let xray = loadSetting(DEMO, 'xray', false);
   let animate = loadSetting(DEMO, 'animate', true);
@@ -199,16 +91,71 @@ export function init(container: HTMLElement): () => void {
   // is in flight the built-in shapes stay on screen.
   const inThingi = () => source === 'thingi' && !!(thingiA && thingiB);
 
-  const readout = createReadout();
-  // Owns the info rows *and* the "Last Frame" boolean timing, which has to
+  // ---- Sidebar ----
+
+  const troubleOptions = [{ value: '', text: 'Pick a known case…' }]
+    .concat(TROUBLE_CASES.map(c => ({ value: c.value, text: c.text })));
+
+  const panel: GalleryPanel = buildPanel(controlsEl, {
+    source, shapeA, shapeB, pairMode, troubleOptions,
+    troubleCase: TROUBLE_CASES.some(c => c.value === troubleCase) ? troubleCase : '',
+    pickA, pickB, op, engine, repair: repairOrientation, nonzero: nonzeroWinding,
+    offset: [offsetX, offsetY, offsetZ], offsetsOpen, wireframe, xray, animate,
+  }, {
+    onSource: s => setSource(s),
+    onShape: (slot, value) => {
+      if (slot === 'a') { shapeA = value; saveSetting(DEMO, 'shapeA', shapeA); }
+      else { shapeB = value; saveSetting(DEMO, 'shapeB', shapeB); }
+      update();
+    },
+    onPairMode: mode => setPairMode(mode, true),
+    onLoadRandom: () => { loadRandomPair(); },
+    onTrouble: v => {
+      if (!v) return;
+      troubleCase = v;
+      saveSetting(DEMO, 'troubleCase', v);
+      loadTroubleCase(v);
+    },
+    onPickId: (slot, value) => {
+      if (slot === 'a') { pickA = value; saveSetting(DEMO, 'pickA', pickA); }
+      else { pickB = value; saveSetting(DEMO, 'pickB', pickB); }
+    },
+    onLoadPicked: () => { loadPickedModels(); },
+    onOp: v => { op = v; saveSetting(DEMO, 'op', op); update(); },
+    onEngine: v => {
+      engine = v as BooleanEngine;
+      saveSetting(DEMO, 'engine', engine);
+      // Switching to Auto is the moment the self-intersection verdict becomes
+      // meaningful, so re-feed the operands to have the worker measure it.
+      if (wantSelfIntersecting() && inThingi()) void measureSelfIntersection();
+      update();
+    },
+    // Repair sits with the engine choice: it changes what the operands *mean*
+    // (inside-out bodies become solid material) before any boolean runs.
+    onRepair: v => { repairOrientation = v; saveSetting(DEMO, 'repairOrientation', v); update(); },
+    // Where repair rewrites the operands, this changes what the robust engine
+    // counts as solid: {winding != 0} instead of {winding >= 1}. It is the only
+    // thing that saves a single shell wound correctly in one region and
+    // inside-out in another — exactly what repair (per shell) cannot fix.
+    onNonzero: v => { nonzeroWinding = v; saveSetting(DEMO, 'nonzeroWinding', v); update(); },
+    onOffset: (axis, v) => {
+      if (axis === 'x') { offsetX = v; saveSetting(DEMO, 'offsetX', v); }
+      else if (axis === 'y') { offsetY = v; saveSetting(DEMO, 'offsetY', v); }
+      else { offsetZ = v; saveSetting(DEMO, 'offsetZ', v); }
+      panel.setOffsets([offsetX, offsetY, offsetZ]);
+      update();
+    },
+    onOffsetsToggle: open => { offsetsOpen = open; saveSetting(DEMO, 'offsetsOpen', open); },
+    onWireframe: v => { wireframe = v; saveSetting(DEMO, 'wireframe', v); viewer.setWireframe(v); },
+    onXRay: v => { xray = v; saveSetting(DEMO, 'xray', v); viewer.setXRay(v); },
+    onAnimate: toggleAnimate,
+    onCopy: () => { copyDebugInfo(); },
+    onPaste: () => { useDebugInfo(); },
+  });
+
+  // Owns the stats grid *and* the "Last frame" boolean timing, which has to
   // keep updating (pending clock, failed, cancelled) between results.
-  const stats = new BooleanReadout(readout);
-  const errorBox = document.createElement('div');
-  errorBox.className = 'demo-note';
-  errorBox.style.display = 'none';
-  const thingiInfo = document.createElement('div');
-  thingiInfo.className = 'demo-note';
-  thingiInfo.style.display = 'none';
+  const stats = new BooleanReadout(panel.readoutEl);
 
   function describeOperand(o: ThingiOperand) {
     return {
@@ -262,7 +209,8 @@ export function init(container: HTMLElement): () => void {
   // ---- Worker-driven evaluation: the boolean runs off the main thread ----
 
   const runner = new BooleanRunner();
-  // Busy overlay sits at the top-left of the 3D pane, over the scene.
+  // Busy overlay sits at the top-left of the 3D pane, over the scene; its
+  // Cancel button is the one and only cancel affordance.
   runner.attachBusyIndicator(viewerEl);
 
   function update(silent = false) {
@@ -290,7 +238,7 @@ export function init(container: HTMLElement): () => void {
     try { localStorage.setItem('boolean-gallery-debug', JSON.stringify(info)); } catch { /* ignore */ }
     viewer.setMesh(data as MeshData);
     viewer.setColor(OP_COLORS[params.op] || 0x4488cc);
-    errorBox.style.display = 'none';
+    panel.setNotice(null);
     stats.setMesh(data as MeshData);
     scheduleNextAnimateFrame(elapsedMs);
   };
@@ -302,10 +250,9 @@ export function init(container: HTMLElement): () => void {
     try { localStorage.setItem('boolean-gallery-debug', JSON.stringify(info)); } catch { /* ignore */ }
     console.error('Boolean op failed:', info, error);
     if (!silent) {
-      errorBox.style.display = 'block';
-      errorBox.innerHTML = `<strong>Boolean operation failed:</strong> ${error}<br>` +
-        `Use <em>Copy Debug Info</em> to capture the inputs for a bug report.`;
-      // The mesh rows described a result that is gone; the timing row stays
+      panel.setNotice(`<strong>Boolean operation failed:</strong> ${error}<br>` +
+        `Use <em>Copy debug</em> to capture the inputs for a bug report.`);
+      // The stats rows described a result that is gone; the timing row stays
       // and now reads "failed".
       stats.clear();
     }
@@ -321,11 +268,9 @@ export function init(container: HTMLElement): () => void {
     if (!animating) return;
     if (elapsedMs > ANIMATE_BUDGET_MS) {
       toggleAnimate(false);
-      const box = animateBox.querySelector('input') as HTMLInputElement | null;
-      if (box) box.checked = false;
-      errorBox.style.display = 'block';
-      errorBox.innerHTML = `<strong>Animation paused:</strong> this boolean takes ` +
-        `${(elapsedMs / 1000).toFixed(1)} s per frame. Re-check Animate to continue anyway.`;
+      panel.setAnimate(false);
+      panel.setNotice(`<strong>Animation paused:</strong> this boolean takes ` +
+        `${(elapsedMs / 1000).toFixed(1)} s per frame. Re-enable Animate to continue anyway.`);
       return;
     }
     animId = requestAnimationFrame(animateStep);
@@ -363,7 +308,7 @@ export function init(container: HTMLElement): () => void {
 
   /// The self-intersection scan is only worth its (~1us per triangle) cost
   /// when the Auto engine will consult it — that is also when the operand
-  /// badge needs it to explain why Auto picked the robust engine.
+  /// card needs it to explain why Auto picked the robust engine.
   function wantSelfIntersecting(): boolean {
     return ENGINE_NAMES[engine] === 'auto';
   }
@@ -379,7 +324,7 @@ export function init(container: HTMLElement): () => void {
   /// Switching to Auto is the moment the self-intersection verdict starts
   /// mattering (it decides which engine runs), so re-feed the committed pair
   /// with the scan requested and adopt the fresh ImportInfo, which is what
-  /// the operand labels read.
+  /// the operand card reads.
   async function measureSelfIntersection() {
     const pair: [ThingiOperand | null, 'a' | 'b'][] = [[thingiA, 'a'], [thingiB, 'b']];
     for (const [o, slot] of pair) {
@@ -387,29 +332,41 @@ export function init(container: HTMLElement): () => void {
       const info = await runner.importOperand(slot, o.arrays, true);
       if (info.ok && (slot === 'a' ? thingiA : thingiB) === o) o.info = info;
     }
-    if (inThingi()) {
-      setThingiInfo(`A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}`);
-    }
+    if (inThingi()) showOperands();
   }
 
-  function setThingiInfo(html: string | null) {
-    if (html) {
-      thingiInfo.innerHTML = html;
-      thingiInfo.style.display = 'block';
-    } else {
-      thingiInfo.style.display = 'none';
-    }
-  }
-
-  function operandLabel(o: ThingiOperand): string {
+  /// `#849728 · 702 tris · manifold` — the mono line under each mesh name.
+  function operandMeta(o: ThingiOperand): { text: string; caution: boolean } {
     // Topological kind per the dataset flags (what the pools guarantee);
     // "soup" marks the rare case where even welding could not pair it.
-    let kind = o.model.edge_manifold && o.model.vertex_manifold ? 'manifold' : 'non-manifold';
+    const manifold = o.model.edge_manifold && o.model.vertex_manifold;
+    let kind = manifold ? 'manifold' : 'non-manifold';
     if (o.info.is_soup) kind += ', soup';
     // Self-intersecting operands force Auto onto the robust engine. Only
     // known when the scan was requested (Auto); null means "not measured".
     if (o.info.self_intersecting) kind += ', self-intersecting';
-    return `#${o.model.id} &ldquo;${o.model.name}&rdquo; (${o.model.faces} tris, ${kind})`;
+    return {
+      text: `#${o.model.id} · ${o.model.faces} tris · ${kind}`,
+      caution: !manifold || !!o.info.is_soup || !!o.info.self_intersecting,
+    };
+  }
+
+  /// Repaint the A/B card from the committed pair (plus an optional status
+  /// line under it). Rotation is shown as loaded/restored; while Animate runs
+  /// it keeps advancing past the printed value, as before.
+  function showOperands(message: string | null = null) {
+    if (!thingiA || !thingiB) {
+      panel.operands.setLines([], null);
+      panel.operands.setMessage(message);
+      return;
+    }
+    const a = operandMeta(thingiA);
+    const b = operandMeta(thingiB);
+    panel.operands.setLines([
+      { slot: 'a', title: thingiA.model.name, meta: a.text, caution: a.caution },
+      { slot: 'b', title: thingiB.model.name, meta: b.text, caution: b.caution },
+    ], `rot [${Math.round(rotX)}, ${Math.round(rotY)}, ${Math.round(rotZ)}]°`);
+    panel.operands.setMessage(message);
   }
 
   // Some dataset models flagged "closed" still fail the robust importer's
@@ -419,7 +376,7 @@ export function init(container: HTMLElement): () => void {
     const MAX_ATTEMPTS = 5;
     for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
       const model = await pickRandomModel(kind, exclude);
-      setThingiInfo(`Fetching #${model.id} &ldquo;${model.name}&rdquo;…`);
+      panel.operands.setMessage(`Fetching #${model.id} “${model.name}”…`);
       const parsed = await fetchMesh(model);
       if (disposed) throw new Error('demo closed');
       const arrays: OperandArrays = { positions: parsed.positions, indices: parsed.indices };
@@ -436,9 +393,8 @@ export function init(container: HTMLElement): () => void {
   async function loadRandomPair() {
     if (loadingPair) return;
     loadingPair = true;
-    loadBtn.disabled = true;
-    loadBtn.textContent = 'Loading pair…';
-    errorBox.style.display = 'none';
+    panel.setLoading(true);
+    panel.setNotice(null);
     skippedImports = [];
     let loaded = false;
     try {
@@ -454,25 +410,19 @@ export function init(container: HTMLElement): () => void {
       rotX = Math.floor(Math.random() * 360);
       rotY = Math.floor(Math.random() * 360);
       rotZ = Math.floor(Math.random() * 360);
-      setThingiInfo(`A: ${operandLabel(thingiA)}<br>B: ${operandLabel(thingiB)}<br>` +
-        `Loaded rotation: [${rotX}, ${rotY}, ${rotZ}]&deg;`);
+      showOperands();
     } catch (e) {
       console.error('Thingi10K pair load failed:', e);
       restoreWorkerOperands();
-      setThingiInfo(inThingi()
-        ? `<strong>Load failed — showing previous pair:</strong><br>` +
-          `A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}`
-        : null);
-      errorBox.style.display = 'block';
-      errorBox.innerHTML = `<strong>Failed to load Thingi10K pair:</strong> ${String(e)}`;
+      showOperands(inThingi() ? 'Load failed — showing the previous pair.' : null);
+      panel.setNotice(`<strong>Failed to load Thingi10K pair:</strong> ${String(e)}`);
     } finally {
       loadingPair = false;
-      loadBtn.disabled = false;
-      loadBtn.textContent = 'Load Random Pair';
+      panel.setLoading(false);
     }
     // Re-render only on success (update() is a no-op while a pair loads).
     // On failure the previous result stays on screen and — crucially — the
-    // error stays visible: a successful update() would hide the error box.
+    // error stays visible: a successful update() would hide the notice.
     if (loaded && inThingi()) update();
   }
 
@@ -487,10 +437,10 @@ export function init(container: HTMLElement): () => void {
       if (troubleCase && TROUBLE_CASES.some(c => c.value === troubleCase)) {
         loadTroubleCase(troubleCase);
       } else {
-        setThingiInfo('Pick a known case from the <em>Trouble Cases</em> list.');
+        showOperands('Pick a known case from the Trouble Cases list.');
       }
     } else if (pairMode === 'pick') {
-      setThingiInfo('Enter two model ids and press <em>Load These Models</em>.');
+      showOperands('Enter two model ids and press Load.');
     } else {
       loadRandomPair();
     }
@@ -500,7 +450,6 @@ export function init(container: HTMLElement): () => void {
     const text = JSON.stringify(lastDebugInfo ?? { note: 'no operation recorded yet' }, null, 2);
     try {
       await navigator.clipboard.writeText(text);
-      copyBtn.textContent = 'Copied!';
     } catch {
       // Clipboard API can be unavailable (non-secure context); fall back.
       const ta = document.createElement('textarea');
@@ -509,21 +458,20 @@ export function init(container: HTMLElement): () => void {
       ta.select();
       document.execCommand('copy');
       ta.remove();
-      copyBtn.textContent = 'Copied!';
     }
-    setTimeout(() => { copyBtn.textContent = 'Copy Debug Info'; }, 1500);
+    panel.setCopyLabel('Copied!');
+    setTimeout(() => { panel.setCopyLabel('Copy debug'); }, 1500);
   }
 
-  // ---- Controls layout: Source → source-specific selectors → shared ----
+  // ---- Source / pair mode ----
 
-  function setSource(s: 'builtin' | 'thingi') {
+  function setSource(s: Source) {
     source = s;
     saveSetting(DEMO, 'source', s);
-    builtinSection.style.display = s === 'builtin' ? '' : 'none';
-    thingiSection.style.display = s === 'thingi' ? '' : 'none';
+    panel.setSource(s);
     if (s === 'thingi') {
       if (inThingi()) {
-        setThingiInfo(`A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}`);
+        showOperands();
         update();
       } else {
         loadInitialPair();
@@ -534,13 +482,12 @@ export function init(container: HTMLElement): () => void {
   }
 
   /// Switch the Thingi10K pair mode, showing only that mode's sub-control:
-  /// Load Random Pair for the three random kinds, the curated list for
-  /// Trouble Cases, the id inputs for Pick Models.
+  /// the ⟳ Load Random Pair button for the three random kinds, the curated
+  /// list for Trouble Cases, the id fields for Pick Models.
   ///
-  /// `userInitiated` marks a change made through the dropdown: picking a
-  /// random kind then immediately rolls a pair of that kind, so the display
-  /// always matches what the Pair Type says (previously the old pair — of a
-  /// different kind — stayed on screen until Load Random Pair was pressed).
+  /// `userInitiated` marks a change made through the select: picking a random
+  /// kind then immediately rolls a pair of that kind, so the display always
+  /// matches what the Pair Type says.
   function setPairMode(mode: PairMode, userInitiated = false) {
     const changed = mode !== pairMode;
     pairMode = mode;
@@ -550,9 +497,7 @@ export function init(container: HTMLElement): () => void {
       pairKind = mode;
       saveSetting(DEMO, 'pairKind', pairKind);
     }
-    loadBtn.style.display = random ? '' : 'none';
-    troubleCtl.style.display = mode === 'trouble' ? '' : 'none';
-    pickSection.style.display = mode === 'pick' ? '' : 'none';
+    panel.setPairMode(mode);
     if (userInitiated && changed && source === 'thingi') {
       if (random) {
         loadRandomPair();
@@ -562,165 +507,30 @@ export function init(container: HTMLElement): () => void {
     }
   }
 
-  const sourceCtl = createDropdown('Source', SOURCES, source, v => setSource(v as 'builtin' | 'thingi'));
-  controlsEl.appendChild(sourceCtl);
-
-  const builtinSection = document.createElement('div');
-  const shapeACtl = createDropdown('Shape A', SHAPES, String(shapeA), v => { shapeA = parseInt(v); saveSetting(DEMO, 'shapeA', shapeA); update(); });
-  const shapeBCtl = createDropdown('Shape B', SHAPES, String(shapeB), v => { shapeB = parseInt(v); saveSetting(DEMO, 'shapeB', shapeB); update(); });
-  builtinSection.appendChild(shapeACtl);
-  builtinSection.appendChild(shapeBCtl);
-  controlsEl.appendChild(builtinSection);
-
-  const thingiSection = document.createElement('div');
-  const pairModeCtl = createDropdown('Pair Type', PAIR_MODES, pairMode, v => setPairMode(v as PairMode, true));
-  thingiSection.appendChild(pairModeCtl);
-  const loadBtn = createButton('Load Random Pair', () => { loadRandomPair(); });
-  loadBtn.style.marginTop = '10px';
-  thingiSection.appendChild(loadBtn);
-  const troubleOptions = [{ value: '', text: 'Pick a known case…' }]
-    .concat(TROUBLE_CASES.map(c => ({ value: c.value, text: c.text })));
-  const troubleCtl = createDropdown('Trouble Cases', troubleOptions,
-    TROUBLE_CASES.some(c => c.value === troubleCase) ? troubleCase : '', v => {
-    if (v) {
-      troubleCase = v;
-      saveSetting(DEMO, 'troubleCase', v);
-      loadTroubleCase(v);
-    }
-  });
-  thingiSection.appendChild(troubleCtl);
-  const pickSection = document.createElement('div');
-  pickSection.className = 'control-substack';
-  const pickACtl = createNumberInput('Model A id', pickA || null, v => {
-    pickA = v ?? 0;
-    saveSetting(DEMO, 'pickA', pickA);
-  });
-  const pickBCtl = createNumberInput('Model B id', pickB || null, v => {
-    pickB = v ?? 0;
-    saveSetting(DEMO, 'pickB', pickB);
-  });
-  const pickBtn = createButton('Load These Models', () => { loadPickedModels(); });
-  pickSection.appendChild(pickACtl);
-  pickSection.appendChild(pickBCtl);
-  pickSection.appendChild(pickBtn);
-  thingiSection.appendChild(pickSection);
-  thingiSection.appendChild(thingiInfo);
-  controlsEl.appendChild(thingiSection);
-
-  // Engine first: it is the major choice (which pipeline runs at all), and
-  // the operation is a detail within it.
-  const engineCtl = createDropdown('Engine', ENGINES, String(engine), v => {
-    engine = parseInt(v) as BooleanEngine;
-    saveSetting(DEMO, 'engine', engine);
-    // Switching to Auto is the moment the self-intersection verdict becomes
-    // meaningful, so re-feed the operands to have the worker measure it.
-    if (wantSelfIntersecting() && inThingi()) void measureSelfIntersection();
-    update();
-  });
-  // Repair sits with the engine choice: it changes what the operands *mean*
-  // (inside-out bodies become solid material) before any boolean runs.
-  const repairBox = createCheckbox('Repair orientation', repairOrientation, v => {
-    repairOrientation = v;
-    saveSetting(DEMO, 'repairOrientation', v);
-    update();
-  });
-  // Where repair rewrites the operands, this changes what the robust engine
-  // counts as solid: {winding != 0} instead of {winding >= 1}. It is the only
-  // thing that saves a single shell wound correctly in one region and
-  // inside-out in another — exactly what repair (per shell) cannot fix.
-  const nonzeroBox = createCheckbox('Keep inside-out geometry (nonzero winding)', nonzeroWinding, v => {
-    nonzeroWinding = v;
-    saveSetting(DEMO, 'nonzeroWinding', v);
-    update();
-  });
-  const opCtl = createDropdown('Operation', OPS, String(op), v => { op = parseInt(v); saveSetting(DEMO, 'op', op); update(); });
-  const offXCtl = createSlider('Offset X ', -1.5, 1.5, offsetX, 0.1, v => { offsetX = v; saveSetting(DEMO, 'offsetX', v); update(); });
-  const offYCtl = createSlider('Offset Y ', -1.5, 1.5, offsetY, 0.1, v => { offsetY = v; saveSetting(DEMO, 'offsetY', v); update(); });
-  const offZCtl = createSlider('Offset Z ', -1.5, 1.5, offsetZ, 0.1, v => { offsetZ = v; saveSetting(DEMO, 'offsetZ', v); update(); });
-  controlsEl.appendChild(engineCtl);
-  controlsEl.appendChild(repairBox);
-  controlsEl.appendChild(nonzeroBox);
-  controlsEl.appendChild(opCtl);
-  controlsEl.appendChild(offXCtl);
-  controlsEl.appendChild(offYCtl);
-  controlsEl.appendChild(offZCtl);
-  const animateBox = createCheckbox('Animate', animate, toggleAnimate);
-  controlsEl.appendChild(animateBox);
-  controlsEl.appendChild(createCheckbox('Wireframe', wireframe, v => { saveSetting(DEMO, 'wireframe', v); viewer.setWireframe(v); }));
-  controlsEl.appendChild(createCheckbox('X-Ray (depth peeled)', xray, v => { xray = v; saveSetting(DEMO, 'xray', v); viewer.setXRay(v); }));
-  const copyBtn = createButton('Copy Debug Info', () => { copyDebugInfo(); });
-  controlsEl.appendChild(copyBtn);
-  const useBtn = createButton('Use Debug Info', () => { useDebugInfo(); });
-  controlsEl.appendChild(useBtn);
-
-  // Cancel appears only when a boolean has been computing for a moment
-  // (avoids flicker on fast frames). Cancelling kills the worker outright —
-  // the runner respawns it and re-imports the operands.
-  const cancelBtn = createButton('Cancel Computation', () => {
-    runner.cancel();
-  });
-  cancelBtn.style.display = 'none';
-  cancelBtn.style.marginTop = '10px';
-  controlsEl.appendChild(cancelBtn);
-  let cancelShowTimer = 0;
   runner.onBusyChange = busy => {
-    clearTimeout(cancelShowTimer);
-    // Keep the "Last Frame" row honest while the boolean runs: it shows a
+    // Keep the "Last frame" row honest while the boolean runs: it shows a
     // live pending clock instead of the previous run's stale duration.
     stats.setBusy(busy);
-    if (busy) {
-      cancelShowTimer = window.setTimeout(() => { cancelBtn.style.display = ''; }, 400);
-    } else {
-      cancelBtn.style.display = 'none';
-    }
   };
   runner.onCancelled = () => {
     stats.setCancelled();
-    errorBox.style.display = 'block';
-    errorBox.innerHTML = '<strong>Computation cancelled.</strong> The previous result stays on screen.';
+    panel.setNotice('<strong>Computation cancelled.</strong> The previous result stays on screen.');
   };
 
-  controlsEl.appendChild(errorBox);
-  controlsEl.appendChild(readout);
-
-  // ---- Use Debug Info: restore the exact captured state from a paste ----
-
-  function setDropdownValue(ctl: HTMLElement, value: string) {
-    const sel = ctl.querySelector('select');
-    if (sel) sel.value = value;
-  }
-
-  function setCheckboxValue(ctl: HTMLElement, v: boolean) {
-    const input = ctl.querySelector('input');
-    if (input) input.checked = v;
-  }
-
-  function setSliderValue(ctl: HTMLElement, v: number) {
-    const input = ctl.querySelector('input');
-    if (input) input.value = String(v);
-    const span = ctl.querySelector('.slider-value');
-    if (span) span.textContent = String(v);
-  }
-
-  function setNumberValue(ctl: HTMLElement, v: number) {
-    const input = ctl.querySelector('input');
-    if (input) input.value = v ? String(v) : '';
-  }
+  // ---- Paste debug info: restore the exact captured state ----
 
   function forceAnimateOff() {
     if (animate || animating) toggleAnimate(false);
-    const box = animateBox.querySelector('input') as HTMLInputElement | null;
-    if (box) box.checked = false;
+    panel.setAnimate(false);
   }
 
   function showUseError(msg: string) {
-    errorBox.style.display = 'block';
-    errorBox.innerHTML = `<strong>Use Debug Info:</strong> ${msg}`;
+    panel.setNotice(`<strong>Paste debug info:</strong> ${msg}`);
   }
 
   async function loadOperandFromRecord(rec: any, slot: 'a' | 'b'): Promise<ThingiOperand> {
     const model = modelFromDebugRecord(rec);
-    setThingiInfo(`Fetching #${model.id} &ldquo;${model.name}&rdquo;…`);
+    panel.operands.setMessage(`Fetching #${model.id} “${model.name}”…`);
     const parsed = await fetchMesh(model);
     if (disposed) throw new Error('demo closed');
     const arrays: OperandArrays = { positions: parsed.positions, indices: parsed.indices };
@@ -732,7 +542,7 @@ export function init(container: HTMLElement): () => void {
   }
 
   async function useDebugInfo() {
-    errorBox.style.display = 'none';
+    panel.setNotice(null);
     let text: string;
     try {
       text = await navigator.clipboard.readText();
@@ -746,12 +556,12 @@ export function init(container: HTMLElement): () => void {
       info = JSON.parse(text);
     } catch {
       showUseError('the clipboard does not contain debug info (not valid JSON). ' +
-        'Press <em>Copy Debug Info</em> on a gallery frame first, then paste it back here.');
+        'Press <em>Copy debug</em> on a gallery frame first, then paste it back here.');
       return;
     }
     if (!info || info.demo !== DEMO || !Array.isArray(info.rotation_degrees) || !Array.isArray(info.offset)) {
       showUseError('the clipboard JSON is not Boolean Gallery debug info ' +
-        '(expected the object produced by <em>Copy Debug Info</em>).');
+        '(expected the object produced by <em>Copy debug</em>).');
       return;
     }
     if (loadingPair) {
@@ -763,7 +573,7 @@ export function init(container: HTMLElement): () => void {
 
   /// Resolve two model ids in the metadata index and restore the gallery to
   /// that pair through the shared debug-info path. Backs both the Trouble
-  /// Cases list and the Pick Models id inputs.
+  /// Cases list and the Pick Models id fields.
   async function loadPairByIds(
     aId: number, bId: number,
     cfg: {
@@ -774,7 +584,7 @@ export function init(container: HTMLElement): () => void {
     modeAfter: PairMode,
   ) {
     if (loadingPair) return;
-    errorBox.style.display = 'none';
+    panel.setNotice(null);
     // The index gives repo/name/format, which the shared restore path needs
     // to build a fetchable URL.
     let ma: ThingiModel | null = null;
@@ -836,8 +646,8 @@ export function init(container: HTMLElement): () => void {
   }
 
   /// Restore the gallery to the exact state a debug-info record describes.
-  /// Shared by Use Debug Info (clipboard), the Trouble Cases dropdown and the
-  /// Pick Models inputs. `modeAfter` is the Pair Type the restored state
+  /// Shared by the Paste chip (clipboard), the Trouble Cases list and the
+  /// Pick Models fields. `modeAfter` is the Pair Type the restored state
   /// belongs to: a pasted report lands in Pick Models (its ids are now the
   /// typed-in pair), while the curated list stays on Trouble Cases.
   async function applyDebugInfo(info: any, modeAfter: PairMode = 'pick') {
@@ -845,56 +655,49 @@ export function init(container: HTMLElement): () => void {
     forceAnimateOff();
 
     const opIdx = OP_NAMES.indexOf(info.op);
-    if (opIdx >= 0) { op = opIdx; saveSetting(DEMO, 'op', op); setDropdownValue(opCtl, String(op)); }
+    if (opIdx >= 0) { op = opIdx; saveSetting(DEMO, 'op', op); panel.setOp(op); }
     const engIdx = ENGINE_NAMES.indexOf(info.engine);
-    if (engIdx >= 0) { engine = engIdx as BooleanEngine; saveSetting(DEMO, 'engine', engine); setDropdownValue(engineCtl, String(engine)); }
+    if (engIdx >= 0) { engine = engIdx as BooleanEngine; saveSetting(DEMO, 'engine', engine); panel.setEngine(engine); }
     if (typeof info.repair_orientation === 'boolean') {
       repairOrientation = info.repair_orientation;
       saveSetting(DEMO, 'repairOrientation', repairOrientation);
-      setCheckboxValue(repairBox, repairOrientation);
+      panel.setRepair(repairOrientation);
     }
     if (typeof info.nonzero_winding === 'boolean') {
       nonzeroWinding = info.nonzero_winding;
       saveSetting(DEMO, 'nonzeroWinding', nonzeroWinding);
-      setCheckboxValue(nonzeroBox, nonzeroWinding);
+      panel.setNonzero(nonzeroWinding);
     }
     [offsetX, offsetY, offsetZ] = info.offset.map(Number) as [number, number, number];
     saveSetting(DEMO, 'offsetX', offsetX);
     saveSetting(DEMO, 'offsetY', offsetY);
     saveSetting(DEMO, 'offsetZ', offsetZ);
-    setSliderValue(offXCtl, offsetX);
-    setSliderValue(offYCtl, offsetY);
-    setSliderValue(offZCtl, offsetZ);
+    panel.setOffsets([offsetX, offsetY, offsetZ]);
     [rotX, rotY, rotZ] = info.rotation_degrees.map(Number) as [number, number, number];
 
     if (info.model_a && info.model_b) {
       source = 'thingi';
       saveSetting(DEMO, 'source', source);
-      setDropdownValue(sourceCtl, source);
-      builtinSection.style.display = 'none';
-      thingiSection.style.display = '';
+      panel.setSource(source);
       // Keep the random-pair kind in sync when the record names one, but the
       // visible mode is whatever brought us here.
       if (typeof info.pair_kind === 'string' && isRandomMode(info.pair_kind as PairMode)) {
         pairKind = info.pair_kind as PairKind;
         saveSetting(DEMO, 'pairKind', pairKind);
       }
-      // Surface the restored pair in the Pick Models inputs so it can be
+      // Surface the restored pair in the Pick Models fields so it can be
       // re-run, tweaked one id at a time, or read off at a glance.
       if (typeof info.model_a.id === 'number' && typeof info.model_b.id === 'number') {
         pickA = info.model_a.id;
         pickB = info.model_b.id;
         saveSetting(DEMO, 'pickA', pickA);
         saveSetting(DEMO, 'pickB', pickB);
-        setNumberValue(pickACtl, pickA);
-        setNumberValue(pickBCtl, pickB);
+        panel.setPickId('a', pickA);
+        panel.setPickId('b', pickB);
       }
       setPairMode(modeAfter);
-      setDropdownValue(pairModeCtl, modeAfter);
       loadingPair = true;
-      loadBtn.disabled = true;
-      useBtn.disabled = true;
-      useBtn.textContent = 'Loading pair…';
+      panel.setLoading(true);
       skippedImports = [];
       let loaded = false;
       try {
@@ -904,41 +707,31 @@ export function init(container: HTMLElement): () => void {
         thingiA = a;
         thingiB = b;
         loaded = true;
-        setThingiInfo(`A: ${operandLabel(thingiA)}<br>B: ${operandLabel(thingiB)}<br>` +
-          `Restored rotation: [${rotX}, ${rotY}, ${rotZ}]&deg;`);
+        showOperands();
       } catch (e) {
         restoreWorkerOperands();
-        setThingiInfo(inThingi()
-          ? `<strong>Load failed — showing previous pair:</strong><br>` +
-            `A: ${operandLabel(thingiA!)}<br>B: ${operandLabel(thingiB!)}`
-          : null);
+        showOperands(inThingi() ? 'Load failed — showing the previous pair.' : null);
         showUseError(`failed to load the requested pair: ${String(e)}`);
       } finally {
         loadingPair = false;
-        loadBtn.disabled = false;
-        useBtn.disabled = false;
-        useBtn.textContent = 'Use Debug Info';
+        panel.setLoading(false);
       }
       // Re-render only on success (update() is a no-op while a pair loads).
       // On failure the previous result stays on screen and — crucially — the
-      // error stays visible: a successful update() would hide the error box.
+      // error stays visible: a successful update() would hide the notice.
       if (loaded && inThingi()) update();
     } else {
       source = 'builtin';
       saveSetting(DEMO, 'source', source);
-      setDropdownValue(sourceCtl, source);
-      builtinSection.style.display = '';
-      thingiSection.style.display = 'none';
+      panel.setSource(source);
       const sa = SHAPE_NAMES.indexOf(info.shape_a);
       const sb = SHAPE_NAMES.indexOf(info.shape_b);
-      if (sa >= 0) { shapeA = sa; saveSetting(DEMO, 'shapeA', shapeA); setDropdownValue(shapeACtl, String(shapeA)); }
-      if (sb >= 0) { shapeB = sb; saveSetting(DEMO, 'shapeB', shapeB); setDropdownValue(shapeBCtl, String(shapeB)); }
+      if (sa >= 0) { shapeA = sa; saveSetting(DEMO, 'shapeA', shapeA); panel.setShape('a', shapeA); }
+      if (sb >= 0) { shapeB = sb; saveSetting(DEMO, 'shapeB', shapeB); panel.setShape('b', shapeB); }
       update();
     }
   }
 
-  builtinSection.style.display = source === 'builtin' ? '' : 'none';
-  thingiSection.style.display = source === 'thingi' ? '' : 'none';
   setPairMode(pairMode);
 
   if (source === 'thingi') {
