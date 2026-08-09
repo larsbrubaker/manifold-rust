@@ -338,7 +338,6 @@
 .bgw-op-glyph .vs { fill: var(--bg-neutral-sel); }
 .bgw-op.is-on .bgw-op-glyph .vs { fill: var(--bg-accent); }
 .bgw-op-glyph .vo { fill: none; stroke: var(--bg-faintest); stroke-width: 1; }
-.bgw-op-glyph .vw { fill: #fff; }
 
 /* ---------- Checkboxes ---------- */
 

@@ -65,16 +65,21 @@ export function createSegmented<T extends string>(
 
 /// Venn glyphs, viewBox 0 0 30 18: two r=7.5 circles at cx 11 / 19, cy 9.
 /// `vs` is the solid part (accent when the cell is selected), `vo` the thin
-/// outline, `vw` the knocked-out right circle of Difference.
+/// outline. The same family ships as SVG icons in MatterCAD's toolbar
+/// (StaticData/Icons/{combine,subtract,intersect,subtract_and_replace}.svg),
+/// which is why Difference draws the kept crescent directly instead of
+/// knocking the right circle out with a background-colored disc: a painted
+/// knockout is only right while the cell background is exactly that color
+/// (it was already wrong on the selected cell's tint, and there is no one
+/// right color at all in an app with a dark theme).
 const VENN: Record<string, string> = {
   union:
     '<circle class="vs" cx="11" cy="9" r="7.5"/><circle class="vs" cx="19" cy="9" r="7.5"/>',
   intersection:
     '<circle class="vo" cx="11" cy="9" r="7.5"/><circle class="vo" cx="19" cy="9" r="7.5"/>' +
-    '<path class="vs" d="M15 2.2a7.5 7.5 0 000 13.6 7.5 7.5 0 000-13.6z"/>',
+    '<path class="vs" d="M15 2.6557A7.5 7.5 0 0 1 15 15.3443A7.5 7.5 0 0 1 15 2.6557Z"/>',
   difference:
-    '<path class="vs" d="M11 1.5a7.5 7.5 0 000 15 7.5 7.5 0 000-15z"/>' +
-    '<circle class="vw" cx="19" cy="9" r="7.5"/>' +
+    '<path class="vs" d="M15 2.6557A7.5 7.5 0 1 0 15 15.3443A7.5 7.5 0 0 1 15 2.6557Z"/>' +
     '<circle class="vo" cx="11" cy="9" r="7.5"/><circle class="vo" cx="19" cy="9" r="7.5"/>',
 };
 
