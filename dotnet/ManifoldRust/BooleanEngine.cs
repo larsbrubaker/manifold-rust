@@ -38,8 +38,11 @@ namespace ManifoldRust
 		Robust = 1,
 
 		/// <summary>
-		/// <see cref="Exact"/> unless an operand carries non-manifold soup
-		/// geometry, then <see cref="Robust"/>.
+		/// <see cref="Exact"/> only when that is provably safe - both operands
+		/// manifold <em>and</em> free of self-intersections - otherwise
+		/// <see cref="Robust"/>. Manifold-but-self-overlapping geometry breaks
+		/// the exact engine's winding integral (it over-counts doubly wound
+		/// material), so connectivity alone is not enough to route there.
 		/// </summary>
 		Auto = 2,
 	}

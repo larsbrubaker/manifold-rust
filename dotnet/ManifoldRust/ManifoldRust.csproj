@@ -33,7 +33,11 @@
   -->
   <PropertyGroup>
     <PackageId>ManifoldRust</PackageId>
-    <Version>0.3.0</Version>
+    <!-- Kept in step with ffi/Cargo.toml's version: the binding is only useful
+         paired with a native, so a package that carries a new native is a new
+         package version. The handshake in NativeVersionCheck compares
+         major.minor only, so a patch bump here needs no change there. -->
+    <Version>0.3.1</Version>
     <Authors>Lars Brubaker</Authors>
     <Company>Lars Brubaker</Company>
     <Copyright>Copyright 2026 Lars Brubaker</Copyright>

@@ -79,7 +79,7 @@ mismatch. The check runs once per process and costs one call to
 `manifold_rs_version` after that.
 
 ```
-manifold-ffi 0.2.0 (manifold-rust 0.9.3)
+manifold-ffi 0.3.1 (manifold-rust 0.12.0)
              ^^^^ compared, to major.minor
 ```
 

@@ -3,7 +3,7 @@ members = [".", "demo/wasm", "ffi"]
 
 [package]
 name = "manifold-rust"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2021"
 # f64::round_ties_even (used in the C++-exact sind) stabilized in 1.77.
 rust-version = "1.77"
@@ -16,7 +16,22 @@ documentation = "https://docs.rs/manifold-rust/"
 readme = "README.md"
 keywords = ["3d", "geometry", "mesh", "boolean", "csg"]
 categories = ["algorithms", "graphics", "mathematics", "wasm"]
-exclude = ["demo/", "docs/", "tests/", "ffi/", "dotnet/", ".github/", ".claude/", "cpp-reference/", "CLAUDE.md"]
+# The published crate carries the library sources only. `src/robust/testdata/`
+# is ~7 MB of Thingi10K regression meshes used exclusively by `#[cfg(test)]`
+# modules, which a consumer never compiles — shipping them would triple the
+# package for no one's benefit. Run the corpus regressions from a git checkout.
+exclude = [
+    "demo/",
+    "docs/",
+    "tests/",
+    "ffi/",
+    "dotnet/",
+    ".github/",
+    ".claude/",
+    "cpp-reference/",
+    "CLAUDE.md",
+    "src/robust/testdata/",
+]
 
 [lib]
 name = "manifold_rust"
