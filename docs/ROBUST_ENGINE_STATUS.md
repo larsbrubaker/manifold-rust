@@ -191,7 +191,17 @@ words, no compiler-rt allocation churn).
 
 ## Open items
 
-1. **Timeouts on very large self-intersecting meshes**: down to **6**
+1. **Timeouts**: down to **2** after the monster-arrangement work
+   (`63b60d7`): 247516/247517/789801/1602764 now complete (147–208 s).
+   #252784 (889 k tris) hits a pre-existing split-registry **memory
+   wall** (exposed, not caused, by the speedups); #1716279 needs the
+   **incircle filter lever** — 22% of its 9M incircle calls escalate to
+   exact because `incircle_a`'s bound uses absolute coordinate
+   magnitudes, which dwarf the determinant for clusters far from the
+   origin (a Shewchuk-style bound for exact-f64 points is the fix;
+   soundness-critical, shared filter). Also latent:
+   `triangulate_pseudo` recursion depth on 15 k-point arrangements.
+   Previous note, now historical: was **6**
    (was 43 pre-swap): 26 cleared by the dashu backend under 4-way batch
    contention, 11 more complete solo at 120 s. The survivors are all
    giants — 247516 (182k tris), 247517 (146k), 252784 (889k), 789801
