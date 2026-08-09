@@ -102,6 +102,154 @@ fn disjoint_and_empty_fast_paths() {
         .is_empty());
 }
 
+/// Axis-aligned cube [lo,hi]³ as 12 outward-wound triangles (same fixture
+/// shape `repair_tests.rs` uses, in f64 so it imports without rounding).
+fn cube_tris(lo: f64, hi: f64) -> Vec<[Vec3; 3]> {
+    let quads: [([f64; 3], [f64; 3], [f64; 3], [f64; 3]); 6] = [
+        ([0., 0., 0.], [0., 1., 0.], [1., 1., 0.], [1., 0., 0.]), // -z
+        ([0., 0., 1.], [1., 0., 1.], [1., 1., 1.], [0., 1., 1.]), // +z
+        ([0., 0., 0.], [1., 0., 0.], [1., 0., 1.], [0., 0., 1.]), // -y
+        ([0., 1., 0.], [0., 1., 1.], [1., 1., 1.], [1., 1., 0.]), // +y
+        ([0., 0., 0.], [0., 0., 1.], [0., 1., 1.], [0., 1., 0.]), // -x
+        ([1., 0., 0.], [1., 1., 0.], [1., 1., 1.], [1., 0., 1.]), // +x
+    ];
+    let s = hi - lo;
+    let m = |q: [f64; 3]| v(lo + q[0] * s, lo + q[1] * s, lo + q[2] * s);
+    let mut out = Vec::new();
+    for (a, b, c, d) in quads {
+        out.push([m(a), m(b), m(c)]);
+        out.push([m(a), m(c), m(d)]);
+    }
+    out
+}
+
+fn flipped(tris: &[[Vec3; 3]]) -> Vec<[Vec3; 3]> {
+    tris.iter().map(|t| [t[0], t[2], t[1]]).collect()
+}
+
+fn mesh_from_tris(tris: &[[Vec3; 3]]) -> Manifold {
+    let mut mesh = crate::types::MeshGL64::default();
+    mesh.num_prop = 3;
+    for t in tris {
+        for p in t {
+            mesh.vert_properties.extend([p.x, p.y, p.z]);
+        }
+    }
+    mesh.tri_verts = (0..(tris.len() * 3) as u64).collect();
+    Manifold::from_mesh_gl64_robust(&mesh)
+}
+
+/// Signed (divergence-theorem) volume — `volume()` takes the absolute value,
+/// which hides exactly the inversion these tests are about.
+fn signed_volume(m: &Manifold) -> f64 {
+    crate::robust::soup::impl_to_tris(m.as_impl())
+        .iter()
+        .map(|t| crate::linalg::dot(t[0], crate::linalg::cross(t[1], t[2])) / 6.0)
+        .sum()
+}
+
+/// A bbox-disjoint union whose second operand is wound inside-out must still
+/// be classified by the winding rule: {w >= 1} drops the inverted body,
+/// {w != 0} keeps it as positively wound material. The bbox-disjoint fast
+/// path used to concatenate the two soups untouched, passing the inversion
+/// straight through under either rule (found by an FFI test that measured a
+/// signed volume of -7 for such a union).
+#[test]
+fn disjoint_union_classifies_inverted_operand() {
+    use crate::types::WindingRule;
+    let a = mesh_from_tris(&cube_tris(0.0, 2.0));
+    let b = mesh_from_tris(&flipped(&cube_tris(5.0, 7.0)));
+    assert_eq!(a.status(), Error::NoError);
+    assert_eq!(b.status(), Error::NoError);
+    assert!(signed_volume(&b) < 0.0, "fixture B must import inverted");
+
+    let pos = a.boolean_with_engine_and_rule(
+        &b,
+        OpType::Add,
+        BooleanEngine::Robust,
+        WindingRule::Positive,
+    );
+    assert_eq!(pos.status(), Error::NoError);
+    assert_close(signed_volume(&pos), 8.0, 1e-12, "positive-rule disjoint union");
+
+    let nz = a.boolean_with_engine_and_rule(
+        &b,
+        OpType::Add,
+        BooleanEngine::Robust,
+        WindingRule::Nonzero,
+    );
+    assert_eq!(nz.status(), Error::NoError);
+    assert_close(signed_volume(&nz), 16.0, 1e-12, "nonzero-rule disjoint union");
+}
+
+/// The same gap on the disjoint `Subtract` fast path, which returned operand
+/// A untouched: an inverted A holds no material under {w >= 1} (so the
+/// difference is empty) and positive material under {w != 0} (so it survives
+/// rewound). Only A matters here — B is discarded whatever it is wound like.
+#[test]
+fn disjoint_subtract_classifies_inverted_minuend() {
+    use crate::types::WindingRule;
+    let a = mesh_from_tris(&flipped(&cube_tris(0.0, 2.0)));
+    let b = mesh_from_tris(&cube_tris(5.0, 7.0));
+    assert_eq!(a.status(), Error::NoError);
+    assert_eq!(b.status(), Error::NoError);
+    assert!(signed_volume(&a) < 0.0, "fixture A must import inverted");
+
+    let pos = a.boolean_with_engine_and_rule(
+        &b,
+        OpType::Subtract,
+        BooleanEngine::Robust,
+        WindingRule::Positive,
+    );
+    assert_eq!(pos.status(), Error::NoError);
+    assert!(
+        pos.is_empty() || pos.volume() == 0.0,
+        "an inverted minuend bounds no material, got {}",
+        pos.volume()
+    );
+
+    let nz = a.boolean_with_engine_and_rule(
+        &b,
+        OpType::Subtract,
+        BooleanEngine::Robust,
+        WindingRule::Nonzero,
+    );
+    assert_eq!(nz.status(), Error::NoError);
+    assert_close(signed_volume(&nz), 8.0, 1e-12, "nonzero-rule disjoint subtract");
+}
+
+/// Clean minuend: the disjoint difference still returns operand A verbatim.
+#[test]
+fn clean_disjoint_subtract_keeps_fast_path_output() {
+    let a = mesh_from_tris(&cube_tris(0.0, 2.0));
+    let b = mesh_from_tris(&cube_tris(5.0, 7.0));
+    let d = a.difference_with_engine(&b, BooleanEngine::Robust);
+    assert_eq!(d.status(), Error::NoError);
+    // Untouched clone of A, corner-per-vertex import and all (36 verts) —
+    // pinned against the pre-gate behavior.
+    assert_eq!(d.num_tri(), a.num_tri());
+    assert_eq!(d.num_vert(), a.num_vert());
+    assert_eq!(signed_volume(&d), signed_volume(&a));
+}
+
+/// The narrowed gate must not perturb the fast path for well-wound operands:
+/// two clean disjoint cubes still come out of the concatenating path with
+/// exactly their input geometry (no retriangulation, no vertex churn).
+#[test]
+fn clean_disjoint_union_keeps_fast_path_output() {
+    let a = mesh_from_tris(&cube_tris(0.0, 2.0));
+    let b = mesh_from_tris(&cube_tris(5.0, 7.0));
+    let u = a.union_with_engine(&b, BooleanEngine::Robust);
+    assert_eq!(u.status(), Error::NoError);
+    // Pinned against the pre-gate behavior: the two soups concatenated and
+    // re-imported, welding each cube's 36 corners back to 8 vertices.
+    assert_eq!(u.num_tri(), a.num_tri() + b.num_tri());
+    assert_eq!(u.num_tri(), 24);
+    assert_eq!(u.num_vert(), 16);
+    assert_eq!(signed_volume(&u), 16.0);
+    assert_eq!(u.volume(), 16.0);
+}
+
 #[test]
 fn global_default_engine_config() {
     assert_eq!(BooleanConfig::default_engine(), BooleanEngine::Exact);

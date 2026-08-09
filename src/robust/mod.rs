@@ -84,6 +84,30 @@ fn cancelled_impl() -> ManifoldImpl {
     out
 }
 
+/// Can this operand be handed to a bbox-disjoint fast path verbatim — that
+/// is, is its surface already exactly the boundary of the solid it denotes,
+/// for either winding rule? Two conditions, both exact and both conservative:
+///
+///  * no self-intersections, so no piece of the surface is interior to its own
+///    body (a doubled or crossing sheet has walls the pipeline dissolves);
+///  * every shell wound the way its nesting demands
+///    ([`repair::shells_well_nested`]), so no inverted body survives that
+///    {w >= 1} would drop, and no nested outward shell hides a wall with
+///    material on both sides.
+///
+/// A `false` verdict only costs the full pipeline on a disjoint pair, which
+/// produces the same answer by construction — it just also classifies.
+fn needs_no_classification(
+    imp: &ManifoldImpl,
+    tris: &[[Vec3; 3]],
+    token: Option<&CancelToken>,
+) -> bool {
+    // Cheapest first, and usually already cached by `Auto`'s dispatch. A
+    // cancelled scan answers "self-intersecting", which routes to the pipeline
+    // and so reports `Error::Cancelled` rather than a bogus pass-through.
+    !soup::has_self_intersections_with_token(imp, token) && repair::shells_well_nested(tris)
+}
+
 /// Robust boolean of two impls (manifold or soup). Same observable contract
 /// as `boolean3::boolean_with_token`: intersect exactly, arrange +
 /// retriangulate, build the arrangement's cell complex, propagate winding
@@ -121,10 +145,20 @@ pub fn boolean_with_progress(
 /// [`WindingRule::Positive`] here is byte-for-byte the historical pipeline.
 ///
 /// The bbox-disjoint fast paths do not consult the rule at all — they never
-/// classify anything, they concatenate or return an operand. That is exact
-/// for operands that are solid under the rule in force, and (as before this
-/// parameter existed) it passes an inverted operand through unchanged instead
-/// of dropping it, for either rule.
+/// classify anything, they concatenate or return an operand. They therefore
+/// run only when every operand they *keep* is provably already the boundary
+/// of its own solid ([`needs_no_classification`]): both operands for the
+/// union, operand A alone for the difference (B is discarded whatever it is
+/// wound like). Otherwise they fall through to the full pipeline, which finds
+/// no cross intersections but still classifies each operand — so an inverted
+/// body is dropped under [`WindingRule::Positive`] and rewound to positive
+/// material under [`WindingRule::Nonzero`], exactly as it would be if the
+/// boxes overlapped. Disjoint `Intersect` needs no gate: nothing can be
+/// shared, whatever the winding.
+///
+/// The empty-operand fast paths above still return the other operand
+/// unclassified, keeping the historical pass-through of inverted geometry —
+/// they have no two-operand pipeline to fall through to.
 pub fn boolean_with_rule(
     a: &ManifoldImpl,
     b: &ManifoldImpl,
@@ -156,8 +190,12 @@ pub fn boolean_with_rule(
     let q_props = soup::impl_to_corner_props(b);
 
     if !a.bbox.does_overlap_box(&b.bbox) {
+        // Only the operands a fast path actually *keeps* need vetting: the
+        // union keeps both, the difference keeps only A.
+        let a_clean = || needs_no_classification(a, &p_tris, token);
+        let b_clean = || needs_no_classification(b, &q_tris, token);
         match op {
-            OpType::Add => {
+            OpType::Add if a_clean() && b_clean() => {
                 // Disjoint union: concatenate the soups and re-import. The
                 // property context tags the two halves so each keeps its own
                 // interpolated properties.
@@ -193,7 +231,11 @@ pub fn boolean_with_rule(
                 .into_impl();
             }
             OpType::Intersect => return ManifoldImpl::new(),
-            OpType::Subtract => return a.clone(),
+            OpType::Subtract if a_clean() => return a.clone(),
+            // A kept operand needs classification: fall through to the full
+            // pipeline, which handles disjoint inputs fine (it simply finds no
+            // cross intersections).
+            OpType::Add | OpType::Subtract => {}
         }
     }
 

@@ -227,16 +227,16 @@ fn classify_shell(geom: &ShellGeom) -> Option<Classified> {
     None
 }
 
-/// Decide which shells to flip so the mesh's solid reads correctly under
-/// {winding >= 1}. The target from containment depth is the classic one —
-/// even depth winds outward (+1), odd depth (cavity boundaries) winds inward
-/// (-1) — but it is enforced *asymmetrically*: an inverted shell that should
-/// be solid is always rewound (that restores material), while an outward
-/// shell that a cavity target disagrees with is only rewound on evidence that
-/// its containment stack arrived mirrored (that removes material, and a
-/// nested outward shell is a legitimate mesh on its own). See the module
-/// header for the full rule and the invariant it guarantees.
-pub fn plan_repair(tris: &[[Vec3; 3]]) -> RepairPlan {
+/// Shell decomposition plus the two exact verdicts every consumer here needs:
+/// each shell's current orientation and the set of other shells containing it.
+struct Analysis {
+    shell_of: Vec<usize>,
+    num_shells: usize,
+    classified: Vec<Option<Classified>>,
+    containers: Vec<Vec<usize>>,
+}
+
+fn analyze(tris: &[[Vec3; 3]]) -> Analysis {
     let (shell_of, num_shells) = connected_shells(tris);
     let mut members: Vec<Vec<usize>> = vec![Vec::new(); num_shells];
     for (t, &s) in shell_of.iter().enumerate() {
@@ -260,6 +260,51 @@ pub fn plan_repair(tris: &[[Vec3; 3]]) -> RepairPlan {
             })
             .collect();
     }
+
+    Analysis {
+        shell_of,
+        num_shells,
+        classified,
+        containers,
+    }
+}
+
+/// True when the soup's surface is *already* the boundary of the solid it
+/// denotes: every shell classifies cleanly (no coincident stacks, no multiple
+/// wraps) and winds the way its nesting demands — +1 at even containment
+/// depth, -1 at odd. That is exactly the condition under which no winding
+/// classification can change the surface, for either winding rule: every
+/// point is enclosed 0 or 1 times, so {w >= 1} and {w != 0} agree, and every
+/// face separates material from void.
+///
+/// Used by the robust engine to decide whether its bbox-disjoint union may
+/// take the concatenating fast path (which classifies nothing) or must go
+/// through the full pipeline. Deliberately conservative: `false` only ever
+/// costs the pipeline, never correctness.
+pub fn shells_well_nested(tris: &[[Vec3; 3]]) -> bool {
+    let a = analyze(tris);
+    (0..a.num_shells).all(|s| match &a.classified[s] {
+        Some(c) => c.sign == if a.containers[s].len() % 2 == 0 { 1 } else { -1 },
+        None => false,
+    })
+}
+
+/// Decide which shells to flip so the mesh's solid reads correctly under
+/// {winding >= 1}. The target from containment depth is the classic one —
+/// even depth winds outward (+1), odd depth (cavity boundaries) winds inward
+/// (-1) — but it is enforced *asymmetrically*: an inverted shell that should
+/// be solid is always rewound (that restores material), while an outward
+/// shell that a cavity target disagrees with is only rewound on evidence that
+/// its containment stack arrived mirrored (that removes material, and a
+/// nested outward shell is a legitimate mesh on its own). See the module
+/// header for the full rule and the invariant it guarantees.
+pub fn plan_repair(tris: &[[Vec3; 3]]) -> RepairPlan {
+    let Analysis {
+        shell_of,
+        num_shells,
+        classified,
+        containers,
+    } = analyze(tris);
     let depth = |s: usize| containers[s].len();
 
     let mut flip_shell = vec![false; num_shells];
