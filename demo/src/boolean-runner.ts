@@ -7,6 +7,16 @@
 // fresh one spawned, with the last imported operands re-sent transparently.
 
 import type { MeshData, BooleanEngine } from './wasm.ts';
+import { BusyIndicator } from './busy-indicator.ts';
+
+const ENGINE_NAMES = ['Exact', 'Robust', 'Auto'];
+const OP_NAMES = ['union', 'intersection', 'difference'];
+
+function describeRun(params: RunParams): string {
+  const engine = ENGINE_NAMES[params.engine] ?? `Engine ${params.engine}`;
+  const op = OP_NAMES[params.op] ?? `op ${params.op}`;
+  return `Computing… ${engine} ${op}`;
+}
 
 export interface OperandArrays {
   positions: Float32Array;
@@ -53,6 +63,22 @@ export class BooleanRunner {
   private queuedRun: RunParams | null = null;
   private operandCache: { a: OperandArrays | null; b: OperandArrays | null } = { a: null, b: null };
   private disposed = false;
+  /** Shared busy overlay; owned here so every demo using the runner gets
+   *  feedback without wiring anything up itself. */
+  private indicator: BusyIndicator | null;
+
+  constructor(showBusyIndicator = true) {
+    this.indicator = showBusyIndicator ? new BusyIndicator() : null;
+    this.indicator?.setCancel(() => this.cancel());
+  }
+
+  /** Single funnel for busy transitions: keeps the overlay in sync no matter
+   *  what the consumer does with the public onBusyChange hook. */
+  private setBusy(busy: boolean, params: RunParams | null) {
+    if (busy && params) this.indicator?.show(describeRun(params));
+    else this.indicator?.hide();
+    this.onBusyChange(busy);
+  }
 
   onResult: (result: RunResult, params: RunParams) => void = () => {};
   onError: (error: string, params: RunParams) => void = () => {};
@@ -89,9 +115,12 @@ export class BooleanRunner {
       if (this.queuedRun) {
         const next = this.queuedRun;
         this.queuedRun = null;
+        // Still busy — retitle in place (the elapsed clock keeps running so a
+        // drag that coalesces frames reads as one continuous computation).
+        this.indicator?.show(describeRun(next));
         this.send(next);
       } else {
-        this.onBusyChange(false);
+        this.setBusy(false, null);
       }
       if (msg.ok) {
         this.onResult({ data: msg.data as MeshData, elapsedMs: msg.elapsedMs }, params);
@@ -126,7 +155,7 @@ export class BooleanRunner {
     if (this.runInFlight) {
       this.queuedRun = params;
     } else {
-      this.onBusyChange(true);
+      this.setBusy(true, params);
       this.send(params);
     }
   }
@@ -155,7 +184,7 @@ export class BooleanRunner {
     for (const waiter of this.importWaiters.splice(0)) {
       waiter({ ok: false, status: 'cancelled', is_soup: false, self_intersecting: null, num_vert: 0, num_tri: 0 });
     }
-    this.onBusyChange(false);
+    this.setBusy(false, null);
     this.onCancelled();
     if (this.disposed) return;
     // Warm the replacement worker with the operands (fire and forget — the
@@ -168,5 +197,7 @@ export class BooleanRunner {
     this.disposed = true;
     this.worker?.terminate();
     this.worker = null;
+    this.indicator?.dispose();
+    this.indicator = null;
   }
 }
