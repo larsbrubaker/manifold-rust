@@ -161,7 +161,10 @@ pub fn build(
     // canonical rationals (num-rational's own Hash runs a Euclidean
     // recursion per lookup, which dominated this whole function). Indices
     // are assigned in insertion order, so output stays deterministic.
-    let mut index: std::collections::HashMap<R2Key, usize> = std::collections::HashMap::new();
+    // Fx hashing (unseeded, deterministic): the index is probe-only and never
+    // iterated, so only insertion order — which is the caller's order — can
+    // reach `points3`/`points2`.
+    let mut index: rustc_hash::FxHashMap<R2Key, usize> = rustc_hash::FxHashMap::default();
     let mut add_point = |p3: R3, points3: &mut Vec<R3>, points2: &mut Vec<R2>| -> usize {
         let p2 = p3.project_drop(axis);
         let next = points3.len();
@@ -370,9 +373,10 @@ pub fn candidate_points(
 
     let mut out: Vec<R3> = Vec::new();
     // Membership-only set with division-free R2Key hashing; `out` keeps
-    // insertion order so determinism is unaffected.
-    let mut seen: std::collections::HashSet<R2Key> = std::collections::HashSet::new();
-    let add = |p3: R3, out: &mut Vec<R3>, seen: &mut std::collections::HashSet<R2Key>| {
+    // insertion order so determinism is unaffected (the set itself is never
+    // iterated, which is why the Fx hasher is safe here).
+    let mut seen: rustc_hash::FxHashSet<R2Key> = rustc_hash::FxHashSet::default();
+    let add = |p3: R3, out: &mut Vec<R3>, seen: &mut rustc_hash::FxHashSet<R2Key>| {
         if seen.insert(R2Key(p3.project_drop(axis))) {
             out.push(p3);
         }

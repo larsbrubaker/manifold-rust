@@ -295,6 +295,12 @@ impl std::hash::Hash for R3Key {
     }
 }
 
+/// Field-wise equality of canonical R2 values — see [`r3_eq`].
+#[inline]
+pub fn r2_eq(a: &R2, b: &R2) -> bool {
+    rat_fields_eq(&a.x, &b.x) && rat_fields_eq(&a.y, &b.y)
+}
+
 /// Field-wise equality of canonical R3 values — value equality without
 /// num-rational's Euclidean comparison (which is most expensive exactly when
 /// the values ARE equal).

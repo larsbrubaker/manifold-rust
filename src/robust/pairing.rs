@@ -36,7 +36,10 @@
 // separate the fans) yields `None`, and the caller falls back to that same
 // generic import.
 
-use std::collections::HashMap;
+// Fx hashing (unseeded): every map here is probe-only — fan-copy ordinals are
+// assigned walking half-edges in index order, and the edge-count table is only
+// ever looked up — so hash order cannot reach the split plan.
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::disjoint_sets::DisjointSets;
 
@@ -285,8 +288,8 @@ fn split_from_partners(tris: &[[u32; 3]], partner: &[usize]) -> SplitPlan {
         ds.unite((3 * ht + (hc + 1) % 3) as u32, p as u32);
     }
 
-    let mut ordinal: HashMap<u32, u32> = HashMap::new();
-    let mut next: HashMap<u32, u32> = HashMap::new();
+    let mut ordinal: HashMap<u32, u32> = HashMap::default();
+    let mut next: HashMap<u32, u32> = HashMap::default();
     let mut plan = vec![0u32; n];
     for h in 0..n {
         let root = ds.find(h as u32);
@@ -316,7 +319,7 @@ fn split_edge_counts(
     tris: &[[u32; 3]],
     plan: &SplitPlan,
 ) -> Option<HashMap<((u32, u32), (u32, u32)), (u32, u32)>> {
-    let mut counts = HashMap::new();
+    let mut counts = HashMap::default();
     for t in 0..tris.len() {
         for c in 0..3 {
             let a = split_vert(tris, plan, 3 * t + c);

@@ -141,7 +141,9 @@ pub fn assemble<F: Fn(usize) -> bool>(
     // bit pattern (id equality is exact geometric identity — see
     // VertInterner).
     type Key = (u32, u32, Vec<u64>);
-    let mut vert_index: std::collections::HashMap<Key, u64> = std::collections::HashMap::new();
+    // Fx hashing (unseeded): probe-only map — output vertex ids come from
+    // `vert_order.len()` at first sight, i.e. from triangle/corner order.
+    let mut vert_index: rustc_hash::FxHashMap<Key, u64> = rustc_hash::FxHashMap::default();
     let mut vert_order: Vec<(u32, u32, Vec<f64>)> = Vec::new();
     let mut tri_verts: Vec<u64> = Vec::new();
 
@@ -180,8 +182,8 @@ pub fn assemble<F: Fn(usize) -> bool>(
     // Keyed on the fan copy too, so split copies of a pinched vertex stay
     // separate geometric vertices.
     if out_prop > 0 {
-        let mut by_pos: std::collections::HashMap<(u32, u32), u64> =
-            std::collections::HashMap::new();
+        // Probe-only; merge pairs are emitted in `vert_order` index order.
+        let mut by_pos: rustc_hash::FxHashMap<(u32, u32), u64> = rustc_hash::FxHashMap::default();
         for (i, (vid, split, _)) in vert_order.iter().enumerate() {
             match by_pos.get(&(*vid, *split)) {
                 Some(&first) => {

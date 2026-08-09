@@ -27,7 +27,10 @@
 // zero, without any explicit regularization pass.
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
+// Fx hashing (unseeded) instead of SipHash: `classes` is probe-only, and
+// `by_tri` is iterated but its output is sorted by the unique representative
+// piece index right after, so hash order cannot reach the result.
+use rustc_hash::FxHashMap as HashMap;
 
 use crate::disjoint_sets::DisjointSets;
 use crate::linalg::Vec3;
@@ -722,7 +725,7 @@ pub struct Wall {
 /// crossings of one boundary and are never summed; that distinction is why
 /// aggregation keys on the triangle rather than the cell pair.
 fn walls(graph: &IntersectionGraph) -> Vec<Wall> {
-    let mut by_tri: HashMap<[u32; 3], (usize, bool, [i32; 2])> = HashMap::new();
+    let mut by_tri: HashMap<[u32; 3], (usize, bool, [i32; 2])> = HashMap::default();
     for (pi, piece) in graph.pieces.iter().enumerate() {
         let (key, parity) = canonical(piece.vi);
         let m = piece.mesh as usize;

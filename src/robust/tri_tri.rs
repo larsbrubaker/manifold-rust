@@ -17,9 +17,13 @@ use num_traits::{Signed, Zero};
 
 use crate::linalg::Vec3;
 
+use super::exact::approx::orient2d_a;
 use super::exact::filtered::orient3d;
-use super::exact::predicates::{line_line_intersect_2d, line_plane_intersect, orient2d_r, tri_normal_r};
-use super::exact::rational::{R2, R3};
+use super::exact::predicates::{
+    homog2_of, line_line_intersect_2d, line_plane_intersect, orient2d_h, tri_normal_r,
+    Homog2,
+};
+use super::exact::rational::{r2_eq, rat_to_f64, R2, R3};
 use super::exact::Sign;
 
 /// Exact intersection of two triangles.
@@ -73,18 +77,23 @@ pub mod stats {
     pub static SAT_REJECT: AtomicU64 = AtomicU64::new(0);
     pub static INTERVAL: AtomicU64 = AtomicU64::new(0);
     pub static COPLANAR_NS: AtomicU64 = AtomicU64::new(0);
+    /// Time spent in the exact coplanar clip proper, i.e. after the f64
+    /// separating-edge pre-reject has failed. Broken out because the
+    /// pre-reject and the clip differ by two orders of magnitude per pair.
+    pub static COPLANAR_CLIP_NS: AtomicU64 = AtomicU64::new(0);
     pub static PLANE_NS: AtomicU64 = AtomicU64::new(0);
     pub static INTERVAL_NS: AtomicU64 = AtomicU64::new(0);
 
     pub fn snapshot_and_reset() -> String {
         let take = |a: &AtomicU64| a.swap(0, Relaxed);
         format!(
-            "plane-reject {} ({:.3}s signs), coplanar {} (sat {}, {:.3}s), sat-reject {}, interval {} ({:.3}s)",
+            "plane-reject {} ({:.3}s signs), coplanar {} (sat {}, {:.3}s of which clip {:.3}s), sat-reject {}, interval {} ({:.3}s)",
             take(&PLANE_REJECT),
             take(&PLANE_NS) as f64 * 1e-9,
             take(&COPLANAR),
             take(&COPLANAR_SAT),
             take(&COPLANAR_NS) as f64 * 1e-9,
+            take(&COPLANAR_CLIP_NS) as f64 * 1e-9,
             take(&SAT_REJECT),
             take(&INTERVAL),
             take(&INTERVAL_NS) as f64 * 1e-9,
@@ -404,6 +413,62 @@ fn coplanar_overlap(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
             return TriTriIsect::None;
         }
     }
+    let t_clip = crate::timing::Stopwatch::start();
+    let out = coplanar_clip(t1, t2);
+    stats::COPLANAR_CLIP_NS.fetch_add(t_clip.elapsed_ns(), std::sync::atomic::Ordering::Relaxed);
+    out
+}
+
+/// A clip vertex carried with the two auxiliary forms the sign tests want:
+/// the homogenized integer triple (exact fallback) and the correctly rounded
+/// f64 approximation (semi-static filter). Both are pure functions of `r`, so
+/// nothing here changes which points the clip produces — only how many BigInt
+/// operations decide the signs along the way. Building them once per vertex
+/// replaces the three homogenizations `orient2d_r` did on *every* call.
+#[derive(Clone)]
+struct ClipPt {
+    r: R2,
+    a: [f64; 2],
+    /// Homogenized lazily: coplanar overlaps are degeneracy-rich, so the f64
+    /// filter fails often enough to be worth caching, but plenty of vertices
+    /// never need the exact form at all.
+    h: std::cell::OnceCell<Homog2>,
+}
+
+impl ClipPt {
+    fn new(r: R2) -> Self {
+        let a = [rat_to_f64(&r.x), rat_to_f64(&r.y)];
+        ClipPt {
+            r,
+            a,
+            h: std::cell::OnceCell::new(),
+        }
+    }
+
+    fn h(&self) -> &Homog2 {
+        self.h.get_or_init(|| homog2_of(&self.r))
+    }
+}
+
+/// Filtered orient2d over clip vertices: certified f64 sign when the
+/// semi-static bound allows, exact homogeneous sign otherwise. Identical
+/// result to `orient2d_r` by construction.
+#[inline]
+fn o2p(a: &ClipPt, b: &ClipPt, c: &ClipPt) -> Sign {
+    orient2d_a(a.a, b.a, c.a).unwrap_or_else(|| orient2d_h(a.h(), b.h(), c.h()))
+}
+
+/// Field-wise equality of two canonical projected points — same answer as
+/// `R2: PartialEq` (see the canonicality argument in exact/rational.rs)
+/// without num-rational's Euclidean comparison.
+#[inline]
+fn clip_pt_eq(a: &ClipPt, b: &ClipPt) -> bool {
+    r2_eq(&a.r, &b.r)
+}
+
+/// The exact part of [`coplanar_overlap`]: Sutherland–Hodgman clip in the
+/// rational 2D projection, once the f64 pre-reject has failed.
+fn coplanar_clip(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
     let r1: [R3; 3] = [
         R3::from_vec3(t1[0]),
         R3::from_vec3(t1[1]),
@@ -415,22 +480,22 @@ fn coplanar_overlap(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
         R3::from_vec3(t2[2]),
     ];
     let n1 = tri_normal_r(&r1[0], &r1[1], &r1[2]);
-    let n2 = tri_normal_r(&r2[0], &r2[1], &r2[2]);
-    debug_assert!(!n1.is_zero() && !n2.is_zero(), "degenerate input triangle");
-    let same_orientation = match Sign::of_rat(&n1.dot(&n2)) {
-        Sign::Pos => true,
-        Sign::Neg => false,
-        Sign::Zero => unreachable!("coplanar triangles have parallel normals"),
-    };
+    debug_assert!(!n1.is_zero(), "degenerate input triangle");
 
     let axis = dominant_axis(&n1);
-    let mut clip: Vec<R2> = r1.iter().map(|p| p.project_drop(axis)).collect();
+    let mut clip: Vec<ClipPt> = r1
+        .iter()
+        .map(|p| ClipPt::new(p.project_drop(axis)))
+        .collect();
     // Normalize the clip triangle to CCW in projection space.
-    if orient2d_r(&clip[0], &clip[1], &clip[2]) == Sign::Neg {
+    if o2p(&clip[0], &clip[1], &clip[2]) == Sign::Neg {
         clip.swap(1, 2);
     }
-    let mut subject: Vec<R2> = r2.iter().map(|p| p.project_drop(axis)).collect();
-    if orient2d_r(&subject[0], &subject[1], &subject[2]) == Sign::Neg {
+    let mut subject: Vec<ClipPt> = r2
+        .iter()
+        .map(|p| ClipPt::new(p.project_drop(axis)))
+        .collect();
+    if o2p(&subject[0], &subject[1], &subject[2]) == Sign::Neg {
         subject.swap(1, 2);
     }
 
@@ -440,25 +505,28 @@ fn coplanar_overlap(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
         if poly.is_empty() {
             break;
         }
-        let c0 = clip[i].clone();
-        let c1 = clip[(i + 1) % 3].clone();
-        let mut out: Vec<R2> = Vec::with_capacity(poly.len() + 2);
+        let (c0, c1) = (&clip[i], &clip[(i + 1) % 3]);
+        let mut out: Vec<ClipPt> = Vec::with_capacity(poly.len() + 2);
+        // Each vertex's side is needed twice (as `e` then as `s`); computing
+        // it once per vertex halves the sign tests.
+        let sides: Vec<bool> = poly.iter().map(|p| o2p(c0, c1, p) != Sign::Neg).collect();
         for k in 0..poly.len() {
-            let s = &poly[k];
-            let e = &poly[(k + 1) % poly.len()];
-            let s_in = orient2d_r(&c0, &c1, s) != Sign::Neg;
-            let e_in = orient2d_r(&c0, &c1, e) != Sign::Neg;
-            match (s_in, e_in) {
+            let kn = (k + 1) % poly.len();
+            let (s, e) = (&poly[k], &poly[kn]);
+            match (sides[k], sides[kn]) {
+                // Pass-through vertices are cloned, not rebuilt: the cached
+                // approximation (and homogenization, if already forced) is
+                // valid for the identical point.
                 (true, true) => out.push(e.clone()),
                 (true, false) => {
-                    let x = line_line_intersect_2d(&c0, &c1, s, e)
+                    let x = line_line_intersect_2d(&c0.r, &c1.r, &s.r, &e.r)
                         .expect("strictly crossing edge is not parallel to clip line");
-                    out.push(x);
+                    out.push(ClipPt::new(x));
                 }
                 (false, true) => {
-                    let x = line_line_intersect_2d(&c0, &c1, s, e)
+                    let x = line_line_intersect_2d(&c0.r, &c1.r, &s.r, &e.r)
                         .expect("strictly crossing edge is not parallel to clip line");
-                    out.push(x);
+                    out.push(ClipPt::new(x));
                     out.push(e.clone());
                 }
                 (false, false) => {}
@@ -472,33 +540,46 @@ fn coplanar_overlap(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
     let poly = canonical_polygon(poly);
     match poly.len() {
         0 => TriTriIsect::None,
-        1 => TriTriIsect::Point(lift_to_plane(&poly[0], axis, &r1[0], &n1)),
+        1 => TriTriIsect::Point(lift_to_plane(&poly[0].r, axis, &r1[0], &n1)),
         2 => TriTriIsect::Segment(
-            lift_to_plane(&poly[0], axis, &r1[0], &n1),
-            lift_to_plane(&poly[1], axis, &r1[0], &n1),
+            lift_to_plane(&poly[0].r, axis, &r1[0], &n1),
+            lift_to_plane(&poly[1].r, axis, &r1[0], &n1),
         ),
-        _ => TriTriIsect::Coplanar {
-            polygon: poly
-                .iter()
-                .map(|p| lift_to_plane(p, axis, &r1[0], &n1))
-                .collect(),
-            same_orientation,
-        },
+        // `same_orientation` costs a rational cross product and a dot, and
+        // only the polygon case consumes it — so it is computed here rather
+        // than up front, where the (far more common) empty/point/segment
+        // exits would pay for it too.
+        _ => {
+            let n2 = tri_normal_r(&r2[0], &r2[1], &r2[2]);
+            debug_assert!(!n2.is_zero(), "degenerate input triangle");
+            let same_orientation = match Sign::of_rat(&n1.dot(&n2)) {
+                Sign::Pos => true,
+                Sign::Neg => false,
+                Sign::Zero => unreachable!("coplanar triangles have parallel normals"),
+            };
+            TriTriIsect::Coplanar {
+                polygon: poly
+                    .iter()
+                    .map(|p| lift_to_plane(&p.r, axis, &r1[0], &n1))
+                    .collect(),
+                same_orientation,
+            }
+        }
     }
 }
 
 /// Remove exact duplicates and collinear intermediate vertices from a closed
 /// polygon; a fully collinear result collapses to its two extreme points, a
 /// single repeated point to one point.
-fn canonical_polygon(poly: Vec<R2>) -> Vec<R2> {
+fn canonical_polygon(poly: Vec<ClipPt>) -> Vec<ClipPt> {
     // Dedup (cyclic).
-    let mut pts: Vec<R2> = Vec::with_capacity(poly.len());
+    let mut pts: Vec<ClipPt> = Vec::with_capacity(poly.len());
     for p in poly {
-        if pts.last() != Some(&p) {
+        if pts.last().map_or(true, |last| !clip_pt_eq(last, &p)) {
             pts.push(p);
         }
     }
-    while pts.len() > 1 && pts.first() == pts.last() {
+    while pts.len() > 1 && clip_pt_eq(&pts[0], &pts[pts.len() - 1]) {
         pts.pop();
     }
     if pts.len() <= 2 {
@@ -510,43 +591,43 @@ fn canonical_polygon(poly: Vec<R2>) -> Vec<R2> {
         let a = &pts[i];
         let b = &pts[(i + 1) % pts.len()];
         let c = &pts[(i + 2) % pts.len()];
-        orient2d_r(a, b, c) == Sign::Zero
+        o2p(a, b, c) == Sign::Zero
     });
     if all_collinear {
-        // Order along the dominant direction of the point spread.
+        // Order along the dominant direction of the point spread. Rare exit
+        // (a degenerate, zero-area overlap), so it stays fully rational.
         let dir = pts
             .iter()
             .skip(1)
-            .map(|p| p.sub(&pts[0]))
+            .map(|p| p.r.sub(&pts[0].r))
             .find(|d| !d.is_zero())
             .expect("at least two distinct points");
-        let param = |p: &R2| p.sub(&pts[0]).dot(&dir);
-        let mut lo = pts[0].clone();
-        let mut hi = pts[0].clone();
+        let param = |p: &R2| p.sub(&pts[0].r).dot(&dir);
+        let (mut lo, mut hi) = (0usize, 0usize);
         let (mut lo_t, mut hi_t) = (BigRational::zero(), BigRational::zero());
-        for p in &pts {
-            let t = param(p);
+        for (i, p) in pts.iter().enumerate() {
+            let t = param(&p.r);
             if t < lo_t {
                 lo_t = t.clone();
-                lo = p.clone();
+                lo = i;
             }
             if t > hi_t {
                 hi_t = t;
-                hi = p.clone();
+                hi = i;
             }
         }
-        if lo == hi {
-            return vec![lo];
+        if clip_pt_eq(&pts[lo], &pts[hi]) {
+            return vec![pts[lo].clone()];
         }
-        return vec![lo, hi];
+        return vec![pts[lo].clone(), pts[hi].clone()];
     }
     // Drop collinear intermediate vertices.
     let n = pts.len();
-    let keep: Vec<R2> = (0..n)
+    let keep: Vec<ClipPt> = (0..n)
         .filter(|&i| {
             let prev = &pts[(i + n - 1) % n];
             let next = &pts[(i + 1) % n];
-            orient2d_r(prev, &pts[i], next) != Sign::Zero
+            o2p(prev, &pts[i], next) != Sign::Zero
         })
         .map(|i| pts[i].clone())
         .collect();

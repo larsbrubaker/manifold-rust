@@ -687,14 +687,17 @@ impl Cdt {
         left: &[usize],
         right: &[usize],
     ) {
-        use std::collections::HashMap;
+        // Fx hashing (unseeded): both maps below are probe-only scratch —
+        // `boundary` is looked up per patch edge and `open` is a pairing
+        // buffer drained by key, neither is ever iterated.
+        use rustc_hash::FxHashMap as HashMap;
         // Cavity boundary: edges of corridor triangles whose neighbor is
         // outside the corridor. Keyed by undirected endpoints (each boundary
         // edge has exactly one inside face, so keys are unique). Interior
         // edges shared by two corridor triangles vanish; a constrained one
         // (possible only at a pseudo-polygon pinch) must be re-marked after
         // the rebuild.
-        let mut boundary: HashMap<(usize, usize), (i32, bool)> = HashMap::new();
+        let mut boundary: HashMap<(usize, usize), (i32, bool)> = HashMap::default();
         let mut interior_con: Vec<(usize, usize)> = Vec::new();
         for &t in crossed {
             for e in 0..3 {
@@ -729,7 +732,7 @@ impl Cdt {
                 alive: true,
             });
         }
-        let mut open: HashMap<(usize, usize), (usize, usize)> = HashMap::new();
+        let mut open: HashMap<(usize, usize), (usize, usize)> = HashMap::default();
         for t in base..self.tris.len() {
             for e in 0..3 {
                 let u = self.tris[t].v[e];

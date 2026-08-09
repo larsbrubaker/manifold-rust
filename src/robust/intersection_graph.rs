@@ -18,7 +18,12 @@
 //
 // Everything is exact; broad-phase boxes are conservative f64.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
+
+// Fx hashing instead of SipHash. Every map/set below is probe-only or has an
+// order-invariant consumer (documented per site); the hasher is unseeded, so
+// even iteration order is stable across runs — output cannot depend on it.
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use num_rational::BigRational;
 use num_traits::{One, Zero};
@@ -126,6 +131,9 @@ impl IntersectionGraph {
 /// rational map. `verts_f64` caches the correctly rounded approximation of
 /// every id (exact for bit-keyed points), which downstream float filters
 /// and output assembly reuse instead of re-rounding.
+/// Order invariance: both maps are probe-only (`get`/`entry`, never
+/// iterated); ids come from `verts.len()` at insertion time, so they depend
+/// only on the sequential call order, not on the hasher.
 #[derive(Default)]
 pub struct VertInterner {
     map: HashMap<R3Key, u32>,
@@ -604,8 +612,10 @@ pub fn build_graph_with_token(
     // dedup go through structural R3Key hashing, so the sequential merge
     // never pays ordered rational comparisons, and the consuming `extra`
     // sets see each point exactly once — the same content BTreeSet gave.
+    // Order invariance: the registry is only ever `get`/`entry`-probed, and
+    // its point lists land in a `BTreeSet<R3>` (`extra`) below, which sorts.
     let mut edge_registry: [HashMap<BitEdgeKey, (Vec<R3>, HashSet<R3Key>)>; 2] =
-        [HashMap::new(), HashMap::new()];
+        [HashMap::default(), HashMap::default()];
     let edge_hits = crate::par::maybe_par_map_ct(reg_work.len(), 16, token, |i| {
         let (m, ti) = reg_work[i];
         let cands = candidates[m][ti].as_ref().expect("filtered to Some");
@@ -657,7 +667,9 @@ pub fn build_graph_with_token(
     // Hash-keyed with structural R3Key hashing: the map is only ever probed
     // (entry/get), never iterated, and BTreeMap's exact rational comparisons
     // per probe dominated this phase on segment-heavy meshes.
-    let mut seg_splits: HashMap<(R3Key, R3Key), (Vec<R3>, HashSet<R3Key>)> = HashMap::new();
+    // Same order-invariance argument as `edge_registry`: probe-only, and the
+    // points it hands out are re-sorted through `extra: BTreeSet<R3>`.
+    let mut seg_splits: HashMap<(R3Key, R3Key), (Vec<R3>, HashSet<R3Key>)> = HashMap::default();
     let split_hits = crate::par::maybe_par_map_ct(reg_work.len(), 16, token, |i| {
         let (m, ti) = reg_work[i];
         let cands = candidates[m][ti].as_ref().expect("filtered to Some");
@@ -738,7 +750,8 @@ pub fn build_graph_with_token(
     })?;
 
     let mut pieces: Vec<Piece> = Vec::new();
-    let mut isect_edges: HashSet<EdgeKey> = HashSet::new();
+    // Membership-only set (never iterated by this crate); order-invariant.
+    let mut isect_edges: HashSet<EdgeKey> = HashSet::default();
     let mut interner = VertInterner::default();
     for (&(m, ti), result) in arr_work.iter().zip(arr_results) {
         let t = meshes[m][ti];

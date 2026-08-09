@@ -30,6 +30,11 @@ num-traits = "0.2"
 num-bigint = "0.4"
 num-rational = "0.4"
 clipper2-rust = "1.0.3"
+# Fast, *deterministic* (unseeded) hasher for the robust engine's hot maps.
+# Only used at sites whose iteration order provably never reaches the output
+# (each swap documents the invariant); SipHash's per-probe cost dominated the
+# split registries, vertex interner and arrangement dedup index.
+rustc-hash = "2.1"
 rayon = { version = "1.10", optional = true }
 
 [features]
