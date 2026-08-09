@@ -5,7 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use super::super::exact::backend::{Rational, Signed, Zero};
+use super::super::exact::backend::{rat_abs, rat_new, rat_zero, Rational};
 
 use crate::linalg::Vec3;
 
@@ -34,7 +34,7 @@ fn area2(a: &R2, b: &R2, c: &R2) -> Rational {
 /// Shared checks: CCW sub-triangles, exact area conservation, every
 /// constraint edge realized in the triangulation.
 fn validate(arr: &Arrangement) {
-    let mut total = Rational::zero();
+    let mut total = rat_zero();
     for t in &arr.tris {
         let a2 = area2(
             &arr.points2[t[0]],
@@ -44,7 +44,7 @@ fn validate(arr: &Arrangement) {
         assert_eq!(Sign::of_rat(&a2), Sign::Pos, "sub-triangle not CCW");
         total = total + a2;
     }
-    let base = area2(&arr.points2[0], &arr.points2[1], &arr.points2[2]).abs();
+    let base = rat_abs(&area2(&arr.points2[0], &arr.points2[1], &arr.points2[2]));
     assert_eq!(total, base, "area not conserved");
 
     let edges: BTreeSet<(usize, usize)> = arr
@@ -190,7 +190,7 @@ fn skew_plane_arrangement_lifts_exactly() {
     let a = R3::from_vec3(tri[0]);
     let b = R3::from_vec3(tri[1]);
     let c = R3::from_vec3(tri[2]);
-    let half = Rational::new(1.into(), 2.into());
+    let half = rat_new(1.into(), 2.into());
     let mab = a.add(&b).scale(&half);
     let mbc = b.add(&c).scale(&half);
     let mca = c.add(&a).scale(&half);

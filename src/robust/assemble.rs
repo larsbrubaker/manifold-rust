@@ -20,7 +20,7 @@
 // vertices linked by merge vectors, mirroring the exact engine's MeshGL
 // output shape.
 
-use super::exact::backend::{One, Rational};
+use super::exact::backend::{rat_one, Rational};
 
 use crate::linalg::Vec3;
 use crate::manifold::Manifold;
@@ -60,7 +60,7 @@ fn barycentric_r(p: &R3, tri: &[R3; 3]) -> [Rational; 3] {
     let total = b.sub(&a).cross(&c.sub(&a));
     let w0 = b.sub(&p2).cross(&c.sub(&p2)) / &total;
     let w1 = c.sub(&p2).cross(&a.sub(&p2)) / &total;
-    let w2 = Rational::one() - &w0 - &w1;
+    let w2 = rat_one() - &w0 - &w1;
     [w0, w1, w2]
 }
 

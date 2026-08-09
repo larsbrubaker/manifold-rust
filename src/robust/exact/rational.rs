@@ -10,7 +10,10 @@
 // output vertices agree with the exact engine's to the last ulp on
 // intersection points, and bit-for-bit on pass-through input vertices.
 
-use super::backend::{IntSign, Rational, Signed, ToPrimitive, Uint, Zero};
+use super::backend::{
+    self, denom, numer_mag, rat_from_f64, rat_is_negative, rat_is_zero, Rational, ToPrimitive,
+    Uint,
+};
 
 use crate::linalg::{Vec2, Vec3};
 
@@ -22,7 +25,7 @@ use crate::linalg::{Vec2, Vec3};
 /// non-finite value here is an internal logic error, not bad user input.
 #[inline]
 pub fn rat(v: f64) -> Rational {
-    Rational::from_float(v).expect("robust engine: coordinate must be finite")
+    rat_from_f64(v).expect("robust engine: coordinate must be finite")
 }
 
 /// 2^e as f64, exact for the full representable range -1074..=1023
@@ -43,15 +46,16 @@ fn pow2(e: i64) -> f64 {
 /// f64 range become ±infinity; values below half the smallest subnormal
 /// become (signed) zero.
 pub fn rat_to_f64(r: &Rational) -> f64 {
-    if r.is_zero() {
+    if rat_is_zero(r) {
         return 0.0;
     }
-    let neg = r.is_negative();
-    let n: &Uint = r.numer().magnitude();
-    let d: &Uint = r.denom().magnitude();
+    let neg = rat_is_negative(r);
+    let n_mag = numer_mag(r);
+    let n: &Uint = n_mag.as_ref();
+    let d: &Uint = denom(r);
 
     // Exact floor exponent e: 2^e <= n/d < 2^(e+1).
-    let mut e = n.bits() as i64 - d.bits() as i64;
+    let mut e = backend::uint_bits(n) as i64 - backend::uint_bits(d) as i64;
     let ge = if e >= 0 {
         *n >= (d << e as usize)
     } else {
@@ -82,7 +86,7 @@ pub fn rat_to_f64(r: &Rational) -> f64 {
     match twice_rem.cmp(&den) {
         std::cmp::Ordering::Greater => m += 1u32,
         std::cmp::Ordering::Equal => {
-            if m.bit(0) {
+            if backend::uint_bit(&m, 0) {
                 m += 1u32;
             }
         }
@@ -94,7 +98,7 @@ pub fn rat_to_f64(r: &Rational) -> f64 {
     }
     // Rounding up may have crossed into the next binade (m = 2^53) or past
     // the largest finite value (2^1024 -> infinity).
-    if m.bits() as i64 - 1 + lsb > 1023 {
+    if backend::uint_bits(&m) as i64 - 1 + lsb > 1023 {
         return if neg { f64::NEG_INFINITY } else { f64::INFINITY };
     }
     // m <= 2^53, so both the u64 and the f64 conversion are exact, and
@@ -154,7 +158,7 @@ impl R2 {
     }
 
     pub fn is_zero(&self) -> bool {
-        self.x.is_zero() && self.y.is_zero()
+        rat_is_zero(&self.x) && rat_is_zero(&self.y)
     }
 }
 
@@ -209,7 +213,7 @@ impl R3 {
     }
 
     pub fn is_zero(&self) -> bool {
-        self.x.is_zero() && self.y.is_zero() && self.z.is_zero()
+        rat_is_zero(&self.x) && rat_is_zero(&self.y) && rat_is_zero(&self.z)
     }
 
     /// Drop the coordinate at `axis` (0=x, 1=y, 2=z), keeping the other two
@@ -227,32 +231,16 @@ impl R3 {
 
 // ─── Cheap exact hash keys ───────────────────────────────────────────────────
 //
-// num-rational's Hash and Eq run continued-fraction recursions (a BigInt
-// division per level, a full Euclidean algorithm for equal values) so they
-// stay consistent for UNREDUCED ratios. Every rational this pipeline stores
-// is canonical — built by Ratio::new, arithmetic operators, or from_float,
-// all of which reduce — so field identity IS value identity, and hashing the
-// raw sign/limb data is both exact and division-free. The wrappers below are
-// drop-in hash-map keys that are 1–2 orders of magnitude cheaper than
-// hashing R2/R3 directly. (classify.rs's new_raw fractions are sign/compare
-// scratch values and must never be used as keys.)
+// A general-purpose rational Hash/Eq must stay consistent for UNREDUCED
+// ratios, which costs at least a cross-multiplication (and, in some
+// libraries, a Euclidean recursion). Every rational this pipeline stores is canonical —
+// built by rat_new, the arithmetic operators, or rat_from_f64, all of which
+// reduce — so field identity IS value identity, and hashing the raw sign/limb
+// data is both exact and division-free. The wrappers below are drop-in
+// hash-map keys that are 1–2 orders of magnitude cheaper than hashing R2/R3
+// directly. See backend.rs items (1) and (2).
 
-#[inline]
-fn rat_fields_eq(a: &Rational, b: &Rational) -> bool {
-    a.numer() == b.numer() && a.denom() == b.denom()
-}
-
-fn hash_rat<H: std::hash::Hasher>(r: &Rational, state: &mut H) {
-    use std::hash::Hash;
-    (r.numer().sign() == IntSign::Minus).hash(state);
-    for d in r.numer().iter_u64_digits() {
-        d.hash(state);
-    }
-    0xfeed_u64.hash(state); // length separator between numerator and denominator
-    for d in r.denom().iter_u64_digits() {
-        d.hash(state);
-    }
-}
+use backend::{hash_rational as hash_rat, rat_eq as rat_fields_eq};
 
 /// Hash-map key wrapper around a canonical R2.
 #[derive(Clone, Debug)]
@@ -300,7 +288,7 @@ pub fn r2_eq(a: &R2, b: &R2) -> bool {
 }
 
 /// Field-wise equality of canonical R3 values — value equality without
-/// num-rational's Euclidean comparison (which is most expensive exactly when
+/// the backend's general comparison (which is most expensive exactly when
 /// the values ARE equal).
 #[inline]
 pub fn r3_eq(a: &R3, b: &R3) -> bool {

@@ -5,7 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use super::super::exact::backend::{Rational, Signed, Zero};
+use super::super::exact::backend::{rat_abs, rat_zero, Rational};
 
 use crate::linalg::Vec2;
 
@@ -29,13 +29,13 @@ fn area2(a: &R2, b: &R2, c: &R2) -> Rational {
 /// unconstrained internal edge.
 fn validate(points: &[R2], constraints: &[(usize, usize)], tris: &[[usize; 3]]) {
     // CCW and area sum.
-    let mut total = Rational::zero();
+    let mut total = rat_zero();
     for t in tris {
         let a2 = area2(&points[t[0]], &points[t[1]], &points[t[2]]);
         assert_eq!(Sign::of_rat(&a2), Sign::Pos, "sub-triangle not CCW: {t:?}");
         total = total + a2;
     }
-    let base = area2(&points[0], &points[1], &points[2]).abs();
+    let base = rat_abs(&area2(&points[0], &points[1], &points[2]));
     assert_eq!(total, base, "sub-triangle areas do not sum to the base area");
 
     // Edge set + Euler.
@@ -268,7 +268,7 @@ fn fuzz_random_constraints() {
                 if orient2d_r(&pts[a], &pts[b], p) == Sign::Zero {
                     let d = pts[b].sub(&pts[a]);
                     let t = p.sub(&pts[a]).dot(&d);
-                    if t > Rational::zero() && t < d.dot(&d) {
+                    if t > rat_zero() && t < d.dot(&d) {
                         continue 'outer;
                     }
                 }

@@ -8,7 +8,7 @@
 // `is_degenerate` through the `intersection_graph` re-exports). The exact
 // predicates themselves live in robust/exact/{approx,predicates}.rs.
 
-use super::exact::backend::{One, Rational, Zero};
+use super::exact::backend::{rat_is_zero, rat_zero, rat_one, Rational};
 
 use crate::linalg::Vec3;
 use crate::types::Box;
@@ -59,7 +59,7 @@ pub(super) fn approx3(p: &R3) -> [f64; 3] {
 }
 
 /// Filtered point-on-segment: the approx prefilter rejects the generic case
-/// without touching BigInt; only near-incidences run the exact test.
+/// without touching the bignum tier; only near-incidences run the exact test.
 /// Conservative 3D box `[min; 3], [max; 3]` around a segment's exact
 /// endpoints from their correctly rounded approximations, inflated past
 /// rounding error — a point exactly on the segment is never rejected by
@@ -119,8 +119,8 @@ pub(super) fn clip_segment_to_polygon(a: &R3, b: &R3, poly: &[R3]) -> Option<(R3
     let dir = b2.sub(&a2);
 
     // Parametric clip of [0,1] against each CCW edge halfplane.
-    let mut t0 = Rational::zero();
-    let mut t1 = Rational::one();
+    let mut t0 = rat_zero();
+    let mut t1 = rat_one();
     for i in 0..pts2.len() {
         let e0 = &pts2[i];
         let e1 = &pts2[(i + 1) % pts2.len()];
@@ -129,14 +129,14 @@ pub(super) fn clip_segment_to_polygon(a: &R3, b: &R3, poly: &[R3]) -> Option<(R3
         // f(t) = cross(edge, a2 + t*dir - e0) = fa + t * fd.
         let fa = edge.cross(&a2.sub(e0));
         let fd = edge.cross(&dir);
-        if fd.is_zero() {
-            if fa < Rational::zero() {
+        if rat_is_zero(&fd) {
+            if fa < rat_zero() {
                 return None; // parallel and strictly outside
             }
             continue;
         }
         let t_hit = -&fa / &fd;
-        if fd > Rational::zero() {
+        if fd > rat_zero() {
             // entering: f grows with t → require t >= t_hit
             if t_hit > t0 {
                 t0 = t_hit;

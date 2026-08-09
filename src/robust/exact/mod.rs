@@ -2,9 +2,10 @@
 // engine (src/robust).
 //
 // Layered design:
-//   backend.rs    — the single seam to the bignum library: `Int`/`Rational`
-//                   type aliases plus the trait re-exports every other module
-//                   imports instead of naming num-bigint/num-rational.
+//   backend.rs    — the single seam to the bignum library (dashu): the
+//                   `Int`/`Uint`/`Rational` type aliases, the trait
+//                   re-exports and the small helper layer every other module
+//                   uses instead of naming the backend crates.
 //   rational.rs   — Rational point types (R2/R3) and correctly rounded
 //                   rational→f64 conversion.
 //   predicates.rs — fully exact predicates and geometric constructions on
@@ -25,7 +26,7 @@ pub mod rational;
 #[cfg(test)]
 mod tests;
 
-use backend::{Rational, Signed};
+use backend::{rat_is_negative, rat_is_positive, Rational};
 
 /// Sign of an exactly evaluated quantity. The whole robust pipeline reasons
 /// in terms of signs; magnitudes only matter inside constructions.
@@ -52,9 +53,9 @@ impl Sign {
 
     #[inline]
     pub fn of_rat(r: &Rational) -> Sign {
-        if r.is_positive() {
+        if rat_is_positive(r) {
             Sign::Pos
-        } else if r.is_negative() {
+        } else if rat_is_negative(r) {
             Sign::Neg
         } else {
             Sign::Zero

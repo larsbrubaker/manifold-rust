@@ -3,7 +3,7 @@
 // their rational ground truth (random + adversarial near-degenerate inputs),
 // exact constructions, and the filter hit-rate guarantee.
 
-use super::backend::{Int, One, Rational};
+use super::backend::{rat_from_int, rat_new, Int, One};
 
 use crate::linalg::{Vec2, Vec3};
 
@@ -86,15 +86,15 @@ fn round_trip_is_bit_exact() {
 
 #[test]
 fn rounding_is_nearest_ties_even() {
-    let half_ulp = Rational::new(1.into(), Int::one() << 53);
+    let half_ulp = rat_new(1.into(), Int::one() << 53usize);
     // 1 + 2^-53 is exactly halfway between 1 and 1+2^-52; even mantissa wins → 1.
     let tie_down = rat(1.0) + &half_ulp;
     assert_eq!(rat_to_f64(&tie_down), 1.0);
     // 1 + 3·2^-53 is halfway between 1+2^-52 (odd mantissa) and 1+2^-51 (even) → up.
-    let tie_up = rat(1.0) + &half_ulp * Rational::from_integer(3.into());
+    let tie_up = rat(1.0) + &half_ulp * rat_from_int(3.into());
     assert_eq!(rat_to_f64(&tie_up), 1.0 + 2.0 * 2f64.powi(-52));
     // Just above/below the midpoint round to the nearer neighbor.
-    let quarter_ulp = &half_ulp / Rational::from_integer(2.into());
+    let quarter_ulp = &half_ulp / rat_from_int(2.into());
     assert_eq!(rat_to_f64(&(rat(1.0) + &quarter_ulp)), 1.0);
     assert_eq!(
         rat_to_f64(&(rat(1.0) + &half_ulp + &quarter_ulp)),
@@ -105,22 +105,137 @@ fn rounding_is_nearest_ties_even() {
 #[test]
 fn rounding_handles_overflow_and_subnormals() {
     // 2 * MAX overflows to infinity; MAX itself survives.
-    let two_max = rat(f64::MAX) * Rational::from_integer(2.into());
+    let two_max = rat(f64::MAX) * rat_from_int(2.into());
     assert_eq!(rat_to_f64(&two_max), f64::INFINITY);
     assert_eq!(rat_to_f64(&(-two_max)), f64::NEG_INFINITY);
     // Half the smallest subnormal is a tie with 0 → even → 0.
     let min_sub = rat(5e-324);
-    let half_min = &min_sub / Rational::from_integer(2.into());
+    let half_min = &min_sub / rat_from_int(2.into());
     assert_eq!(rat_to_f64(&half_min), 0.0);
     // Three quarters of the smallest subnormal rounds up to it.
-    let three_q = &min_sub * Rational::new(3.into(), 4.into());
+    let three_q = &min_sub * rat_new(3.into(), 4.into());
     assert_eq!(rat_to_f64(&three_q).to_bits(), 5e-324f64.to_bits());
     // A value between two subnormals rounds to the nearer one.
     let sub = f64::MIN_POSITIVE / 8.0; // subnormal with headroom
     let next = f64::from_bits(sub.to_bits() + 1);
-    let mid_plus = (rat(sub) + rat(next)) * Rational::new(1.into(), 2.into())
-        + Rational::new(1.into(), Int::one() << 2000);
+    let mid_plus = (rat(sub) + rat(next)) * rat_new(1.into(), 2.into())
+        + rat_new(1.into(), Int::one() << 2000usize);
     assert_eq!(rat_to_f64(&mid_plus).to_bits(), next.to_bits());
+}
+
+/// `rat_to_f64` is hand-rolled (backend.rs item 5) rather than delegated to
+/// the backend's own conversion, so that a backend upgrade can never silently
+/// change output vertices. This pins the two together: every f64 boundary
+/// category plus thousands of random rationals with multi-word numerators and
+/// denominators must round identically, bit for bit. A failure here means the
+/// backend changed its rounding — investigate before touching either side.
+#[test]
+fn rat_to_f64_matches_the_backend_oracle() {
+    use super::backend::rat_to_f64_oracle;
+
+    let check = |r: &super::backend::Rational, what: &str| {
+        let ours = rat_to_f64(r);
+        let theirs = rat_to_f64_oracle(r);
+        assert_eq!(
+            ours.to_bits(),
+            theirs.to_bits(),
+            "{what}: ours {ours:e} ({:#x}) vs backend {theirs:e} ({:#x})",
+            ours.to_bits(),
+            theirs.to_bits()
+        );
+    };
+
+    // Every representable power of two, subnormals included, and their
+    // negations and halves (the halves of the smallest are underflow ties).
+    for e in -1074i64..=1023 {
+        let p = if e >= 0 {
+            rat_from_int(Int::one() << e as usize)
+        } else {
+            rat_new(Int::one(), Int::one() << (-e) as usize)
+        };
+        check(&p, &format!("2^{e}"));
+        check(&-&p, &format!("-2^{e}"));
+        check(&(&p / rat_from_int(2.into())), &format!("2^{e}/2"));
+        check(&(&p * rat_new(3.into(), 2.into())), &format!("3*2^{e}/2"));
+    }
+
+    // Signed zero, exact f64 values across all classes, and their neighbors.
+    let flats = [
+        0.0,
+        -0.0,
+        1.0,
+        -1.0,
+        0.1,
+        std::f64::consts::PI,
+        f64::MAX,
+        f64::MIN,
+        f64::MIN_POSITIVE,
+        f64::MIN_POSITIVE / 4.0,
+        5e-324,
+        -5e-324,
+        1e300,
+        1e-300,
+    ];
+    for &v in &flats {
+        check(&rat(v), &format!("exact {v:e}"));
+    }
+
+    // Ties at 1, at the subnormal boundary, and at the overflow boundary.
+    let half_ulp = rat_new(1.into(), Int::one() << 53usize);
+    check(&(rat(1.0) + &half_ulp), "tie at 1 (down)");
+    check(&(rat(1.0) + &half_ulp * rat_from_int(3.into())), "tie at 1 (up)");
+    check(&(rat(5e-324) / rat_from_int(2.into())), "underflow tie (+)");
+    check(&(rat(-5e-324) / rat_from_int(2.into())), "underflow tie (-)");
+    check(
+        &(rat(5e-324) * rat_new(1.into(), 4.into())),
+        "quarter subnormal (+)",
+    );
+    check(
+        &(rat(-5e-324) * rat_new(1.into(), 4.into())),
+        "quarter subnormal (-)",
+    );
+    // 2^1024 is the overflow threshold; MAX + half an ulp is the tie onto it.
+    let two_1024 = rat_from_int(Int::one() << 1024usize);
+    check(&two_1024, "2^1024");
+    check(&-&two_1024, "-2^1024");
+    let max_half_ulp = rat_from_int(Int::one() << 970usize);
+    check(&(rat(f64::MAX) + &max_half_ulp), "MAX + ulp/2 (tie up)");
+    check(
+        &(rat(f64::MAX) + &max_half_ulp - rat_new(1.into(), Int::one() << 64usize)),
+        "just below the overflow tie",
+    );
+
+    // Random rationals with multi-word numerators and denominators, scaled
+    // across the whole exponent range so subnormal, normal and overflow
+    // rounding all get exercised.
+    let mut rng = Lcg::new(0xC0FFEE_1234_5678);
+    let big = |rng: &mut Lcg, words: usize| -> Int {
+        let mut v = Int::from(0u32);
+        for _ in 0..words {
+            v = (v << 64usize) + Int::from(rng.next_u64());
+        }
+        v
+    };
+    for i in 0..4000 {
+        let nw = (rng.next_u64() % 4 + 1) as usize;
+        let dw = (rng.next_u64() % 4 + 1) as usize;
+        let mut n = big(&mut rng, nw);
+        let mut d = big(&mut rng, dw);
+        if d.is_zero() {
+            d = Int::one();
+        }
+        if rng.next_u64() & 1 == 0 {
+            n = -n;
+        }
+        // Shift the value into a random binade, both directions.
+        let shift = (rng.next_u64() % 1300) as usize;
+        if rng.next_u64() & 1 == 0 {
+            n <<= shift;
+        } else {
+            d <<= shift;
+        }
+        check(&rat_new(n, d), &format!("random #{i}"));
+    }
 }
 
 // ─── Predicates: filtered vs exact ground truth ──────────────────────────────
@@ -280,7 +395,7 @@ fn line_plane_intersect_lands_on_plane_and_segment() {
     // Parameter is exactly 1/3.
     assert_eq!(
         segment_param(&p, &q, &x),
-        Rational::new(1.into(), 3.into())
+        rat_new(1.into(), 3.into())
     );
     // Parallel segment → None.
     let p2 = r3(0.0, 0.0, 2.0);

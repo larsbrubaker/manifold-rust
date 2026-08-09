@@ -11,7 +11,10 @@
 //   incircle(a,b,c,d) with a,b,c CCW: Pos = d strictly inside the circle
 //                       through a,b,c. (For CW a,b,c the sign flips.)
 
-use super::backend::{Int, Rational, Signed, Zero};
+use super::backend::{
+    denom, int_from_uint, mul_int_uint, mul_uint, numer, rat_is_zero, rat_new, Int, Rational,
+    Signed,
+};
 
 use super::rational::{R2, R3};
 use super::Sign;
@@ -19,7 +22,7 @@ use super::Sign;
 // ─── Exact predicates ────────────────────────────────────────────────────────
 //
 // Predicate signs are computed in pure Int arithmetic: each point is
-// homogenized once ((x, y) = (X/W, Y/W) with W > 0 — num-rational keeps
+// homogenized once ((x, y) = (X/W, Y/W) with W > 0 — the backend keeps
 // denominators positive), and the determinant is scaled through by positive
 // denominator products, which preserves its sign. This avoids Rational's
 // gcd normalization on every intermediate operation — the dominant cost of
@@ -29,19 +32,28 @@ use super::Sign;
 /// (X, Y, W): x = X/W, y = Y/W with W > 0.
 #[inline]
 fn homog2(p: &R2) -> (Int, Int, Int) {
-    let (xn, xd) = (p.x.numer(), p.x.denom());
-    let (yn, yd) = (p.y.numer(), p.y.denom());
-    (xn * yd, yn * xd, xd * yd)
+    let (xn, xd) = (numer(&p.x), denom(&p.x));
+    let (yn, yd) = (numer(&p.y), denom(&p.y));
+    (
+        mul_int_uint(xn, yd),
+        mul_int_uint(yn, xd),
+        int_from_uint(mul_uint(xd, yd)),
+    )
 }
 
 /// (X, Y, Z, W): coordinates over one positive common denominator.
 #[inline]
 fn homog3(p: &R3) -> (Int, Int, Int, Int) {
-    let (xn, xd) = (p.x.numer(), p.x.denom());
-    let (yn, yd) = (p.y.numer(), p.y.denom());
-    let (zn, zd) = (p.z.numer(), p.z.denom());
-    let yz = yd * zd;
-    (xn * &yz, yn * (xd * zd), zn * (xd * yd), xd * yz)
+    let (xn, xd) = (numer(&p.x), denom(&p.x));
+    let (yn, yd) = (numer(&p.y), denom(&p.y));
+    let (zn, zd) = (numer(&p.z), denom(&p.z));
+    let yz = mul_uint(yd, zd);
+    (
+        mul_int_uint(xn, &yz),
+        mul_int_uint(yn, &mul_uint(xd, zd)),
+        mul_int_uint(zn, &mul_uint(xd, yd)),
+        int_from_uint(mul_uint(xd, &yz)),
+    )
 }
 
 /// Cached homogenization of a 2D point: (X, Y, W), x = X/W, W > 0. Hot
@@ -318,7 +330,7 @@ pub fn line_plane_intersect(p: &R3, q: &R3, a: &R3, b: &R3, c: &R3) -> Option<R3
     // plane normal enters both numerator and denominator of t, so any
     // positive common scale on it cancels — compute it as an integer cross
     // of denominator-cleared edge vectors and never normalize intermediates.
-    // Each output coordinate reduces exactly once in Rational::new.
+    // Each output coordinate reduces exactly once in rat_new.
     let (px, py, pz, pw) = homog3(p);
     let (qx, qy, qz, qw) = homog3(q);
     let (ax, ay, az, aw) = homog3(a);
@@ -354,7 +366,7 @@ pub fn line_plane_intersect(p: &R3, q: &R3, a: &R3, b: &R3, c: &R3) -> Option<R3
     let t_d = &aw * &n_dot_d;
     let den = &pw * &qw * &t_d;
     let coord = |pi: &Int, di: &Int| -> Rational {
-        Rational::new(pi * &qw * &t_d + di * &t_n, den.clone())
+        rat_new(pi * &qw * &t_d + di * &t_n, den.clone())
     };
     Some(R3::new(coord(&px, &dx), coord(&py, &dy), coord(&pz, &dz)))
 }
@@ -367,7 +379,7 @@ pub fn line_line_intersect_2d(a: &R2, b: &R2, c: &R2, d: &R2) -> Option<R2> {
     // homogenized points, x = a + t·(b−a) where
     //   t = N·Bw / (Dn·Cw),
     //   N  = cross(c−a, d−c)·AwCw·CwDw,   Dn = cross(b−a, d−c)·AwBw·CwDw,
-    // and each output coordinate reduces exactly once in Rational::new.
+    // and each output coordinate reduces exactly once in rat_new.
     let (ax, ay, aw) = homog2(a);
     let (bx, by, bw) = homog2(b);
     let (cx, cy, cw) = homog2(c);
@@ -388,15 +400,15 @@ pub fn line_line_intersect_2d(a: &R2, b: &R2, c: &R2, d: &R2) -> Option<R2> {
     // x_i = (A_i·Dn·Cw + N·ab_i) / (Aw·Cw·Dn)
     let den = &aw * &cw * &dn;
     let dn_cw = &dn * &cw;
-    let x = Rational::new(&ax * &dn_cw + &n * &abx, den.clone());
-    let y = Rational::new(&ay * &dn_cw + &n * &aby, den);
+    let x = rat_new(&ax * &dn_cw + &n * &abx, den.clone());
+    let y = rat_new(&ay * &dn_cw + &n * &aby, den);
     Some(R2::new(x, y))
 }
 
 /// Inverse of `R3::project_drop`: rebuild the dropped coordinate from the
 /// plane through `a` with (unnormalized, rational) normal `n`, whose `axis`
 /// component must be nonzero. Integer-only: the reconstructed coordinate is
-/// one `Rational::new` (a single gcd); the carried coordinates are clones
+/// one `rat_new` (a single gcd); the carried coordinates are clones
 /// of the projection's already-canonical rationals.
 pub fn lift_to_plane(p: &R2, axis: usize, a: &R3, n: &R3) -> R3 {
     let (nx, ny, nz, nw) = homog3(n);
@@ -406,7 +418,7 @@ pub fn lift_to_plane(p: &R2, axis: usize, a: &R3, n: &R3) -> R3 {
     //   = (S·Pw − Aw·(N_i·P_i + N_j·P_j)) / (Aw·Pw·N_k).
     let s = &nx * &ax + &ny * &ay + &nz * &az;
     let rebuild = |ni: &Int, nj: &Int, nk: &Int| -> Rational {
-        Rational::new(
+        rat_new(
             &s * &pw - &aw * (ni * &px + nj * &py),
             &aw * &pw * nk,
         )
@@ -434,13 +446,13 @@ pub fn lift_to_plane(p: &R2, axis: usize, a: &R3, n: &R3) -> R3 {
 /// caller guarantees x is on the line through p and q and p != q.
 pub fn segment_param(p: &R3, q: &R3, x: &R3) -> Rational {
     let d = q.sub(p);
-    let (num, den) = if !d.x.is_zero() {
+    let (num, den) = if !rat_is_zero(&d.x) {
         (&x.x - &p.x, d.x)
-    } else if !d.y.is_zero() {
+    } else if !rat_is_zero(&d.y) {
         (&x.y - &p.y, d.y)
     } else {
         (&x.z - &p.z, d.z)
     };
-    debug_assert!(!den.is_zero(), "segment_param requires p != q");
+    debug_assert!(!rat_is_zero(&den), "segment_param requires p != q");
     num / den
 }

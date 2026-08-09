@@ -1,6 +1,6 @@
 // robust/exact/intpred.rs — Exact integer evaluation of the raw-f64
 // predicates, the fast escalation tier between the float filters
-// (robust/exact/filtered.rs) and the BigRational ground truth
+// (robust/exact/filtered.rs) and the exact rational ground truth
 // (robust/exact/predicates.rs).
 //
 // Every finite f64 is a dyadic rational m·2^e. Scaling all four inputs of a
@@ -8,17 +8,17 @@
 // integers without changing the determinant's sign (the scale factors are
 // positive and factor out of each column). The determinant is then evaluated
 // in the narrowest integer width a static bit-length budget proves cannot
-// overflow — i64, then i128, then BigInt — either way the sign is exact, with
+// overflow — i64, then i128, then Int — either way the sign is exact, with
 // no rational normalization (gcds) anywhere. On the degenerate-heavy meshes
 // that defeat the float filters (doubled surfaces, large flat regions) this
-// tier is 10–50× cheaper than the BigRational fallback it replaces.
+// tier is 10–50× cheaper than the rational fallback it replaces.
 //
 // The i64 tier exists mainly for wasm, where a 64×64→128 multiply lowers to a
 // compiler-rt `__multi3` call while an i64 multiply is a single `i64.mul`.
 // Every budget below is derived from worst-case magnitudes, not measured, and
 // the tier declines (falls through to i128) the moment any operand exceeds it.
 
-use super::backend::{Int, IntSign, Zero};
+use super::backend::{Int, Signed, Zero};
 use super::Sign;
 
 /// Exact dyadic decomposition: returns (m, e) with v == m·2^e and trailing
@@ -45,7 +45,7 @@ fn decomp(v: f64) -> (i64, i32) {
 
 /// The four values of one coordinate axis as exactly scaled i128 integers,
 /// or None when any scaled magnitude would exceed `budget` bits (the caller
-/// then takes the BigInt path). Zeros scale to zero regardless of exponent.
+/// then takes the Int path). Zeros scale to zero regardless of exponent.
 #[inline]
 fn scaled_i128<const N: usize>(vs: [f64; N], budget: u32) -> Option<[i128; N]> {
     let d = vs.map(decomp);
@@ -146,7 +146,7 @@ fn narrow3(vs: [i128; 3], bits: u32) -> Option<[i64; 3]> {
     }
 }
 
-/// Same scaling with unbounded BigInt magnitudes. Public: the tri-tri
+/// Same scaling with unbounded Int magnitudes. Public: the tri-tri
 /// interval overlap (robust/tri_tri.rs) reuses it to compare interval
 /// endpoints along the common plane-intersection line in pure integers.
 pub fn scaled_big<const N: usize>(vs: [f64; N]) -> [Int; N] {
@@ -161,7 +161,7 @@ pub fn scaled_big<const N: usize>(vs: [f64; N]) -> [Int; N] {
         if m == 0 {
             Int::zero()
         } else {
-            Int::from(m) << (e - emin) as u32
+            Int::from(m) << (e - emin) as usize
         }
     })
 }
@@ -185,10 +185,12 @@ fn sign_i128(v: i128) -> Sign {
 }
 
 fn sign_big(v: &Int) -> Sign {
-    match v.sign() {
-        IntSign::Minus => Sign::Neg,
-        IntSign::NoSign => Sign::Zero,
-        IntSign::Plus => Sign::Pos,
+    if v.is_zero() {
+        Sign::Zero
+    } else if v.is_negative() {
+        Sign::Neg
+    } else {
+        Sign::Pos
     }
 }
 
@@ -310,7 +312,7 @@ mod tests {
         fn coord(&mut self) -> f64 {
             (self.next() as i32 as f64) * 2.0f64.powi(-30)
         }
-        /// f64 with a wild exponent, exercising the BigInt path.
+        /// f64 with a wild exponent, exercising the Int path.
         fn wild(&mut self) -> f64 {
             let m = self.next() as i32 as f64;
             let e = (self.next() % 500) as i32 - 250;
@@ -472,7 +474,7 @@ mod tests {
     }
 
     /// The tier boundary must be invisible: sweeping magnitudes across it, the
-    /// integer predicates must agree with the BigRational reference at every
+    /// integer predicates must agree with the exact rational reference at every
     /// step (this is what catches an off-by-one in the budget derivation).
     #[test]
     fn i64_tier_boundary_sweep_matches_rational() {
@@ -538,7 +540,7 @@ mod tests {
         );
     }
 
-    /// The i64 tier must agree with the BigInt/BigRational ground truth on
+    /// The i64 tier must agree with the Int/Rational ground truth on
     /// bulk random input that lands squarely inside its budget.
     #[test]
     fn i64_tier_bulk_matches_rational() {

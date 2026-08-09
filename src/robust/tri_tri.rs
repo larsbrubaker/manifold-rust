@@ -12,7 +12,7 @@
 // Degenerate (zero-area) input triangles are the caller's responsibility to
 // drop beforehand (paper §5 pre-processing); this file debug-asserts that.
 
-use super::exact::backend::{Int, IntSign, Rational, Signed, Zero};
+use super::exact::backend::{rat_zero, Int, Signed};
 
 use crate::linalg::Vec3;
 
@@ -278,7 +278,7 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
                 let du_v = du(base + j);
                 let mut den = &hu - &hv;
                 let mut num = &den * &du_u + &hu * (&du_v - &du_u);
-                if den.sign() == IntSign::Minus {
+                if den.is_negative() {
                     den = -den;
                     num = -num;
                 }
@@ -323,10 +323,12 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
 
 #[cfg(debug_assertions)]
 fn int_sign(v: &Int) -> Sign {
-    match v.sign() {
-        IntSign::Minus => Sign::Neg,
-        IntSign::NoSign => Sign::Zero,
-        IntSign::Plus => Sign::Pos,
+    if v.is_zero() {
+        Sign::Zero
+    } else if v.is_negative() {
+        Sign::Neg
+    } else {
+        Sign::Pos
     }
 }
 
@@ -457,7 +459,7 @@ fn o2p(a: &ClipPt, b: &ClipPt, c: &ClipPt) -> Sign {
 
 /// Field-wise equality of two canonical projected points — same answer as
 /// `R2: PartialEq` (see the canonicality argument in exact/rational.rs)
-/// without num-rational's Euclidean comparison.
+/// without the backend's general (unreduced-tolerant) comparison.
 #[inline]
 fn clip_pt_eq(a: &ClipPt, b: &ClipPt) -> bool {
     r2_eq(&a.r, &b.r)
@@ -601,7 +603,7 @@ fn canonical_polygon(poly: Vec<ClipPt>) -> Vec<ClipPt> {
             .expect("at least two distinct points");
         let param = |p: &R2| p.sub(&pts[0].r).dot(&dir);
         let (mut lo, mut hi) = (0usize, 0usize);
-        let (mut lo_t, mut hi_t) = (Rational::zero(), Rational::zero());
+        let (mut lo_t, mut hi_t) = (rat_zero(), rat_zero());
         for (i, p) in pts.iter().enumerate() {
             let t = param(&p.r);
             if t < lo_t {

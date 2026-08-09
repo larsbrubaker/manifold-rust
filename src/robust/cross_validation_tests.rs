@@ -166,7 +166,7 @@ fn battery_mixed_pairs() {
 }
 
 /// Extended battery — more pairs, bigger meshes. Slow with debug-build
-/// BigRational arithmetic; run explicitly:
+/// exact rational arithmetic; run explicitly:
 /// `cargo test --release battery_extended -- --ignored`
 #[test]
 #[ignore = "extended battery: run in release, see comment"]

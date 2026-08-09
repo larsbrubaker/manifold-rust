@@ -221,7 +221,7 @@ mod tests {
     use super::super::rational::{rat_to_f64, R2, R3};
     use super::*;
     use crate::linalg::{Vec2, Vec3};
-    use super::super::backend::{Int, Rational};
+    use super::super::backend::{rat_from_f64, rat_new, Int};
 
     struct Lcg(u64);
     impl Lcg {
@@ -244,10 +244,10 @@ mod tests {
     /// A rational point near (x,y) with a huge denominator — its rounding is
     /// a genuine ε-perturbation, exercising the indirect-point case.
     fn wobble2(x: f64, y: f64, k: i64) -> R2 {
-        let tiny = Rational::new(k.into(), Int::from(3u8).pow(40));
+        let tiny = rat_new(k.into(), Int::from(3u8).pow(40));
         R2::new(
-            Rational::from_float(x).unwrap() + &tiny,
-            Rational::from_float(y).unwrap() - &tiny,
+            rat_from_f64(x).unwrap() + &tiny,
+            rat_from_f64(y).unwrap() - &tiny,
         )
     }
 
@@ -325,9 +325,9 @@ mod tests {
         let mut rejected = 0usize;
         for i in 0..4000 {
             let p = R3::new(
-                Rational::from_float(rng.next_f64(12.0)).unwrap(),
-                Rational::from_float(rng.next_f64(12.0)).unwrap(),
-                Rational::from_float(rng.next_f64(12.0)).unwrap(),
+                rat_from_f64(rng.next_f64(12.0)).unwrap(),
+                rat_from_f64(rng.next_f64(12.0)).unwrap(),
+                rat_from_f64(rng.next_f64(12.0)).unwrap(),
             );
             let exact = point_on_segment_r(&p, &a, &b);
             match not_on_segment_a(approx3(&p), aa, ab) {
@@ -342,7 +342,7 @@ mod tests {
         assert!(rejected > 3900, "prefilter should reject generic points ({rejected}/4000)");
         // And points genuinely on the segment always defer or agree.
         for k in 1..20 {
-            let t = Rational::new(k.into(), 21.into());
+            let t = rat_new(k.into(), 21.into());
             let on = a.add(&b.sub(&a).scale(&t));
             assert!(point_on_segment_r(&on, &a, &b));
             assert_ne!(

@@ -54,7 +54,7 @@ fn cube_cube_overlap_matches_exact() {
 
 #[test]
 fn cube_sphere_matches_exact() {
-    // Modest tessellation: debug-build BigRational time grows quickly with
+    // Modest tessellation: debug-build exact-rational time grows quickly with
     // intersection count; battery_extended covers denser meshes in release.
     let a = Manifold::cube(v(2.0, 2.0, 2.0), true);
     let b = Manifold::sphere(1.3, 12);

@@ -158,8 +158,8 @@ pub fn build(
     let mut points3: Vec<R3> = Vec::new();
     let mut points2: Vec<R2> = Vec::new();
     // Hash-keyed dedup via R2Key: division-free structural hashing of the
-    // canonical rationals (num-rational's own Hash runs a Euclidean
-    // recursion per lookup, which dominated this whole function). Indices
+    // canonical rationals (a general rational Hash must tolerate unreduced
+    // values, and its cross-multiplication dominated this function). Indices
     // are assigned in insertion order, so output stays deterministic.
     // Fx hashing (unseeded, deterministic): the index is probe-only and never
     // iterated, so only insertion order — which is the caller's order — can

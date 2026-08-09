@@ -42,8 +42,12 @@ num-traits = "0.2"
 # Exact rational arithmetic for the robust (non-manifold) boolean engine.
 # Only touched when the f64 interval filters cannot decide a predicate sign,
 # and for constructed intersection points; the exact engine never uses them.
-num-bigint = "0.4"
-num-rational = "0.4"
+# dashu stores values up to two words inline, which removes the allocation
+# churn that dominated profiles of the robust engine (natively and, more
+# sharply, on wasm). Everything the engine sees goes through
+# src/robust/exact/backend.rs.
+dashu-int = { version = "0.5.1", default-features = false, features = ["std", "num-traits"] }
+dashu-ratio = { version = "0.5.1", default-features = false, features = ["std", "num-traits"] }
 clipper2-rust = "1.0.3"
 # Fast, *deterministic* (unseeded) hasher for the robust engine's hot maps.
 # Only used at sites whose iteration order provably never reaches the output

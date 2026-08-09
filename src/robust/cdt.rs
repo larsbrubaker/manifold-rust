@@ -124,7 +124,7 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
 impl Cdt {
     /// orient2d with the approx filter first, exact fallback. All CDT sign
     /// tests funnel through here (and `nondelaunay`) so generic-position
-    /// queries never touch BigInt.
+    /// queries never touch the bignum tier.
     #[inline]
     fn o2(&self, i: usize, j: usize, k: usize) -> Sign {
         orient2d_a(self.apts[i], self.apts[j], self.apts[k])
