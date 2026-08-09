@@ -154,18 +154,42 @@ Exact only when both operands are manifold AND `has_self_intersections()`
 is false (cached exact self-scan, ~0.2 ms with collider reuse; duplicates
 count as contact). The demo badges self-intersecting operands under Auto.
 
-## Open items, highest value first
+## Full-corpus verdict (2026-08-09)
 
-1. **Keep the batches doubling** until easy errors reappear or the corpus
-   is exhausted; referee anything with a >0.1% volume gap. ~3,900 of 9,904
-   meshes covered; referee tally robust 52 – exact 1 (the 1 now fixed).
-2. **Big-mesh timeouts.** ≥500 k-tri self-intersecting meshes still blow
-   60 s. Next profile targets: the arrangements wrapper cost (interning,
-   `extra` BTreeSet of rationals) and the remaining prefix-scan pair loops.
-3. **Full-corpus confirmation sweep** once the easy-error stream is dry —
-   run 12's 100-slowest slice is the standing identity gate (latest: 95/100
-   bit-identical, drift ≤0.1% from the documented swap skip, no new
-   failures).
+Every mesh in the local Thingi10K corpus has now been swept at
+current-era code (9,905 distinct meshes; the pre-fix runs-1/2 window was
+re-swept after the CDT/pairing fixes landed). Corpus-wide, latest result
+per mesh:
+
+| status | count |
+|---|---|
+| NoError | 8,823 |
+| Cancelled (120 s, large self-intersecting inputs) | 43 |
+| **NotClosed** | **0** (was 174 at pre-fix code) |
+| import failures (unreadable/unimportable, no engine attempt) | 1,039 |
+
+Every volume disagreement above the noise floor was arbitrated by the
+Monte-Carlo referee: **robust right in every case but one** (the fixed
+#301921), across ~150 arbitrated meshes — the exact engine's winding
+integral over- or under-counts on manifold-but-self-overlapping input,
+which is also why `Auto` now guards on `has_self_intersections()`. One
+cosmetic arbiter artifact: #79187 reports "neither" because robust's
+1e-5 residual sliver exceeds the referee's zero-hit absolute band —
+robust is right there to 1e-5 absolute.
+
+## Open items
+
+1. **43 timeouts** on very large self-intersecting meshes. Roadmap from
+   instrumentation: 55% of exact orient3d calls fall through to BigInt
+   because one near-zero full-mantissa coordinate inflates the shared
+   dyadic scale — the levers are fewer filter escalations or a
+   Shewchuk-style adaptive-expansion tier, plus (architectural) a
+   small-value-inline bigint backend to cut allocation churn. The i64
+   predicate tier (native-neutral, big wasm win) is already in.
+2. **Progress API** is in (library → FFI 0.3.1 → wasm → demo busy card).
+   A progress-capable *batch* boolean needs `csg_tree.rs`.
+3. `robust/intersection_graph.rs` is over the 800-line limit (~1,110)
+   and needs splitting before further additions.
 
 ## Reproducing the data
 
