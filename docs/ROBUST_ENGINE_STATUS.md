@@ -191,8 +191,9 @@ words, no compiler-rt allocation churn).
 
 ## Open items
 
-1. **Timeouts on very large self-intersecting meshes** (43 pre-swap;
-   re-count after the 1.77×). Remaining levers: fewer orient3d filter
+1. **Timeouts on very large self-intersecting meshes**: 17 (was 43
+   pre-swap; the dashu backend cleared 26 at the 120 s budget, and every
+   newly-completed mesh with a volume gap arbitrated robust-right). Remaining levers: fewer orient3d filter
    escalations or a Shewchuk-style adaptive-expansion tier (55% of
    exact orient3d calls genuinely exceed the i128 budget due to
    shared-scale inflation).
