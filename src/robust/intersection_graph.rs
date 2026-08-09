@@ -35,14 +35,14 @@ use crate::linalg::Vec3;
 use crate::types::Box;
 
 use super::arrangement::{self, ArrangementInput};
-use super::exact::rational::{r3_eq, R3, R3Key};
+use super::exact::rational::{r3_eq, R3};
 use super::tri_tri::{tri_tri_intersect, TriTriIsect};
 
 use super::graph_geom::{
     approx3, box3_contains, clip_segment_to_polygon, point_in_polygon_coplanar, point_on_segment_f,
     seg_box3,
 };
-use super::graph_types::{bit_edge_key, geo_edge_key, BitEdgeKey, GeoEdgeKey};
+use super::graph_types::{bit_edge_key, geo_edge_key, BitEdgeKey, GeoEdgeKey, PointTable};
 
 // `tri_box` / `is_degenerate` / `real_self_contact` / `SelfCutStats` stay
 // crate-internal (robust/soup.rs reaches them through this path).
@@ -324,10 +324,14 @@ pub fn build_graph_with_progress(
     // 4a. Candidate points per intersected triangle. Pure per triangle, so
     // the map parallelizes under the bit-identical rule: results land in
     // worklist order regardless of schedule.
-    let mut candidates: [Vec<Option<Vec<R3>>>; 2] = [
-        vec![None; p.len()],
-        vec![None; q.len()],
-    ];
+    //
+    // Candidates are interned into a build-local [`PointTable`] as they land
+    // and kept as `u32` ids from here on. Everything downstream of this point
+    // (the two registry sweeps, their hit lists, their dedup sets and their
+    // keys) then moves ids instead of rational triples, which is what makes
+    // million-split meshes fit in memory — see PointTable's own comment.
+    let mut candidates: [Vec<Option<Vec<u32>>>; 2] = [vec![None; p.len()], vec![None; q.len()]];
+    let mut ptab = PointTable::default();
     let cand_work: Vec<(usize, usize)> = (0..2)
         .flat_map(|m| (0..meshes[m].len()).map(move |ti| (m, ti)))
         .filter(|&(m, ti)| {
@@ -336,20 +340,67 @@ pub fn build_graph_with_progress(
         })
         .collect();
     begin_phase(progress, Phase::CandidatePoints, cand_work.len() as u64);
-    let cand_results = maybe_par_map_ct_progress(cand_work.len(), 16, token, progress, |i| {
-        let (m, ti) = cand_work[i];
-        let pr = &prims[m][ti];
-        let input = ArrangementInput {
-            points: pr.points.clone(),
-            segments: pr.segments.clone(),
-        };
-        arrangement::candidate_points(meshes[m][ti], &input, token)
-    })?;
-    for (&(m, ti), cands) in cand_work.iter().zip(cand_results) {
-        candidates[m][ti] = Some(cands?);
+    // Swept in chunks: a parallel map over the whole worklist would hold
+    // every triangle's rational candidate list alive at once (12.6 M points
+    // on Thingi10K #252784), whereas interning after each chunk keeps only
+    // one copy per distinct point. Chunk boundaries are pure batching — the
+    // closure, the result order and the interning order are unchanged, so
+    // the ids (and everything downstream) are identical to the one-shot map.
+    const CAND_CHUNK: usize = 1 << 16;
+    let mut n_cand_total = 0usize;
+    let mut base = 0usize;
+    while base < cand_work.len() {
+        let len = CAND_CHUNK.min(cand_work.len() - base);
+        let cand_results = maybe_par_map_ct_progress(len, 16, token, progress, |i| {
+            let (m, ti) = cand_work[base + i];
+            let pr = &prims[m][ti];
+            let input = ArrangementInput {
+                points: pr.points.clone(),
+                segments: pr.segments.clone(),
+            };
+            arrangement::candidate_points(meshes[m][ti], &input, token)
+        })?;
+        for (&(m, ti), cands) in cand_work[base..base + len].iter().zip(cand_results) {
+            let cands = cands?;
+            n_cand_total += cands.len();
+            candidates[m][ti] = Some(cands.iter().map(|pt| ptab.intern(pt)).collect());
+        }
+        base += len;
     }
 
+    // Intersection-segment endpoints share the id space, so the segment
+    // registry keys on `(u32, u32)` too. Flat per-mesh arrays (offsets +
+    // endpoint-id pairs) mirror `prims[m][ti].segments` exactly; phases 4c
+    // and 5 read the ids instead of rebuilding rational keys per probe.
+    let mut seg_off: [Vec<usize>; 2] = [Vec::new(), Vec::new()];
+    let mut seg_ends: [Vec<(u32, u32)>; 2] = [Vec::new(), Vec::new()];
+    for m in 0..2 {
+        seg_off[m].reserve(meshes[m].len() + 1);
+        seg_off[m].push(0);
+        for ti in 0..meshes[m].len() {
+            for (a, b, _) in &prims[m][ti].segments {
+                let ia = ptab.intern(a);
+                let ib = ptab.intern(b);
+                seg_ends[m].push((ia, ib));
+            }
+            seg_off[m].push(seg_ends[m].len());
+        }
+    }
+
+    // One exact point and one rounded approximation per id, shared by every
+    // triangle that sees it (both registry sweeps used to re-round every
+    // candidate per triangle).
+    let pts: Vec<&R3> = ptab.resolve();
+    let pts_a: Vec<[f64; 3]> = pts.iter().map(|p| approx3(p)).collect();
+
     crate::timing::print("robust: candidate points", t_cand);
+    crate::timing::print_count(&format!(
+        "robust: candidate points: {n_cand_total} total, {} interned (incl. segment endpoints), \
+         {} segment instances",
+        ptab.len(),
+        seg_ends[0].len() + seg_ends[1].len()
+    ));
+
     let t_reg = crate::timing::start();
 
     // 4b. Original-edge registry: split points on each mesh edge (geometric
@@ -368,13 +419,15 @@ pub fn build_graph_with_progress(
     // worklist, so the phase total counts it twice.
     begin_phase(progress, Phase::Registries, 2 * reg_work.len() as u64);
 
-    // Registry values are (points, seen) rather than BTreeSet: probes and
-    // dedup go through structural R3Key hashing, so the sequential merge
-    // never pays ordered rational comparisons, and the consuming `extra`
-    // sets see each point exactly once — the same content BTreeSet gave.
+    // Registry values are (ids, seen) rather than BTreeSet: dedup is a u32
+    // hash-set probe, so the sequential merge never pays ordered rational
+    // comparisons, and the consuming `extra` sets see each point exactly
+    // once — the same content BTreeSet gave. Dedup by id is dedup by exact
+    // value: `PointTable` is injective on the same equality (`r3_eq` on
+    // canonical rationals) the `R3Key` sets used.
     // Order invariance: the registry is only ever `get`/`entry`-probed, and
-    // its point lists land in a `BTreeSet<R3>` (`extra`) below, which sorts.
-    let mut edge_registry: [HashMap<BitEdgeKey, (Vec<R3>, HashSet<R3Key>)>; 2] =
+    // its points land in a `BTreeSet<R3>` (`extra`) below, which sorts.
+    let mut edge_registry: [HashMap<BitEdgeKey, (Vec<u32>, HashSet<u32>)>; 2] =
         [HashMap::default(), HashMap::default()];
     let edge_hits = maybe_par_map_ct_progress(reg_work.len(), 16, token, progress, |i| {
         let (m, ti) = reg_work[i];
@@ -390,76 +443,106 @@ pub fn build_graph_with_progress(
             [t[1].x, t[1].y, t[1].z],
             [t[2].x, t[2].y, t[2].z],
         ];
-        let cands_a: Vec<[f64; 3]> = cands.iter().map(approx3).collect();
-        let mut hits: Vec<(BitEdgeKey, R3)> = Vec::new();
+        let mut hits: Vec<(BitEdgeKey, u32)> = Vec::new();
         for e in 0..3 {
             let a = &corners[e];
             let b = &corners[(e + 1) % 3];
             let key = bit_edge_key(t[e], t[(e + 1) % 3]);
             let sbox = seg_box3(ca[e], ca[(e + 1) % 3]);
-            for (pt, pt_a) in cands.iter().zip(&cands_a) {
+            for &id in cands.iter() {
+                let (pt, pt_a) = (pts[id as usize], pts_a[id as usize]);
                 // A point on the edge lies inside its inflated box; the
                 // reject skips the exact comparisons for everything else.
-                if !box3_contains(&sbox, *pt_a) {
+                if !box3_contains(&sbox, pt_a) {
                     continue;
                 }
                 if !r3_eq(pt, a)
                     && !r3_eq(pt, b)
-                    && point_on_segment_f(*pt_a, pt, ca[e], a, ca[(e + 1) % 3], b)
+                    && point_on_segment_f(pt_a, pt, ca[e], a, ca[(e + 1) % 3], b)
                 {
-                    hits.push((key, pt.clone()));
+                    hits.push((key, id));
                 }
             }
         }
         hits
     })?;
     for (&(m, _), hits) in reg_work.iter().zip(&edge_hits) {
-        for (key, pt) in hits {
-            let e = edge_registry[m].entry(*key).or_default();
-            if e.1.insert(R3Key(pt.clone())) {
-                e.0.push(pt.clone());
+        for &(key, id) in hits {
+            let e = edge_registry[m].entry(key).or_default();
+            if e.1.insert(id) {
+                e.0.push(id);
             }
         }
     }
+    let n_edge_hits: usize = edge_hits.iter().map(|h| h.len()).sum();
+    drop(edge_hits);
 
     // 4c. Intersection-segment registry: for every pair segment, gather the
     // split points both sides know about.
-    // Hash-keyed with structural R3Key hashing: the map is only ever probed
-    // (entry/get), never iterated, and BTreeMap's exact rational comparisons
-    // per probe dominated this phase on segment-heavy meshes.
+    // Keyed on the segment's two endpoint ids: the map is only ever probed
+    // (entry/get), never iterated, and rational keys cost both the compare
+    // (BTreeMap) or hash (R3Key) per probe and a cloned rational triple per
+    // segment instance.
     // Same order-invariance argument as `edge_registry`: probe-only, and the
     // points it hands out are re-sorted through `extra: BTreeSet<R3>`.
-    let mut seg_splits: HashMap<(R3Key, R3Key), (Vec<R3>, HashSet<R3Key>)> = HashMap::default();
+    let mut seg_splits: HashMap<GeoEdgeKey, (Vec<u32>, HashSet<u32>)> = HashMap::default();
     let split_hits = maybe_par_map_ct_progress(reg_work.len(), 16, token, progress, |i| {
         let (m, ti) = reg_work[i];
         let cands = candidates[m][ti].as_ref().expect("filtered to Some");
-        let cands_a: Vec<[f64; 3]> = cands.iter().map(approx3).collect();
-        let mut hits: Vec<(GeoEdgeKey, R3)> = Vec::new();
-        for (a, b, _prov) in &prims[m][ti].segments {
-            let key = geo_edge_key(a, b);
-            let (aa, ba) = (approx3(a), approx3(b));
+        let mut hits: Vec<(GeoEdgeKey, u32)> = Vec::new();
+        for &(ia, ib) in &seg_ends[m][seg_off[m][ti]..seg_off[m][ti + 1]] {
+            let key = geo_edge_key(ia, ib);
+            let (a, b) = (pts[ia as usize], pts[ib as usize]);
+            let (aa, ba) = (pts_a[ia as usize], pts_a[ib as usize]);
             let sbox = seg_box3(aa, ba);
-            for (pt, pt_a) in cands.iter().zip(&cands_a) {
-                if !box3_contains(&sbox, *pt_a) {
+            for &id in cands.iter() {
+                let (pt, pt_a) = (pts[id as usize], pts_a[id as usize]);
+                if !box3_contains(&sbox, pt_a) {
                     continue;
                 }
-                if !r3_eq(pt, a) && !r3_eq(pt, b) && point_on_segment_f(*pt_a, pt, aa, a, ba, b) {
-                    hits.push((key.clone(), pt.clone()));
+                // Endpoint rejection by id: ids are injective on exact
+                // value, so this is exactly the `r3_eq` test it replaces.
+                if id != ia && id != ib && point_on_segment_f(pt_a, pt, aa, a, ba, b) {
+                    hits.push((key, id));
                 }
             }
         }
         hits
     })?;
     for hits in &split_hits {
-        for (key, pt) in hits {
-            let e = seg_splits.entry(key.clone()).or_default();
-            if e.1.insert(R3Key(pt.clone())) {
-                e.0.push(pt.clone());
+        for &(key, id) in hits {
+            let e = seg_splits.entry(key).or_default();
+            if e.1.insert(id) {
+                e.0.push(id);
             }
         }
     }
+    let n_split_hits: usize = split_hits.iter().map(|h| h.len()).sum();
+    drop(split_hits);
+
+    // The dedup sets have done their job; the arrangement phase below reads
+    // only the id lists. Releasing them (and the candidate lists, which no
+    // later phase touches) before phase 5 keeps the two peaks from stacking.
+    for m in 0..2 {
+        for v in edge_registry[m].values_mut() {
+            v.1 = HashSet::default();
+            v.0.shrink_to_fit();
+        }
+    }
+    for v in seg_splits.values_mut() {
+        v.1 = HashSet::default();
+        v.0.shrink_to_fit();
+    }
+    drop(candidates);
+    drop(pts_a);
 
     crate::timing::print("robust: split registries", t_reg);
+    crate::timing::print_count(&format!(
+        "robust: split registries: {n_edge_hits} edge hits over {} edges, \
+         {n_split_hits} segment hits over {} segments",
+        edge_registry[0].len() + edge_registry[1].len(),
+        seg_splits.len()
+    ));
     let t_arr = crate::timing::start();
 
     // 5. Build arrangements and emit pieces. The per-triangle arrangement
@@ -483,17 +566,20 @@ pub fn build_graph_with_progress(
         let pr = &prims[m][ti];
         // Boundary split points for this triangle (bit-keyed: uncut
         // triangles probe with zero rational work).
+        // Registry ids resolve back to points only here, one clone per point
+        // that actually reaches this triangle's arrangement — the set itself
+        // stays `BTreeSet<R3>` so the arrangement's input order is untouched.
         let mut extra: BTreeSet<R3> = BTreeSet::new();
         for e in 0..3 {
             if let Some(set) = edge_registry[m].get(&bit_edge_key(t[e], t[(e + 1) % 3])) {
-                extra.extend(set.0.iter().cloned());
+                extra.extend(set.0.iter().map(|&id| pts[id as usize].clone()));
             }
         }
         // Split points along this triangle's intersection segments
         // discovered by the other side.
-        for (a, b, _) in &pr.segments {
-            if let Some(set) = seg_splits.get(&geo_edge_key(a, b)) {
-                extra.extend(set.0.iter().cloned());
+        for &(ia, ib) in &seg_ends[m][seg_off[m][ti]..seg_off[m][ti + 1]] {
+            if let Some(set) = seg_splits.get(&geo_edge_key(ia, ib)) {
+                extra.extend(set.0.iter().map(|&id| pts[id as usize].clone()));
             }
         }
 

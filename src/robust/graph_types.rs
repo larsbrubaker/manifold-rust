@@ -32,17 +32,18 @@ pub fn edge_key(a: u32, b: u32) -> EdgeKey {
     }
 }
 
-/// Canonical (lexicographically sorted) exact edge between two points —
-/// local key for the split-point registries built before interning exists.
-/// Wrapped in [`R3Key`] so the registry hashes structurally instead of
-/// comparing rationals per probe.
-pub(super) type GeoEdgeKey = (R3Key, R3Key);
+/// Canonical (sorted) exact edge between two [`PointTable`] ids — local key
+/// for the split-point registries, which run before output interning exists.
+/// Ids stand in for the points themselves: the table is injective on exact
+/// value, so id equality *is* exact geometric identity, and a registry key
+/// costs 8 bytes instead of two cloned rational triples.
+pub(super) type GeoEdgeKey = (u32, u32);
 
-pub(super) fn geo_edge_key(a: &R3, b: &R3) -> GeoEdgeKey {
+pub(super) fn geo_edge_key(a: u32, b: u32) -> GeoEdgeKey {
     if a <= b {
-        (R3Key(a.clone()), R3Key(b.clone()))
+        (a, b)
     } else {
-        (R3Key(b.clone()), R3Key(a.clone()))
+        (b, a)
     }
 }
 
@@ -57,6 +58,59 @@ pub(super) fn bit_edge_key(a: Vec3, b: Vec3) -> BitEdgeKey {
         (ka, kb)
     } else {
         (kb, ka)
+    }
+}
+
+/// Registry-local point interner: one dense `u32` id per distinct exact
+/// point, used by the split registries (intersection_graph.rs phases 4b/4c)
+/// so they can store ids instead of cloning a rational triple per
+/// (edge, point) incidence. A giant self-intersecting mesh produces millions
+/// of split-point incidences, and the clone multiplicity — hit lists, dedup
+/// sets and edge keys each holding their own copy — was the memory wall,
+/// not any single structure.
+///
+/// Deliberately NOT [`VertInterner`]: that one's insertion order defines
+/// output vertex ids, so it must keep seeing points in piece-emission order.
+/// This table is internal to the registries; its ids never reach the output
+/// (they only group and dedup, and the points they hand back are re-sorted
+/// through a `BTreeSet<R3>`), so assigning them earlier is invisible.
+///
+/// Order invariance: probe-only (`entry`, never iterated except by
+/// [`PointTable::resolve`], which reconstructs the id-indexed order).
+#[derive(Default)]
+pub(super) struct PointTable {
+    map: HashMap<R3Key, u32>,
+}
+
+impl PointTable {
+    /// Id of `p`, assigning the next one on first sight. The clone is paid
+    /// once per *distinct* point (the probe key on a hit is temporary).
+    pub(super) fn intern(&mut self, p: &R3) -> u32 {
+        let next = self.map.len() as u32;
+        match self.map.entry(R3Key(p.clone())) {
+            std::collections::hash_map::Entry::Occupied(e) => *e.get(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(next);
+                next
+            }
+        }
+    }
+
+    pub(super) fn len(&self) -> usize {
+        self.map.len()
+    }
+
+    /// Borrowed point per id. Returning references (not clones) is the whole
+    /// point: the table then holds exactly one copy of each distinct point
+    /// for the rest of the build.
+    pub(super) fn resolve(&self) -> Vec<&R3> {
+        let mut pts: Vec<Option<&R3>> = vec![None; self.map.len()];
+        for (k, &id) in &self.map {
+            pts[id as usize] = Some(&k.0);
+        }
+        pts.into_iter()
+            .map(|p| p.expect("ids are dense in 0..len"))
+            .collect()
     }
 }
 
