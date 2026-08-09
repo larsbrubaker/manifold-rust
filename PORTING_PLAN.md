@@ -49,8 +49,13 @@ optional/peripheral:
   `craycloud` tests; worth checking when tackling import.
 
 ### Out of scope (do not re-litigate)
-- ExecutionContext (progress + mid-boolean cancellation, #1663/#1669/#1699/#1704) —
-  non-numerical; only needed if cancellation is wanted.
+- ExecutionContext's C++ *shape* (#1663/#1669/#1699/#1704) — non-numerical, and both
+  halves now exist natively instead of as a port: `src/cancel.rs` ports the cancellation
+  half (sticky atomic flag, `Error::Cancelled` empty result) and `src/progress.rs` is a
+  native progress API, not a port — the C++ counts whole pipeline phases, while we report
+  a named phase plus an intra-phase fraction because the robust engine's phases are
+  wildly unequal in cost. The remaining C++-side ctx plumbing (ctx-aware factories,
+  per-phase timing prints) stays out of scope.
 - Halfedge Refactoring (#1709) — structural cleanup, no behavior change.
 - CrossSection backend selector (#1710), concurrent-const-access safety (#1636),
   affinity_partitioner race (#1664) — threading concerns moot in the sequential port.

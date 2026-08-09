@@ -15,9 +15,12 @@
 // cancel.rs — cooperative cancellation for the long-running kernel entry
 // points (boolean, CSG tree evaluation).
 //
-// Port of the *cancellation* half of the C++ `ExecutionContext` mechanism; the
-// progress-reporting half (donePhases / totalPhases / Progress()) is
-// deliberately not ported — see PORTING_PLAN.md.
+// Port of the *cancellation* half of the C++ `ExecutionContext` mechanism. The
+// progress-reporting half (donePhases / totalPhases / Progress()) is not
+// ported: src/progress.rs provides progress reporting natively instead,
+// reporting named phases plus an intra-phase fraction rather than the C++'s
+// whole-pipeline phase count. Both are threaded through the kernel the same
+// way — as an `Option<&_>` whose `None` path is the pre-existing code.
 //
 // What the C++ does (cpp-reference/manifold/src/execution_impl.h:81-114):
 //   - `ExecutionContext::Impl` holds a single `std::atomic<bool> cancel`,

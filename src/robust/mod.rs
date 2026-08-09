@@ -19,6 +19,10 @@
 //   arrangement        — per-triangle 2D arrangement of intersection prims
 //   cdt                — exact constrained Delaunay triangulation
 //   intersection_graph — broad phase, prim distribution, piece emission
+//                        (split helpers: graph_types — edge keys, vertex
+//                        interner, Piece/IntersectionGraph; graph_geom —
+//                        boxes, clips, filtered on-segment tests;
+//                        graph_self_cut — same-mesh narrow phase)
 //   cells              — arrangement cell complex + winding propagation
 //   ray_shoot          — exact winding numbers (residual component seeds)
 //   soup               — triangle-soup import (closed/orientable validation)
@@ -45,6 +49,9 @@ pub mod assemble;
 pub mod cdt;
 pub mod cells;
 pub mod exact;
+mod graph_geom;
+mod graph_self_cut;
+mod graph_types;
 pub mod intersection_graph;
 pub mod pairing;
 pub mod ray_shoot;
