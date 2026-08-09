@@ -4,9 +4,10 @@
 // The card shows a CSS spinner, a title, a phase label, a progress track, a
 // ticking elapsed-seconds counter and an optional cancel button. The kernel
 // drives the two middle rows through `setPhase()`: the boolean worker forwards
-// the wasm progress callbacks (boolean-worker.ts) and BooleanRunner routes them
-// here. Phases with a known work total fill the bar; the rest leave it in its
-// indeterminate sweep. Both rows exist from the start, so a run that never
+// the wasm progress callbacks (boolean-worker.ts), BooleanRunner folds the
+// per-phase fractions into one monotonic overall fraction (progress-model.ts)
+// and routes them here. A run with no determinate work total leaves the bar in
+// its indeterminate sweep. Both rows exist from the start, so a run that never
 // reports does not resize or move the card.
 //
 // It anchors to the top-left of the 3D viewport: attach(container) parents the
@@ -141,9 +142,10 @@ export class BusyIndicator {
   }
 
   /**
-   * Forward-looking hook for the per-phase progress API: updates the phase
-   * label and the track. `fraction` in [0,1] switches the bar from its
-   * indeterminate sweep to a determinate fill; null keeps it indeterminate.
+   * Update the phase label and the track. `fraction` is the *overall*
+   * completion of the operation in [0,1] (the caller is responsible for
+   * keeping it monotonic — see progress-model.ts); null keeps the bar in its
+   * indeterminate sweep.
    */
   setPhase(label: string, fraction: number | null = null) {
     if (!this.root) return;

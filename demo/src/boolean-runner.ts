@@ -8,6 +8,7 @@
 
 import type { MeshData, BooleanEngine } from './wasm.ts';
 import { BusyIndicator } from './busy-indicator.ts';
+import { ProgressModel, phaseLabel } from './progress-model.ts';
 
 const ENGINE_NAMES = ['Exact', 'Robust', 'Auto'];
 const OP_NAMES = ['union', 'intersection', 'difference'];
@@ -54,6 +55,9 @@ export interface ProgressInfo {
   phase: string;
   /** Completion of that phase in [0,1], or null when it has no known total. */
   fraction: number | null;
+  /** Monotonic completion of the whole operation in [0,1] (what the bar
+   *  shows), or null while nothing determinate has been reported yet. */
+  overall: number | null;
 }
 
 export interface RunResult {
@@ -129,7 +133,7 @@ export class BooleanRunner {
       // Stale updates from a run that was superseded (or from a worker being
       // replaced) would fight the current run's label.
       if (msg.seq !== this.seq) return;
-      this.reportProgress(msg.phase as string, msg.fraction ?? null);
+      this.reportProgress(msg.seq as number, msg.phase as string | number, msg.fraction ?? null);
     } else if (msg.type === 'result') {
       const params = this.currentRun!;
       this.runInFlight = false;
@@ -157,14 +161,20 @@ export class BooleanRunner {
    *  fills. */
   private lastProgressMs = 0;
   private lastProgressPhase: string | null = null;
+  /** Turns the per-phase fractions into one bar that only ever fills. */
+  private progress = new ProgressModel();
 
-  private reportProgress(phase: string, fraction: number | null) {
+  private reportProgress(seq: number, phase: string | number, fraction: number | null) {
+    const name = phaseLabel(phase);
     const now = performance.now();
-    if (phase === this.lastProgressPhase && now - this.lastProgressMs < 100) return;
-    this.lastProgressPhase = phase;
+    if (name === this.lastProgressPhase && now - this.lastProgressMs < 100) return;
+    this.lastProgressPhase = name;
     this.lastProgressMs = now;
-    this.indicator?.setPhase(phase, fraction);
-    this.onProgress({ phase, fraction });
+    // Throttled-away updates cost nothing: `overall` is a running max, so the
+    // next one that gets through carries the same information.
+    const overall = this.progress.update(seq, phase, fraction);
+    this.indicator?.setPhase(overall.label, overall.fraction);
+    this.onProgress({ phase: name, fraction, overall: overall.fraction });
   }
 
   /** Import one operand into the worker; the arrays are also cached so a
@@ -204,6 +214,9 @@ export class BooleanRunner {
     // against the previous run's last update.
     this.lastProgressPhase = null;
     this.lastProgressMs = 0;
+    // New operation: the overall bar starts empty again (the model also keys
+    // on seq, this just makes the lifecycle explicit).
+    this.progress.reset();
     const { tag, ...rest } = params;
     this.ensureWorker().postMessage({ type: 'run', seq: ++this.seq, ...rest });
   }
