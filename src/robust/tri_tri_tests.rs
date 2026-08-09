@@ -4,6 +4,7 @@
 
 use crate::linalg::Vec3;
 
+use super::super::exact::backend::Rational;
 use super::super::exact::rational::{rat, R3};
 use super::{dominant_axis, lift_to_plane, tri_tri_intersect, TriTriIsect};
 use crate::robust::exact::predicates::tri_normal_r;
@@ -99,8 +100,8 @@ fn known_crossing_segment_values() {
     let t1 = [v(0.0, 0.0, 0.0), v(4.0, 0.0, 0.0), v(0.0, 4.0, 0.0)];
     let t2 = [v(1.0, 0.0, -1.0), v(1.0, 2.0, -1.0), v(1.0, 1.0, 1.0)];
     // Edges cross z=0 at (1, 1/2, 0) and (1, 3/2, 0).
-    let expect0 = R3::new(rat(1.0), num_rational::BigRational::new(1.into(), 2.into()), rat(0.0));
-    let expect1 = R3::new(rat(1.0), num_rational::BigRational::new(3.into(), 2.into()), rat(0.0));
+    let expect0 = R3::new(rat(1.0), Rational::new(1.into(), 2.into()), rat(0.0));
+    let expect1 = R3::new(rat(1.0), Rational::new(3.into(), 2.into()), rat(0.0));
     match isect_sym(t1, t2) {
         TriTriIsect::Segment(p, q) => {
             let (lo, hi) = if p.y < q.y { (p, q) } else { (q, p) };

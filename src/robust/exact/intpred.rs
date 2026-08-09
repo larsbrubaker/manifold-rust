@@ -18,9 +18,7 @@
 // Every budget below is derived from worst-case magnitudes, not measured, and
 // the tier declines (falls through to i128) the moment any operand exceeds it.
 
-use num_bigint::BigInt;
-use num_traits::Zero;
-
+use super::backend::{Int, IntSign, Zero};
 use super::Sign;
 
 /// Exact dyadic decomposition: returns (m, e) with v == m·2^e and trailing
@@ -151,7 +149,7 @@ fn narrow3(vs: [i128; 3], bits: u32) -> Option<[i64; 3]> {
 /// Same scaling with unbounded BigInt magnitudes. Public: the tri-tri
 /// interval overlap (robust/tri_tri.rs) reuses it to compare interval
 /// endpoints along the common plane-intersection line in pure integers.
-pub fn scaled_big<const N: usize>(vs: [f64; N]) -> [BigInt; N] {
+pub fn scaled_big<const N: usize>(vs: [f64; N]) -> [Int; N] {
     let d = vs.map(decomp);
     let emin = d
         .iter()
@@ -161,9 +159,9 @@ pub fn scaled_big<const N: usize>(vs: [f64; N]) -> [BigInt; N] {
         .unwrap_or(0);
     d.map(|(m, e)| {
         if m == 0 {
-            BigInt::zero()
+            Int::zero()
         } else {
-            BigInt::from(m) << (e - emin) as u32
+            Int::from(m) << (e - emin) as u32
         }
     })
 }
@@ -186,11 +184,11 @@ fn sign_i128(v: i128) -> Sign {
     }
 }
 
-fn sign_big(v: &BigInt) -> Sign {
+fn sign_big(v: &Int) -> Sign {
     match v.sign() {
-        num_bigint::Sign::Minus => Sign::Neg,
-        num_bigint::Sign::NoSign => Sign::Zero,
-        num_bigint::Sign::Plus => Sign::Pos,
+        IntSign::Minus => Sign::Neg,
+        IntSign::NoSign => Sign::Zero,
+        IntSign::Plus => Sign::Pos,
     }
 }
 

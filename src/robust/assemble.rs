@@ -20,8 +20,7 @@
 // vertices linked by merge vectors, mirroring the exact engine's MeshGL
 // output shape.
 
-use num_rational::BigRational;
-use num_traits::One;
+use super::exact::backend::{One, Rational};
 
 use crate::linalg::Vec3;
 use crate::manifold::Manifold;
@@ -50,7 +49,7 @@ impl<'a> PropCtx<'a> {
 /// Exact barycentric coordinates of `p` on triangle `tri` (p must lie on the
 /// triangle's plane), computed in the dominant-axis projection. The three
 /// weights sum to exactly 1.
-fn barycentric_r(p: &R3, tri: &[R3; 3]) -> [BigRational; 3] {
+fn barycentric_r(p: &R3, tri: &[R3; 3]) -> [Rational; 3] {
     use super::exact::predicates::tri_normal_r;
     let n = tri_normal_r(&tri[0], &tri[1], &tri[2]);
     let axis = dominant_axis(&n);
@@ -61,7 +60,7 @@ fn barycentric_r(p: &R3, tri: &[R3; 3]) -> [BigRational; 3] {
     let total = b.sub(&a).cross(&c.sub(&a));
     let w0 = b.sub(&p2).cross(&c.sub(&p2)) / &total;
     let w1 = c.sub(&p2).cross(&a.sub(&p2)) / &total;
-    let w2 = BigRational::one() - &w0 - &w1;
+    let w2 = Rational::one() - &w0 - &w1;
     [w0, w1, w2]
 }
 

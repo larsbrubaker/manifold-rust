@@ -8,7 +8,7 @@
 // approximate coordinate x̃ satisfies x̃ = x·(1+δ) with |δ| ≤ ε = 2⁻⁵³.
 // A predicate can therefore run entirely in f64 on the approximations and
 // certify its sign with a magnitude-based error bound; only near-degenerate
-// configurations escalate to the exact BigInt evaluations in predicates.rs.
+// configurations escalate to the exact Int evaluations in predicates.rs.
 //
 // The bounds here are deliberately conservative (they cover both the
 // float-evaluation roundoff and the input perturbation, with slack): an
@@ -221,7 +221,7 @@ mod tests {
     use super::super::rational::{rat_to_f64, R2, R3};
     use super::*;
     use crate::linalg::{Vec2, Vec3};
-    use num_rational::BigRational;
+    use super::super::backend::{Int, Rational};
 
     struct Lcg(u64);
     impl Lcg {
@@ -244,10 +244,10 @@ mod tests {
     /// A rational point near (x,y) with a huge denominator — its rounding is
     /// a genuine ε-perturbation, exercising the indirect-point case.
     fn wobble2(x: f64, y: f64, k: i64) -> R2 {
-        let tiny = BigRational::new(k.into(), num_bigint::BigInt::from(3u8).pow(40));
+        let tiny = Rational::new(k.into(), Int::from(3u8).pow(40));
         R2::new(
-            BigRational::from_float(x).unwrap() + &tiny,
-            BigRational::from_float(y).unwrap() - &tiny,
+            Rational::from_float(x).unwrap() + &tiny,
+            Rational::from_float(y).unwrap() - &tiny,
         )
     }
 
@@ -325,9 +325,9 @@ mod tests {
         let mut rejected = 0usize;
         for i in 0..4000 {
             let p = R3::new(
-                BigRational::from_float(rng.next_f64(12.0)).unwrap(),
-                BigRational::from_float(rng.next_f64(12.0)).unwrap(),
-                BigRational::from_float(rng.next_f64(12.0)).unwrap(),
+                Rational::from_float(rng.next_f64(12.0)).unwrap(),
+                Rational::from_float(rng.next_f64(12.0)).unwrap(),
+                Rational::from_float(rng.next_f64(12.0)).unwrap(),
             );
             let exact = point_on_segment_r(&p, &a, &b);
             match not_on_segment_a(approx3(&p), aa, ab) {
@@ -342,7 +342,7 @@ mod tests {
         assert!(rejected > 3900, "prefilter should reject generic points ({rejected}/4000)");
         // And points genuinely on the segment always defer or agree.
         for k in 1..20 {
-            let t = BigRational::new(k.into(), 21.into());
+            let t = Rational::new(k.into(), 21.into());
             let on = a.add(&b.sub(&a).scale(&t));
             assert!(point_on_segment_r(&on, &a, &b));
             assert_ne!(

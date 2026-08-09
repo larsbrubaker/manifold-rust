@@ -8,8 +8,7 @@
 // `is_degenerate` through the `intersection_graph` re-exports). The exact
 // predicates themselves live in robust/exact/{approx,predicates}.rs.
 
-use num_rational::BigRational;
-use num_traits::{One, Zero};
+use super::exact::backend::{One, Rational, Zero};
 
 use crate::linalg::Vec3;
 use crate::types::Box;
@@ -120,8 +119,8 @@ pub(super) fn clip_segment_to_polygon(a: &R3, b: &R3, poly: &[R3]) -> Option<(R3
     let dir = b2.sub(&a2);
 
     // Parametric clip of [0,1] against each CCW edge halfplane.
-    let mut t0 = BigRational::zero();
-    let mut t1 = BigRational::one();
+    let mut t0 = Rational::zero();
+    let mut t1 = Rational::one();
     for i in 0..pts2.len() {
         let e0 = &pts2[i];
         let e1 = &pts2[(i + 1) % pts2.len()];
@@ -131,13 +130,13 @@ pub(super) fn clip_segment_to_polygon(a: &R3, b: &R3, poly: &[R3]) -> Option<(R3
         let fa = edge.cross(&a2.sub(e0));
         let fd = edge.cross(&dir);
         if fd.is_zero() {
-            if fa < BigRational::zero() {
+            if fa < Rational::zero() {
                 return None; // parallel and strictly outside
             }
             continue;
         }
         let t_hit = -&fa / &fd;
-        if fd > BigRational::zero() {
+        if fd > Rational::zero() {
             // entering: f grows with t → require t >= t_hit
             if t_hit > t0 {
                 t0 = t_hit;
@@ -152,7 +151,7 @@ pub(super) fn clip_segment_to_polygon(a: &R3, b: &R3, poly: &[R3]) -> Option<(R3
     if t0 >= t1 {
         return None;
     }
-    let seg = |t: &BigRational| a.add(&b.sub(a).scale(t));
+    let seg = |t: &Rational| a.add(&b.sub(a).scale(t));
     Some((seg(&t0), seg(&t1)))
 }
 

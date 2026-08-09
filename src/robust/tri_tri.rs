@@ -12,8 +12,7 @@
 // Degenerate (zero-area) input triangles are the caller's responsibility to
 // drop beforehand (paper §5 pre-processing); this file debug-asserts that.
 
-use num_rational::BigRational;
-use num_traits::{Signed, Zero};
+use super::exact::backend::{Int, IntSign, Rational, Signed, Zero};
 
 use crate::linalg::Vec3;
 
@@ -188,8 +187,6 @@ enum EndPt {
 }
 
 fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]) -> TriTriIsect {
-    use num_bigint::BigInt;
-
     // Fast path: when a triangle has exactly one vertex ON the other's plane
     // and its remaining vertices strictly on one side, its interval on the
     // common line L is that single vertex. Two degenerate intervals overlap
@@ -224,15 +221,15 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
         t1[0].z, t1[1].z, t1[2].z, t2[0].z, t2[1].z, t2[2].z,
     ]);
     let v = |k: usize| [&sx[k], &sy[k], &sz[k]];
-    let sub = |a: [&BigInt; 3], b: [&BigInt; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-    let cross = |a: &[BigInt; 3], b: &[BigInt; 3]| {
+    let sub = |a: [&Int; 3], b: [&Int; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    let cross = |a: &[Int; 3], b: &[Int; 3]| {
         [
             &a[1] * &b[2] - &a[2] * &b[1],
             &a[2] * &b[0] - &a[0] * &b[2],
             &a[0] * &b[1] - &a[1] * &b[0],
         ]
     };
-    let dot = |a: &[BigInt; 3], b: [&BigInt; 3]| &a[0] * b[0] + &a[1] * b[1] + &a[2] * b[2];
+    let dot = |a: &[Int; 3], b: [&Int; 3]| &a[0] * b[0] + &a[1] * b[1] + &a[2] * b[2];
 
     let n1 = cross(&sub(v(1), v(0)), &sub(v(2), v(0)));
     let n2 = cross(&sub(v(4), v(3)), &sub(v(5), v(3)));
@@ -244,10 +241,10 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
 
     // Parameters dir·v and signed heights against the other triangle's
     // plane, computed lazily: a typical call touches 2–4 of the six
-    // vertices, and every skipped dot product is three skipped BigInt
+    // vertices, and every skipped dot product is three skipped Int
     // multiplications. Height signs replicate s1/s2 exactly.
     let du = |k: usize| dot(&dir, v(k));
-    let h = |k: usize, n: &[BigInt; 3], origin: usize| dot(n, v(k)) - dot(n, v(origin));
+    let h = |k: usize, n: &[Int; 3], origin: usize| dot(n, v(k)) - dot(n, v(origin));
     #[cfg(debug_assertions)]
     for i in 0..3 {
         debug_assert_eq!(int_sign(&h(i, &n2, 3)), s1[i], "scaled height disagrees with s1");
@@ -265,7 +262,7 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
         for i in 0..3 {
             if s[i] == Sign::Zero {
                 pts.push((
-                    (du(base + i), BigInt::from(1)),
+                    (du(base + i), Int::from(1)),
                     EndPt::Vert(which, i as u8),
                 ));
             }
@@ -281,7 +278,7 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
                 let du_v = du(base + j);
                 let mut den = &hu - &hv;
                 let mut num = &den * &du_u + &hu * (&du_v - &du_u);
-                if den.sign() == num_bigint::Sign::Minus {
+                if den.sign() == IntSign::Minus {
                     den = -den;
                     num = -num;
                 }
@@ -325,11 +322,11 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
 }
 
 #[cfg(debug_assertions)]
-fn int_sign(v: &num_bigint::BigInt) -> Sign {
+fn int_sign(v: &Int) -> Sign {
     match v.sign() {
-        num_bigint::Sign::Minus => Sign::Neg,
-        num_bigint::Sign::NoSign => Sign::Zero,
-        num_bigint::Sign::Plus => Sign::Pos,
+        IntSign::Minus => Sign::Neg,
+        IntSign::NoSign => Sign::Zero,
+        IntSign::Plus => Sign::Pos,
     }
 }
 
@@ -356,7 +353,7 @@ fn build_endpoint(e: EndPt, t1: &[Vec3; 3], t2: &[Vec3; 3]) -> R3 {
 }
 
 /// Unreduced fraction with positive denominator.
-type Frac = (num_bigint::BigInt, num_bigint::BigInt);
+type Frac = (Int, Int);
 
 fn cmp_frac(a: &Frac, b: &Frac) -> std::cmp::Ordering {
     // Denominators positive → cross-multiplication preserves order.
@@ -422,7 +419,7 @@ fn coplanar_overlap(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
 /// A clip vertex carried with the two auxiliary forms the sign tests want:
 /// the homogenized integer triple (exact fallback) and the correctly rounded
 /// f64 approximation (semi-static filter). Both are pure functions of `r`, so
-/// nothing here changes which points the clip produces — only how many BigInt
+/// nothing here changes which points the clip produces — only how many Int
 /// operations decide the signs along the way. Building them once per vertex
 /// replaces the three homogenizations `orient2d_r` did on *every* call.
 #[derive(Clone)]
@@ -604,7 +601,7 @@ fn canonical_polygon(poly: Vec<ClipPt>) -> Vec<ClipPt> {
             .expect("at least two distinct points");
         let param = |p: &R2| p.sub(&pts[0].r).dot(&dir);
         let (mut lo, mut hi) = (0usize, 0usize);
-        let (mut lo_t, mut hi_t) = (BigRational::zero(), BigRational::zero());
+        let (mut lo_t, mut hi_t) = (Rational::zero(), Rational::zero());
         for (i, p) in pts.iter().enumerate() {
             let t = param(&p.r);
             if t < lo_t {

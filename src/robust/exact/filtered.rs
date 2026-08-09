@@ -7,7 +7,7 @@
 // Predicates", 1997) shows the f64 sign is certain whenever
 // |det| > errboundA * permanent; otherwise orient2d/orient3d escalate to the
 // exact integer evaluation in robust/exact/intpred.rs (degenerate-heavy
-// meshes make this tier hot) and incircle to the BigRational evaluation in
+// meshes make this tier hot) and incircle to the Rational evaluation in
 // robust/exact/predicates.rs. Unlike Shewchuk we skip the adaptive
 // intermediate stages — exact integer evaluation is cheap enough that
 // simplicity wins.

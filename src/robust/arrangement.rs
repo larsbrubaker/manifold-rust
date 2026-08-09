@@ -16,7 +16,7 @@
 
 use std::collections::BTreeMap;
 
-use num_traits::Signed;
+use super::exact::backend::{Int, Signed};
 
 use crate::linalg::Vec3;
 
@@ -212,7 +212,7 @@ pub fn build(
     // Mutual proper crossings between segments become new points. Points are
     // homogenized once (Homog2) for the exact fallback, and approximated
     // once (correctly rounded f64) for the semi-static filters that certify
-    // generic-position signs without any BigInt work.
+    // generic-position signs without any Int work.
     let mut homogs: Vec<Homog2> = points2.iter().map(homog2_of).collect();
     let approx = |p: &R2| -> [f64; 2] { [rat_to_f64(&p.x), rat_to_f64(&p.y)] };
     let mut apts: Vec<[f64; 2]> = points2.iter().map(approx).collect();
@@ -289,7 +289,7 @@ pub fn build(
         // u = (p−pa)·(Pw·Aw) and t ∝ (u·v)/Pw — ordered and range-checked by
         // cross-multiplication with the positive denominators, no canonical
         // rationals anywhere.
-        let mut on_seg: Vec<(num_bigint::BigInt, num_bigint::BigInt, usize)> = Vec::new();
+        let mut on_seg: Vec<(Int, Int, usize)> = Vec::new();
         for (idx, hp) in homogs.iter().enumerate() {
             // A point on the segment lies in its exact box, so the inflated
             // box test cannot reject a true hit.
@@ -298,7 +298,7 @@ pub fn build(
             }
             // Approx filter next: almost every remaining point is certifiably
             // off the segment's line; only near-collinear candidates pay for
-            // BigInt.
+            // Int.
             match orient2d_a(apts[seg.a], apts[seg.b], apts[idx]) {
                 Some(_) => continue, // certified nonzero → not collinear
                 None => {}

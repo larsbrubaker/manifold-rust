@@ -11,26 +11,24 @@
 //   incircle(a,b,c,d) with a,b,c CCW: Pos = d strictly inside the circle
 //                       through a,b,c. (For CW a,b,c the sign flips.)
 
-use num_bigint::BigInt;
-use num_rational::BigRational;
-use num_traits::{Signed, Zero};
+use super::backend::{Int, Rational, Signed, Zero};
 
 use super::rational::{R2, R3};
 use super::Sign;
 
 // ─── Exact predicates ────────────────────────────────────────────────────────
 //
-// Predicate signs are computed in pure BigInt arithmetic: each point is
+// Predicate signs are computed in pure Int arithmetic: each point is
 // homogenized once ((x, y) = (X/W, Y/W) with W > 0 — num-rational keeps
 // denominators positive), and the determinant is scaled through by positive
-// denominator products, which preserves its sign. This avoids BigRational's
+// denominator products, which preserves its sign. This avoids Rational's
 // gcd normalization on every intermediate operation — the dominant cost of
 // the original rational formulation (the CDT's incircle calls on constructed
 // intersection points made it ~80% of robust-boolean wall time).
 
 /// (X, Y, W): x = X/W, y = Y/W with W > 0.
 #[inline]
-fn homog2(p: &R2) -> (BigInt, BigInt, BigInt) {
+fn homog2(p: &R2) -> (Int, Int, Int) {
     let (xn, xd) = (p.x.numer(), p.x.denom());
     let (yn, yd) = (p.y.numer(), p.y.denom());
     (xn * yd, yn * xd, xd * yd)
@@ -38,7 +36,7 @@ fn homog2(p: &R2) -> (BigInt, BigInt, BigInt) {
 
 /// (X, Y, Z, W): coordinates over one positive common denominator.
 #[inline]
-fn homog3(p: &R3) -> (BigInt, BigInt, BigInt, BigInt) {
+fn homog3(p: &R3) -> (Int, Int, Int, Int) {
     let (xn, xd) = (p.x.numer(), p.x.denom());
     let (yn, yd) = (p.y.numer(), p.y.denom());
     let (zn, zd) = (p.z.numer(), p.z.denom());
@@ -50,7 +48,7 @@ fn homog3(p: &R3) -> (BigInt, BigInt, BigInt, BigInt) {
 /// loops that test one point against many (the arrangement's segment sweep)
 /// homogenize each point once and reuse it across every predicate call.
 #[derive(Clone, Debug)]
-pub struct Homog2(pub BigInt, pub BigInt, pub BigInt);
+pub struct Homog2(pub Int, pub Int, pub Int);
 
 pub fn homog2_of(p: &R2) -> Homog2 {
     let (x, y, w) = homog2(p);
@@ -70,7 +68,7 @@ pub fn orient2d_h(a: &Homog2, b: &Homog2, c: &Homog2) -> Sign {
 /// `incircle_r` over pre-homogenized points — identical sign (same row
 /// scaling argument), computed without re-clearing any denominators.
 pub fn incircle_h(a: &Homog2, b: &Homog2, c: &Homog2, d: &Homog2) -> Sign {
-    let row = |p: &Homog2| -> (BigInt, BigInt, BigInt) {
+    let row = |p: &Homog2| -> (Int, Int, Int) {
         let nx = &p.0 * &d.2 - &d.0 * &p.2;
         let ny = &p.1 * &d.2 - &d.1 * &p.2;
         let s = &p.2 * &d.2;
@@ -112,7 +110,7 @@ pub fn point_in_tri_2d_h(p: &Homog2, a: &Homog2, b: &Homog2, c: &Homog2) -> TriL
 }
 
 #[inline]
-fn sign_of_int(v: &BigInt) -> Sign {
+fn sign_of_int(v: &Int) -> Sign {
     if v.is_positive() {
         Sign::Pos
     } else if v.is_negative() {
@@ -168,7 +166,7 @@ pub fn incircle_r(a: &R2, b: &R2, c: &R2, d: &R2) -> Sign {
     // Scaling row i by (WiWd)² keeps the lift column polynomial:
     //   Ui = (XiWd−XdWi)·WiWd,  Vi = (YiWd−YdWi)·WiWd,
     //   Li = (XiWd−XdWi)² + (YiWd−YdWi)².
-    let row = |p: &R2| -> (BigInt, BigInt, BigInt) {
+    let row = |p: &R2| -> (Int, Int, Int) {
         let (px, py, pw) = homog2(p);
         let nx = &px * &dw - &dx * &pw;
         let ny = &py * &dw - &dy * &pw;
@@ -222,7 +220,7 @@ pub fn point_on_segment_r(p: &R3, a: &R3, b: &R3) -> bool {
 /// comparisons (e.g. the radial ring sort in robust/classify.rs) the
 /// unreduced form is exactly as good as the canonical one and much cheaper
 /// to produce.
-pub fn dot_diff_raw(a: &R3, o: &R3, u: &R3) -> (BigInt, BigInt) {
+pub fn dot_diff_raw(a: &R3, o: &R3, u: &R3) -> (Int, Int) {
     let (ax, ay, az, aw) = homog3(a);
     let (ox, oy, oz, ow) = homog3(o);
     let (ux, uy, uz, uw) = homog3(u);
@@ -236,7 +234,7 @@ pub fn dot_diff_raw(a: &R3, o: &R3, u: &R3) -> (BigInt, BigInt) {
 /// Triangle normal as a denominator-cleared integer vector: cross(b−a, c−a)
 /// scaled by the positive Aw²BwCw. Direction (and zero-ness) match
 /// `tri_normal_r`; use where only the normal's direction matters.
-pub fn tri_normal_int(a: &R3, b: &R3, c: &R3) -> [BigInt; 3] {
+pub fn tri_normal_int(a: &R3, b: &R3, c: &R3) -> [Int; 3] {
     let (ax, ay, az, aw) = homog3(a);
     let (bx, by, bz, bw) = homog3(b);
     let (cx, cy, cz, cw) = homog3(c);
@@ -257,7 +255,7 @@ pub fn tri_normal_int(a: &R3, b: &R3, c: &R3) -> [BigInt; 3] {
 /// integer direction `d` and rational point `p`. Comparable across points by
 /// cross-multiplication — the segment-interval overlap in robust/tri_tri.rs
 /// orders plane-crossing points along the intersection line with this.
-pub fn dot_point_raw(d: &[BigInt; 3], p: &R3) -> (BigInt, BigInt) {
+pub fn dot_point_raw(d: &[Int; 3], p: &R3) -> (Int, Int) {
     let (px, py, pz, pw) = homog3(p);
     (&d[0] * &px + &d[1] * &py + &d[2] * &pz, pw)
 }
@@ -320,7 +318,7 @@ pub fn line_plane_intersect(p: &R3, q: &R3, a: &R3, b: &R3, c: &R3) -> Option<R3
     // plane normal enters both numerator and denominator of t, so any
     // positive common scale on it cancels — compute it as an integer cross
     // of denominator-cleared edge vectors and never normalize intermediates.
-    // Each output coordinate reduces exactly once in BigRational::new.
+    // Each output coordinate reduces exactly once in Rational::new.
     let (px, py, pz, pw) = homog3(p);
     let (qx, qy, qz, qw) = homog3(q);
     let (ax, ay, az, aw) = homog3(a);
@@ -355,8 +353,8 @@ pub fn line_plane_intersect(p: &R3, q: &R3, a: &R3, b: &R3, c: &R3) -> Option<R3
     let t_n = &n_dot_e * &qw;
     let t_d = &aw * &n_dot_d;
     let den = &pw * &qw * &t_d;
-    let coord = |pi: &BigInt, di: &BigInt| -> BigRational {
-        BigRational::new(pi * &qw * &t_d + di * &t_n, den.clone())
+    let coord = |pi: &Int, di: &Int| -> Rational {
+        Rational::new(pi * &qw * &t_d + di * &t_n, den.clone())
     };
     Some(R3::new(coord(&px, &dx), coord(&py, &dy), coord(&pz, &dz)))
 }
@@ -369,7 +367,7 @@ pub fn line_line_intersect_2d(a: &R2, b: &R2, c: &R2, d: &R2) -> Option<R2> {
     // homogenized points, x = a + t·(b−a) where
     //   t = N·Bw / (Dn·Cw),
     //   N  = cross(c−a, d−c)·AwCw·CwDw,   Dn = cross(b−a, d−c)·AwBw·CwDw,
-    // and each output coordinate reduces exactly once in BigRational::new.
+    // and each output coordinate reduces exactly once in Rational::new.
     let (ax, ay, aw) = homog2(a);
     let (bx, by, bw) = homog2(b);
     let (cx, cy, cw) = homog2(c);
@@ -390,15 +388,15 @@ pub fn line_line_intersect_2d(a: &R2, b: &R2, c: &R2, d: &R2) -> Option<R2> {
     // x_i = (A_i·Dn·Cw + N·ab_i) / (Aw·Cw·Dn)
     let den = &aw * &cw * &dn;
     let dn_cw = &dn * &cw;
-    let x = BigRational::new(&ax * &dn_cw + &n * &abx, den.clone());
-    let y = BigRational::new(&ay * &dn_cw + &n * &aby, den);
+    let x = Rational::new(&ax * &dn_cw + &n * &abx, den.clone());
+    let y = Rational::new(&ay * &dn_cw + &n * &aby, den);
     Some(R2::new(x, y))
 }
 
 /// Inverse of `R3::project_drop`: rebuild the dropped coordinate from the
 /// plane through `a` with (unnormalized, rational) normal `n`, whose `axis`
 /// component must be nonzero. Integer-only: the reconstructed coordinate is
-/// one `BigRational::new` (a single gcd); the carried coordinates are clones
+/// one `Rational::new` (a single gcd); the carried coordinates are clones
 /// of the projection's already-canonical rationals.
 pub fn lift_to_plane(p: &R2, axis: usize, a: &R3, n: &R3) -> R3 {
     let (nx, ny, nz, nw) = homog3(n);
@@ -407,8 +405,8 @@ pub fn lift_to_plane(p: &R2, axis: usize, a: &R3, n: &R3) -> R3 {
     // S = (n·a)·NwAw; dropped = (n·a − n_i·p_i − n_j·p_j) / n_k
     //   = (S·Pw − Aw·(N_i·P_i + N_j·P_j)) / (Aw·Pw·N_k).
     let s = &nx * &ax + &ny * &ay + &nz * &az;
-    let rebuild = |ni: &BigInt, nj: &BigInt, nk: &BigInt| -> BigRational {
-        BigRational::new(
+    let rebuild = |ni: &Int, nj: &Int, nk: &Int| -> Rational {
+        Rational::new(
             &s * &pw - &aw * (ni * &px + nj * &py),
             &aw * &pw * nk,
         )
@@ -434,7 +432,7 @@ pub fn lift_to_plane(p: &R2, axis: usize, a: &R3, n: &R3) -> R3 {
 /// Parameter of point x on segment (p,q) along the dominant axis of the
 /// segment direction — exact, in [0,1] iff x lies within the segment. The
 /// caller guarantees x is on the line through p and q and p != q.
-pub fn segment_param(p: &R3, q: &R3, x: &R3) -> BigRational {
+pub fn segment_param(p: &R3, q: &R3, x: &R3) -> Rational {
     let d = q.sub(p);
     let (num, den) = if !d.x.is_zero() {
         (&x.x - &p.x, d.x)

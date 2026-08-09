@@ -5,8 +5,7 @@
 
 use std::collections::BTreeSet;
 
-use num_rational::BigRational;
-use num_traits::{Signed, Zero};
+use super::super::exact::backend::{Rational, Signed, Zero};
 
 use crate::linalg::Vec3;
 
@@ -28,14 +27,14 @@ const TRI: [Vec3; 3] = [
     Vec3 { x: 0.0, y: 8.0, z: 0.0 },
 ];
 
-fn area2(a: &R2, b: &R2, c: &R2) -> BigRational {
+fn area2(a: &R2, b: &R2, c: &R2) -> Rational {
     b.sub(a).cross(&c.sub(a))
 }
 
 /// Shared checks: CCW sub-triangles, exact area conservation, every
 /// constraint edge realized in the triangulation.
 fn validate(arr: &Arrangement) {
-    let mut total = BigRational::zero();
+    let mut total = Rational::zero();
     for t in &arr.tris {
         let a2 = area2(
             &arr.points2[t[0]],
@@ -191,7 +190,7 @@ fn skew_plane_arrangement_lifts_exactly() {
     let a = R3::from_vec3(tri[0]);
     let b = R3::from_vec3(tri[1]);
     let c = R3::from_vec3(tri[2]);
-    let half = BigRational::new(1.into(), 2.into());
+    let half = Rational::new(1.into(), 2.into());
     let mab = a.add(&b).scale(&half);
     let mbc = b.add(&c).scale(&half);
     let mca = c.add(&a).scale(&half);

@@ -5,8 +5,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use num_rational::BigRational;
-use num_traits::{Signed, Zero};
+use super::super::exact::backend::{Rational, Signed, Zero};
 
 use crate::linalg::Vec2;
 
@@ -20,7 +19,7 @@ fn r2(x: f64, y: f64) -> R2 {
 }
 
 /// Twice the signed area, exact.
-fn area2(a: &R2, b: &R2, c: &R2) -> BigRational {
+fn area2(a: &R2, b: &R2, c: &R2) -> Rational {
     b.sub(a).cross(&c.sub(a))
 }
 
@@ -30,7 +29,7 @@ fn area2(a: &R2, b: &R2, c: &R2) -> BigRational {
 /// unconstrained internal edge.
 fn validate(points: &[R2], constraints: &[(usize, usize)], tris: &[[usize; 3]]) {
     // CCW and area sum.
-    let mut total = BigRational::zero();
+    let mut total = Rational::zero();
     for t in tris {
         let a2 = area2(&points[t[0]], &points[t[1]], &points[t[2]]);
         assert_eq!(Sign::of_rat(&a2), Sign::Pos, "sub-triangle not CCW: {t:?}");
@@ -269,7 +268,7 @@ fn fuzz_random_constraints() {
                 if orient2d_r(&pts[a], &pts[b], p) == Sign::Zero {
                     let d = pts[b].sub(&pts[a]);
                     let t = p.sub(&pts[a]).dot(&d);
-                    if t > BigRational::zero() && t < d.dot(&d) {
+                    if t > Rational::zero() && t < d.dot(&d) {
                         continue 'outer;
                     }
                 }

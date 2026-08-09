@@ -2,7 +2,10 @@
 // engine (src/robust).
 //
 // Layered design:
-//   rational.rs   — BigRational point types (R2/R3) and correctly rounded
+//   backend.rs    — the single seam to the bignum library: `Int`/`Rational`
+//                   type aliases plus the trait re-exports every other module
+//                   imports instead of naming num-bigint/num-rational.
+//   rational.rs   — Rational point types (R2/R3) and correctly rounded
 //                   rational→f64 conversion.
 //   predicates.rs — fully exact predicates and geometric constructions on
 //                   rational points; ground truth for everything.
@@ -13,6 +16,7 @@
 // The exact boolean pipeline (src/boolean3.rs) never calls into this module.
 
 pub mod approx;
+pub mod backend;
 pub mod filtered;
 pub mod intpred;
 pub mod predicates;
@@ -21,8 +25,7 @@ pub mod rational;
 #[cfg(test)]
 mod tests;
 
-use num_rational::BigRational;
-use num_traits::Signed;
+use backend::{Rational, Signed};
 
 /// Sign of an exactly evaluated quantity. The whole robust pipeline reasons
 /// in terms of signs; magnitudes only matter inside constructions.
@@ -48,7 +51,7 @@ impl Sign {
     }
 
     #[inline]
-    pub fn of_rat(r: &BigRational) -> Sign {
+    pub fn of_rat(r: &Rational) -> Sign {
         if r.is_positive() {
             Sign::Pos
         } else if r.is_negative() {

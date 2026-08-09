@@ -3,8 +3,7 @@
 // their rational ground truth (random + adversarial near-degenerate inputs),
 // exact constructions, and the filter hit-rate guarantee.
 
-use num_rational::BigRational;
-use num_traits::One;
+use super::backend::{Int, One, Rational};
 
 use crate::linalg::{Vec2, Vec3};
 
@@ -87,15 +86,15 @@ fn round_trip_is_bit_exact() {
 
 #[test]
 fn rounding_is_nearest_ties_even() {
-    let half_ulp = BigRational::new(1.into(), num_bigint::BigInt::one() << 53);
+    let half_ulp = Rational::new(1.into(), Int::one() << 53);
     // 1 + 2^-53 is exactly halfway between 1 and 1+2^-52; even mantissa wins → 1.
     let tie_down = rat(1.0) + &half_ulp;
     assert_eq!(rat_to_f64(&tie_down), 1.0);
     // 1 + 3·2^-53 is halfway between 1+2^-52 (odd mantissa) and 1+2^-51 (even) → up.
-    let tie_up = rat(1.0) + &half_ulp * BigRational::from_integer(3.into());
+    let tie_up = rat(1.0) + &half_ulp * Rational::from_integer(3.into());
     assert_eq!(rat_to_f64(&tie_up), 1.0 + 2.0 * 2f64.powi(-52));
     // Just above/below the midpoint round to the nearer neighbor.
-    let quarter_ulp = &half_ulp / BigRational::from_integer(2.into());
+    let quarter_ulp = &half_ulp / Rational::from_integer(2.into());
     assert_eq!(rat_to_f64(&(rat(1.0) + &quarter_ulp)), 1.0);
     assert_eq!(
         rat_to_f64(&(rat(1.0) + &half_ulp + &quarter_ulp)),
@@ -106,21 +105,21 @@ fn rounding_is_nearest_ties_even() {
 #[test]
 fn rounding_handles_overflow_and_subnormals() {
     // 2 * MAX overflows to infinity; MAX itself survives.
-    let two_max = rat(f64::MAX) * BigRational::from_integer(2.into());
+    let two_max = rat(f64::MAX) * Rational::from_integer(2.into());
     assert_eq!(rat_to_f64(&two_max), f64::INFINITY);
     assert_eq!(rat_to_f64(&(-two_max)), f64::NEG_INFINITY);
     // Half the smallest subnormal is a tie with 0 → even → 0.
     let min_sub = rat(5e-324);
-    let half_min = &min_sub / BigRational::from_integer(2.into());
+    let half_min = &min_sub / Rational::from_integer(2.into());
     assert_eq!(rat_to_f64(&half_min), 0.0);
     // Three quarters of the smallest subnormal rounds up to it.
-    let three_q = &min_sub * BigRational::new(3.into(), 4.into());
+    let three_q = &min_sub * Rational::new(3.into(), 4.into());
     assert_eq!(rat_to_f64(&three_q).to_bits(), 5e-324f64.to_bits());
     // A value between two subnormals rounds to the nearer one.
     let sub = f64::MIN_POSITIVE / 8.0; // subnormal with headroom
     let next = f64::from_bits(sub.to_bits() + 1);
-    let mid_plus = (rat(sub) + rat(next)) * BigRational::new(1.into(), 2.into())
-        + BigRational::new(1.into(), num_bigint::BigInt::one() << 2000);
+    let mid_plus = (rat(sub) + rat(next)) * Rational::new(1.into(), 2.into())
+        + Rational::new(1.into(), Int::one() << 2000);
     assert_eq!(rat_to_f64(&mid_plus).to_bits(), next.to_bits());
 }
 
@@ -281,7 +280,7 @@ fn line_plane_intersect_lands_on_plane_and_segment() {
     // Parameter is exactly 1/3.
     assert_eq!(
         segment_param(&p, &q, &x),
-        BigRational::new(1.into(), 3.into())
+        Rational::new(1.into(), 3.into())
     );
     // Parallel segment → None.
     let p2 = r3(0.0, 0.0, 2.0);

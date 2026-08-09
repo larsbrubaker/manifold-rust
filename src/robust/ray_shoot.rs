@@ -14,7 +14,7 @@
 // complement solid" is winding == 0 — the `complement` flag selects that
 // interpretation.
 
-use num_rational::BigRational;
+use super::exact::backend::Rational;
 
 use crate::linalg::Vec3;
 
@@ -458,7 +458,7 @@ fn could_graze(o: &R3, o2: &R3, a: &R3, b: &R3, c: &R3) -> bool {
 
 /// Representative interior point of a piece: its centroid (exact).
 pub fn piece_centroid(v: [&R3; 3]) -> R3 {
-    let third = BigRational::new(1.into(), 3.into());
+    let third = Rational::new(1.into(), 3.into());
     v[0].add(v[1]).add(v[2]).scale(&third)
 }
 
@@ -563,7 +563,7 @@ mod tests {
             R3::from_vec3(v(0.0, 1.0, 0.0)),
         ];
         let c = piece_centroid([&p[0], &p[1], &p[2]]);
-        assert_eq!(c.x, BigRational::new(1.into(), 3.into()));
+        assert_eq!(c.x, Rational::new(1.into(), 3.into()));
         assert!(c.z.is_zero());
     }
 }

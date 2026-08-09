@@ -1,7 +1,7 @@
 // robust/exact/rational.rs — Exact rational points and correctly rounded
 // rational→f64 conversion for the robust boolean engine.
 //
-// Input mesh vertices are finite f64 and convert to BigRational exactly
+// Input mesh vertices are finite f64 and convert to Rational exactly
 // (`rat`, `R3::from_vec3`). Constructed points — plane/segment intersections
 // built in robust/exact/predicates.rs — stay rational through the whole
 // pipeline; only output assembly rounds them back, via `rat_to_f64`, which
@@ -10,9 +10,7 @@
 // output vertices agree with the exact engine's to the last ulp on
 // intersection points, and bit-for-bit on pass-through input vertices.
 
-use num_bigint::BigUint;
-use num_rational::BigRational;
-use num_traits::{Signed, ToPrimitive, Zero};
+use super::backend::{IntSign, Rational, Signed, ToPrimitive, Uint, Zero};
 
 use crate::linalg::{Vec2, Vec3};
 
@@ -23,8 +21,8 @@ use crate::linalg::{Vec2, Vec3};
 /// (`Error::NonFiniteVertex`) long before the robust engine runs, so a
 /// non-finite value here is an internal logic error, not bad user input.
 #[inline]
-pub fn rat(v: f64) -> BigRational {
-    BigRational::from_float(v).expect("robust engine: coordinate must be finite")
+pub fn rat(v: f64) -> Rational {
+    Rational::from_float(v).expect("robust engine: coordinate must be finite")
 }
 
 /// 2^e as f64, exact for the full representable range -1074..=1023
@@ -44,13 +42,13 @@ fn pow2(e: i64) -> f64 {
 /// result, identical to rounding the exact real value once. Values beyond
 /// f64 range become ±infinity; values below half the smallest subnormal
 /// become (signed) zero.
-pub fn rat_to_f64(r: &BigRational) -> f64 {
+pub fn rat_to_f64(r: &Rational) -> f64 {
     if r.is_zero() {
         return 0.0;
     }
     let neg = r.is_negative();
-    let n: &BigUint = r.numer().magnitude();
-    let d: &BigUint = r.denom().magnitude();
+    let n: &Uint = r.numer().magnitude();
+    let d: &Uint = r.denom().magnitude();
 
     // Exact floor exponent e: 2^e <= n/d < 2^(e+1).
     let mut e = n.bits() as i64 - d.bits() as i64;
@@ -115,13 +113,13 @@ pub fn rat_to_f64(r: &BigRational) -> f64 {
 /// arrangement code uses for exact point dedup in BTree maps.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct R2 {
-    pub x: BigRational,
-    pub y: BigRational,
+    pub x: Rational,
+    pub y: Rational,
 }
 
 impl R2 {
     #[inline]
-    pub fn new(x: BigRational, y: BigRational) -> Self {
+    pub fn new(x: Rational, y: Rational) -> Self {
         Self { x, y }
     }
 
@@ -142,16 +140,16 @@ impl R2 {
         R2::new(&self.x + &o.x, &self.y + &o.y)
     }
 
-    pub fn scale(&self, s: &BigRational) -> R2 {
+    pub fn scale(&self, s: &Rational) -> R2 {
         R2::new(&self.x * s, &self.y * s)
     }
 
-    pub fn dot(&self, o: &R2) -> BigRational {
+    pub fn dot(&self, o: &R2) -> Rational {
         &self.x * &o.x + &self.y * &o.y
     }
 
     /// 2D cross product (z of the 3D cross of the embedded vectors).
-    pub fn cross(&self, o: &R2) -> BigRational {
+    pub fn cross(&self, o: &R2) -> Rational {
         &self.x * &o.y - &self.y * &o.x
     }
 
@@ -166,14 +164,14 @@ impl R2 {
 /// exact vertex welding in output assembly.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct R3 {
-    pub x: BigRational,
-    pub y: BigRational,
-    pub z: BigRational,
+    pub x: Rational,
+    pub y: Rational,
+    pub z: Rational,
 }
 
 impl R3 {
     #[inline]
-    pub fn new(x: BigRational, y: BigRational, z: BigRational) -> Self {
+    pub fn new(x: Rational, y: Rational, z: Rational) -> Self {
         Self { x, y, z }
     }
 
@@ -194,11 +192,11 @@ impl R3 {
         R3::new(&self.x + &o.x, &self.y + &o.y, &self.z + &o.z)
     }
 
-    pub fn scale(&self, s: &BigRational) -> R3 {
+    pub fn scale(&self, s: &Rational) -> R3 {
         R3::new(&self.x * s, &self.y * s, &self.z * s)
     }
 
-    pub fn dot(&self, o: &R3) -> BigRational {
+    pub fn dot(&self, o: &R3) -> Rational {
         &self.x * &o.x + &self.y * &o.y + &self.z * &o.z
     }
 
@@ -240,13 +238,13 @@ impl R3 {
 // scratch values and must never be used as keys.)
 
 #[inline]
-fn rat_fields_eq(a: &BigRational, b: &BigRational) -> bool {
+fn rat_fields_eq(a: &Rational, b: &Rational) -> bool {
     a.numer() == b.numer() && a.denom() == b.denom()
 }
 
-fn hash_rat<H: std::hash::Hasher>(r: &BigRational, state: &mut H) {
+fn hash_rat<H: std::hash::Hasher>(r: &Rational, state: &mut H) {
     use std::hash::Hash;
-    (r.numer().sign() == num_bigint::Sign::Minus).hash(state);
+    (r.numer().sign() == IntSign::Minus).hash(state);
     for d in r.numer().iter_u64_digits() {
         d.hash(state);
     }
