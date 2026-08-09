@@ -148,6 +148,16 @@ pub fn build_cells_with_token(
     graph: &IntersectionGraph,
     token: Option<&crate::cancel::CancelToken>,
 ) -> Option<CellComplex> {
+    build_cells_with_progress(graph, token, None)
+}
+
+/// [`build_cells_with_token`] that also reports the arrangement-edge sweep's
+/// fraction to `progress`. `None` costs nothing (see [`crate::progress`]).
+pub fn build_cells_with_progress(
+    graph: &IntersectionGraph,
+    token: Option<&crate::cancel::CancelToken>,
+    progress: Option<&crate::progress::ProgressReporter>,
+) -> Option<CellComplex> {
     let n = graph.pieces.len();
     let vt = VertTables::of(graph);
     let ds = DisjointSets::new((2 * n).max(1) as u32);
@@ -165,6 +175,7 @@ pub fn build_cells_with_token(
     }
     incident.sort_unstable();
 
+    crate::progress::begin_phase(progress, crate::progress::Phase::Cells, incident.len() as u64);
     let mut at = 0;
     while at < incident.len() {
         if crate::cancel::is_cancelled(token) {
@@ -176,6 +187,9 @@ pub fn build_cells_with_token(
             end += 1;
         }
         let raw = &incident[at..end];
+        if let Some(pr) = progress {
+            pr.advance((end - at) as u64);
+        }
         at = end;
         if raw.len() < 2 {
             continue; // a boundary edge bounds no wedge

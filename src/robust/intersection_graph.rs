@@ -342,6 +342,20 @@ pub fn build_graph_with_token(
     q: &[[Vec3; 3]],
     token: Option<&crate::cancel::CancelToken>,
 ) -> Option<IntersectionGraph> {
+    build_graph_with_progress(p, q, token, None)
+}
+
+/// [`build_graph_with_token`] that also reports its five phases to
+/// `progress` (see [`crate::progress`]). `None` is exactly
+/// [`build_graph_with_token`]: no counter is touched and no branch is taken
+/// inside any inner loop.
+pub fn build_graph_with_progress(
+    p: &[[Vec3; 3]],
+    q: &[[Vec3; 3]],
+    token: Option<&crate::cancel::CancelToken>,
+    progress: Option<&crate::progress::ProgressReporter>,
+) -> Option<IntersectionGraph> {
+    use crate::progress::{begin_phase, maybe_par_map_ct_progress, Phase};
     let cancelled = || crate::cancel::is_cancelled(token);
     let t_all = crate::timing::start();
     let meshes: [&[[Vec3; 3]]; 2] = [p, q];
@@ -386,9 +400,13 @@ pub fn build_graph_with_token(
     let mut pair_count = 0usize;
 
     let mut candidates_q: Vec<usize> = Vec::new();
+    begin_phase(progress, Phase::NarrowPhase, p.len() as u64);
     for (pi, pt) in p.iter().enumerate() {
         if cancelled() {
             return None;
+        }
+        if let Some(pr) = progress {
+            pr.advance(1);
         }
         if !live[0][pi] {
             continue;
@@ -441,6 +459,11 @@ pub fn build_graph_with_token(
     // component (robust/propagate.rs never crosses constraint edges).
     // Broad phase: per-mesh BVH, same approach as the cross-mesh loop above
     // (candidates re-sorted so provenance ids stay deterministic).
+    begin_phase(
+        progress,
+        Phase::SelfIntersections,
+        (p.len() + q.len()) as u64,
+    );
     for m in 0..2 {
         let (tris, boxes) = if m == 0 {
             (p, &p_boxes)
@@ -468,7 +491,7 @@ pub fn build_graph_with_token(
         let mut n_pairs = 0usize;
         let mut n_cut = 0usize;
         let mut stats = SelfCutStats::default();
-        let contact_results = crate::par::maybe_par_map_ct(tris.len(), 64, token, |i| {
+        let contact_results = maybe_par_map_ct_progress(tris.len(), 64, token, progress, |i| {
             let mut local = SelfCutStats::default();
             let mut contacts: Vec<(usize, Vec<(R3, R3)>)> = Vec::new();
             let mut local_pairs = 0usize;
@@ -579,7 +602,8 @@ pub fn build_graph_with_token(
             !pr.points.is_empty() || !pr.segments.is_empty()
         })
         .collect();
-    let cand_results = crate::par::maybe_par_map_ct(cand_work.len(), 16, token, |i| {
+    begin_phase(progress, Phase::CandidatePoints, cand_work.len() as u64);
+    let cand_results = maybe_par_map_ct_progress(cand_work.len(), 16, token, progress, |i| {
         let (m, ti) = cand_work[i];
         let pr = &prims[m][ti];
         let input = ArrangementInput {
@@ -607,6 +631,9 @@ pub fn build_graph_with_token(
         .flat_map(|m| (0..meshes[m].len()).map(move |ti| (m, ti)))
         .filter(|&(m, ti)| candidates[m][ti].is_some())
         .collect();
+    // Two sweeps (original edges, then intersection segments) over the same
+    // worklist, so the phase total counts it twice.
+    begin_phase(progress, Phase::Registries, 2 * reg_work.len() as u64);
 
     // Registry values are (points, seen) rather than BTreeSet: probes and
     // dedup go through structural R3Key hashing, so the sequential merge
@@ -616,7 +643,7 @@ pub fn build_graph_with_token(
     // its point lists land in a `BTreeSet<R3>` (`extra`) below, which sorts.
     let mut edge_registry: [HashMap<BitEdgeKey, (Vec<R3>, HashSet<R3Key>)>; 2] =
         [HashMap::default(), HashMap::default()];
-    let edge_hits = crate::par::maybe_par_map_ct(reg_work.len(), 16, token, |i| {
+    let edge_hits = maybe_par_map_ct_progress(reg_work.len(), 16, token, progress, |i| {
         let (m, ti) = reg_work[i];
         let cands = candidates[m][ti].as_ref().expect("filtered to Some");
         let t = meshes[m][ti];
@@ -670,7 +697,7 @@ pub fn build_graph_with_token(
     // Same order-invariance argument as `edge_registry`: probe-only, and the
     // points it hands out are re-sorted through `extra: BTreeSet<R3>`.
     let mut seg_splits: HashMap<(R3Key, R3Key), (Vec<R3>, HashSet<R3Key>)> = HashMap::default();
-    let split_hits = crate::par::maybe_par_map_ct(reg_work.len(), 16, token, |i| {
+    let split_hits = maybe_par_map_ct_progress(reg_work.len(), 16, token, progress, |i| {
         let (m, ti) = reg_work[i];
         let cands = candidates[m][ti].as_ref().expect("filtered to Some");
         let cands_a: Vec<[f64; 3]> = cands.iter().map(approx3).collect();
@@ -716,7 +743,8 @@ pub fn build_graph_with_token(
         .flat_map(|m| (0..meshes[m].len()).map(move |ti| (m, ti)))
         .filter(|&(m, ti)| live[m][ti])
         .collect();
-    let arr_results = crate::par::maybe_par_map_ct(arr_work.len(), 16, token, |i| {
+    begin_phase(progress, Phase::Arrangements, arr_work.len() as u64);
+    let arr_results = maybe_par_map_ct_progress(arr_work.len(), 16, token, progress, |i| {
         let (m, ti) = arr_work[i];
         let t = meshes[m][ti];
         let pr = &prims[m][ti];

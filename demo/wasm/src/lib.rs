@@ -8,6 +8,7 @@ use manifold_rust::quickhull;
 use wasm_bindgen::prelude::*;
 use js_sys::{Float32Array, Uint32Array};
 
+mod progress;
 mod soup;
 pub use soup::*;
 
@@ -491,6 +492,22 @@ pub fn boolean_gallery_mesh_engine(shape_a: i32, shape_b: i32, op: i32, offset_x
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
 pub fn boolean_gallery_mesh_repair(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32, repair: bool) -> MeshData {
+    boolean_gallery_mesh_impl(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, repair, None)
+}
+
+/// [`boolean_gallery_mesh_repair`] that reports pipeline progress to
+/// `on_progress`, called as `on_progress(phaseName, fraction | null)`. Pass
+/// `undefined` for the un-instrumented path.
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn boolean_gallery_mesh_progress(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32, repair: bool, on_progress: Option<js_sys::Function>) -> MeshData {
+    progress::with_reporter(on_progress, |reporter| {
+        boolean_gallery_mesh_impl(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, repair, reporter)
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn boolean_gallery_mesh_impl(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32, repair: bool, reporter: Option<&manifold_rust::progress::ProgressReporter>) -> MeshData {
     // Distinct colors: shape A = blue (opaque), shape B = off-red (translucent)
     let mut a = make_shape(shape_a);
     let mut b = make_shape(shape_b);
@@ -502,7 +519,7 @@ pub fn boolean_gallery_mesh_repair(shape_a: i32, shape_b: i32, op: i32, offset_x
     let b = color_shape(&b, 0.85, 0.25, 0.25, 0.6);
     // Rotate shape B about its offset center, then translate
     let b = b.rotate(rot_x, rot_y, rot_z).translate(Vec3::new(offset_x, offset_y, offset_z));
-    let result = soup::op_with_engine(&a, &b, op, engine);
+    let result = soup::op_with_engine_progress(&a, &b, op, engine, reporter);
     mesh_data_from(&result)
 }
 

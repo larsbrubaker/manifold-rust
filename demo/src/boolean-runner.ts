@@ -48,6 +48,14 @@ export interface RunParams {
   tag?: any;
 }
 
+/** One kernel progress notification, as forwarded by the worker. */
+export interface ProgressInfo {
+  /** Pipeline phase name, e.g. "arrangements". */
+  phase: string;
+  /** Completion of that phase in [0,1], or null when it has no known total. */
+  fraction: number | null;
+}
+
 export interface RunResult {
   data: MeshData;
   /** Worker-side wall time of the boolean evaluation itself. */
@@ -91,6 +99,8 @@ export class BooleanRunner {
   onError: (error: string, params: RunParams) => void = () => {};
   onBusyChange: (busy: boolean) => void = () => {};
   onCancelled: () => void = () => {};
+  /** Kernel phase updates for the run in flight (already rate limited). */
+  onProgress: (info: ProgressInfo) => void = () => {};
 
   private ensureWorker(): Worker {
     if (!this.worker) {
@@ -115,6 +125,11 @@ export class BooleanRunner {
       console.debug('[boolean-runner] imported', msg.slot, msg.status, `${msg.num_tri} tris`);
       const waiter = this.importWaiters.shift();
       waiter?.(msg as ImportInfo);
+    } else if (msg.type === 'progress') {
+      // Stale updates from a run that was superseded (or from a worker being
+      // replaced) would fight the current run's label.
+      if (msg.seq !== this.seq) return;
+      this.reportProgress(msg.phase as string, msg.fraction ?? null);
     } else if (msg.type === 'result') {
       const params = this.currentRun!;
       this.runInFlight = false;
@@ -135,6 +150,21 @@ export class BooleanRunner {
         this.onError(msg.error, params);
       }
     }
+  }
+
+  /** Main-thread rate limit (~10 Hz), on top of the worker's. A phase change
+   *  always renders immediately: the label is the useful signal, the bar just
+   *  fills. */
+  private lastProgressMs = 0;
+  private lastProgressPhase: string | null = null;
+
+  private reportProgress(phase: string, fraction: number | null) {
+    const now = performance.now();
+    if (phase === this.lastProgressPhase && now - this.lastProgressMs < 100) return;
+    this.lastProgressPhase = phase;
+    this.lastProgressMs = now;
+    this.indicator?.setPhase(phase, fraction);
+    this.onProgress({ phase, fraction });
   }
 
   /** Import one operand into the worker; the arrays are also cached so a
@@ -170,6 +200,10 @@ export class BooleanRunner {
   private send(params: RunParams) {
     this.runInFlight = true;
     this.currentRun = params;
+    // A fresh run's first phase must render at once rather than be throttled
+    // against the previous run's last update.
+    this.lastProgressPhase = null;
+    this.lastProgressMs = 0;
     const { tag, ...rest } = params;
     this.ensureWorker().postMessage({ type: 'run', seq: ++this.seq, ...rest });
   }

@@ -35,12 +35,15 @@
 mod cancel;
 mod error;
 mod meshgl64;
+mod progress;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod tests_cancel;
 #[cfg(test)]
 mod tests_mesh64;
+#[cfg(test)]
+mod tests_progress;
 #[cfg(test)]
 mod tests_robust;
 

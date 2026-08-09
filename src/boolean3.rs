@@ -415,6 +415,24 @@ pub fn boolean_dispatch(
     engine: crate::types::BooleanEngine,
     token: Option<&CancelToken>,
 ) -> ManifoldImpl {
+    boolean_dispatch_with_progress(mesh_a, mesh_b, op, engine, token, None)
+}
+
+/// [`boolean_dispatch`] with optional progress reporting (see
+/// [`crate::progress`]).
+///
+/// The robust engine reports its pipeline phases; the exact engine reports a
+/// single indeterminate `ExactBoolean` phase and is otherwise untouched, so
+/// its timing and results are exactly what they were. `None` is byte-for-byte
+/// [`boolean_dispatch`].
+pub fn boolean_dispatch_with_progress(
+    mesh_a: &ManifoldImpl,
+    mesh_b: &ManifoldImpl,
+    op: OpType,
+    engine: crate::types::BooleanEngine,
+    token: Option<&CancelToken>,
+    progress: Option<&crate::progress::ProgressReporter>,
+) -> ManifoldImpl {
     use crate::types::BooleanEngine as E;
     let resolved = match engine {
         E::Auto => {
@@ -432,8 +450,11 @@ pub fn boolean_dispatch(
         other => other,
     };
     match resolved {
-        E::Exact | E::Auto => boolean_with_token(mesh_a, mesh_b, op, token),
-        E::Robust => crate::robust::boolean(mesh_a, mesh_b, op, token),
+        E::Exact | E::Auto => {
+            crate::progress::begin_phase(progress, crate::progress::Phase::ExactBoolean, 0);
+            boolean_with_token(mesh_a, mesh_b, op, token)
+        }
+        E::Robust => crate::robust::boolean_with_progress(mesh_a, mesh_b, op, token, progress),
     }
 }
 

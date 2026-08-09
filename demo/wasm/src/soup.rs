@@ -10,7 +10,8 @@
 
 use manifold_rust::linalg::Vec3;
 use manifold_rust::manifold::Manifold;
-use manifold_rust::types::{BooleanEngine, Error, MeshGL};
+use manifold_rust::progress::ProgressReporter;
+use manifold_rust::types::{BooleanEngine, Error, MeshGL, OpType};
 use wasm_bindgen::prelude::*;
 
 use crate::{mesh_data_from, MeshData};
@@ -23,13 +24,31 @@ fn engine_from_i32(engine: i32) -> BooleanEngine {
     }
 }
 
-pub(crate) fn op_with_engine(a: &Manifold, b: &Manifold, op: i32, engine: i32) -> Manifold {
-    let engine = engine_from_i32(engine);
+fn op_from_i32(op: i32) -> OpType {
     match op {
-        1 => a.intersection_with_engine(b, engine),
-        2 => a.difference_with_engine(b, engine),
-        _ => a.union_with_engine(b, engine),
+        1 => OpType::Intersect,
+        2 => OpType::Subtract,
+        _ => OpType::Add,
     }
+}
+
+/// Boolean between two operands with an optional progress sink. `None` takes
+/// the un-instrumented path in the kernel, so the no-callback demo runs are
+/// unaffected.
+pub(crate) fn op_with_engine_progress(
+    a: &Manifold,
+    b: &Manifold,
+    op: i32,
+    engine: i32,
+    progress: Option<&ProgressReporter>,
+) -> Manifold {
+    a.boolean_with_engine_and_progress(
+        b,
+        op_from_i32(op),
+        engine_from_i32(engine),
+        None,
+        progress,
+    )
 }
 
 /// A mesh imported from arbitrary (possibly non-manifold) triangle soup,
@@ -127,6 +146,57 @@ pub fn imported_boolean(
     rot_z: f64,
     repair: bool,
 ) -> Result<MeshData, JsValue> {
+    imported_boolean_impl(
+        a, b, op, engine, off_x, off_y, off_z, rot_x, rot_y, rot_z, repair, None,
+    )
+}
+
+/// [`imported_boolean`] that reports pipeline progress to `on_progress`,
+/// called as `on_progress(phaseName, fraction | null)`. Pass `undefined` for
+/// the un-instrumented path.
+///
+/// The call is synchronous and blocking, so this only helps a caller that can
+/// observe side effects while it runs — which is exactly the demo's worker,
+/// whose callback does `postMessage` (queued for the main thread while the
+/// worker stays busy).
+#[wasm_bindgen]
+#[allow(clippy::too_many_arguments)]
+pub fn imported_boolean_progress(
+    a: &ImportedMesh,
+    b: &ImportedMesh,
+    op: i32,
+    engine: i32,
+    off_x: f64,
+    off_y: f64,
+    off_z: f64,
+    rot_x: f64,
+    rot_y: f64,
+    rot_z: f64,
+    repair: bool,
+    on_progress: Option<js_sys::Function>,
+) -> Result<MeshData, JsValue> {
+    crate::progress::with_reporter(on_progress, |reporter| {
+        imported_boolean_impl(
+            a, b, op, engine, off_x, off_y, off_z, rot_x, rot_y, rot_z, repair, reporter,
+        )
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn imported_boolean_impl(
+    a: &ImportedMesh,
+    b: &ImportedMesh,
+    op: i32,
+    engine: i32,
+    off_x: f64,
+    off_y: f64,
+    off_z: f64,
+    rot_x: f64,
+    rot_y: f64,
+    rot_z: f64,
+    repair: bool,
+    progress: Option<&ProgressReporter>,
+) -> Result<MeshData, JsValue> {
     let (a_in, b_in) = if repair {
         (
             a.manifold.repair_orientation(),
@@ -150,7 +220,7 @@ pub fn imported_boolean(
     let b_m = b_m
         .rotate(rot_x, rot_y, rot_z)
         .translate(Vec3::new(off_x, off_y, off_z));
-    let result = op_with_engine(&a_m, &b_m, op, engine);
+    let result = op_with_engine_progress(&a_m, &b_m, op, engine, progress);
     if result.status() != Error::NoError {
         return Err(JsValue::from_str(result.status().to_str()));
     }

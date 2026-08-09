@@ -16,3 +16,8 @@ js-sys = "0.3"
 # Routes Rust panic messages (with location) to console.error — without it a
 # panic surfaces only as an opaque "RuntimeError: unreachable".
 console_error_panic_hook = "0.1"
+
+# wasm-opt's default (-O) leaves measurable size and speed on the table for a
+# module this compute-heavy; -O3 is what the release artifact ships with.
+[package.metadata.wasm-pack.profile.release]
+wasm-opt = ['-O3']

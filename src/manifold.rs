@@ -430,6 +430,27 @@ impl Manifold {
         Self::from_impl(boolean3::boolean_dispatch(&self.imp, &other.imp, op, engine, token))
     }
 
+    /// [`Manifold::boolean_with_engine_and_token`] that also reports coarse
+    /// pipeline progress.
+    ///
+    /// Cancellation and progress travel together because callers that want one
+    /// almost always want the other (a UI showing a progress bar next to a
+    /// cancel button); pass `None` for either independently. `None` progress is
+    /// byte-for-byte the un-instrumented path — see [`crate::progress`] for the
+    /// phases reported and the throttling contract.
+    pub fn boolean_with_engine_and_progress(
+        &self,
+        other: &Self,
+        op: OpType,
+        engine: crate::types::BooleanEngine,
+        token: Option<&crate::cancel::CancelToken>,
+        progress: Option<&crate::progress::ProgressReporter>,
+    ) -> Self {
+        Self::from_impl(boolean3::boolean_dispatch_with_progress(
+            &self.imp, &other.imp, op, engine, token, progress,
+        ))
+    }
+
     /// [`Manifold::batch_boolean`] with an explicit engine choice (pairwise
     /// left fold, like `batch_boolean`).
     pub fn batch_boolean_with_engine(

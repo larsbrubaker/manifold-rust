@@ -1,11 +1,13 @@
 // Lightweight "computing…" overlay shown while a long-running operation is in
 // flight (today: boolean evaluations dispatched by boolean-runner.ts).
 //
-// The wasm boolean cannot report progress yet, so the card shows a CSS spinner,
-// a title, a ticking elapsed-seconds counter and an optional cancel button.
-// The layout deliberately reserves the two rows a real progress API will need —
-// a phase label and a progress track (indeterminate until a fraction arrives) —
-// so `setPhase()` can fill them in later without the card resizing or moving.
+// The card shows a CSS spinner, a title, a phase label, a progress track, a
+// ticking elapsed-seconds counter and an optional cancel button. The kernel
+// drives the two middle rows through `setPhase()`: the boolean worker forwards
+// the wasm progress callbacks (boolean-worker.ts) and BooleanRunner routes them
+// here. Phases with a known work total fill the bar; the rest leave it in its
+// indeterminate sweep. Both rows exist from the start, so a run that never
+// reports does not resize or move the card.
 //
 // It anchors to the top-left of the 3D viewport: attach(container) parents the
 // card inside the viewer element (`.demo-canvas-area`, already position:

@@ -84,6 +84,20 @@ pub fn boolean(
     op: OpType,
     token: Option<&CancelToken>,
 ) -> ManifoldImpl {
+    boolean_with_progress(a, b, op, token, None)
+}
+
+/// [`boolean`] with optional progress reporting (see [`crate::progress`]).
+/// `None` is exactly [`boolean`] — the fast paths below are not instrumented
+/// at all, since they return before any measurable work happens.
+pub fn boolean_with_progress(
+    a: &ManifoldImpl,
+    b: &ManifoldImpl,
+    op: OpType,
+    token: Option<&CancelToken>,
+    progress: Option<&crate::progress::ProgressReporter>,
+) -> ManifoldImpl {
+    use crate::progress::{begin_phase, Phase};
     if is_cancelled(token) {
         return cancelled_impl();
     }
@@ -150,17 +164,22 @@ pub fn boolean(
     // Subtraction needs no operand flip: the cell predicate expresses it
     // directly as "inside P and not inside Q", so both operands keep their
     // own winding and their corner properties stay in their original order.
-    let Some(graph) = intersection_graph::build_graph_with_token(&p_tris, &q_tris, token) else {
+    let Some(graph) =
+        intersection_graph::build_graph_with_progress(&p_tris, &q_tris, token, progress)
+    else {
         return cancelled_impl();
     };
     let t_cells = crate::timing::start();
-    let Some(complex) = cells::build_cells_with_token(&graph, token) else {
+    let Some(complex) = cells::build_cells_with_progress(&graph, token, progress) else {
         return cancelled_impl();
     };
     crate::timing::print("robust: cell complex", t_cells);
 
     // One exact query anchors each connected component; the rest of its
-    // cells follow combinatorially.
+    // cells follow combinatorially. Winding and assembly report as phase
+    // transitions only: neither has a work total the caller could see a
+    // fraction of without instrumenting the exact ray queries themselves.
+    begin_phase(progress, Phase::Winding, 0);
     let t_winding = crate::timing::start();
     let wind = cells::windings(&graph, &complex, [&p_tris, &q_tris]);
     crate::timing::print("robust: winding propagation", t_winding);
@@ -169,6 +188,7 @@ pub fn boolean(
     }
 
     // Boundary of the result, wound from the cell labels.
+    begin_phase(progress, Phase::Assemble, 0);
     let pieces = cells::extract(&graph, &complex, &wind, op);
     let ctx = assemble::PropCtx {
         num_prop: [a.num_prop, b.num_prop],

@@ -9,10 +9,16 @@
 //   { type: 'import', slot: 'a'|'b', positions, indices, want_self_intersecting }
 //   { type: 'run', seq, source: 'thingi'|'builtin', shapeA?, shapeB?,
 //     op, engine, repair, ox, oy, oz, rx, ry, rz }
-// Replies (exactly one per import/run message, in order):
+// Replies (exactly one 'imported'/'result' per import/run message, in order,
+// plus any number of 'progress' notifications during a run):
 //   { type: 'imported', slot, ok, status, is_soup, self_intersecting,
 //     num_vert, num_tri }
+//   { type: 'progress', seq, phase, fraction }   // fraction: number | null
 //   { type: 'result', seq, ok, data?, error?, elapsedMs }
+//
+// The progress callback runs *inside* the blocking wasm call: postMessage
+// queues the update for the main thread while this worker stays busy, which
+// is the only way an uninterruptible wasm computation can report anything.
 //
 // There is no cancel message: wasm computations cannot be preempted, so the
 // main thread cancels by terminating this worker outright and spawning a
@@ -47,6 +53,24 @@ self.onmessage = (ev: MessageEvent) => {
   chain = chain.then(() => handleMessage(ev.data));
 };
 
+/** Worker-side rate limit for progress posts. The kernel already throttles to
+ *  ~100 callbacks per phase, but a phase over a million triangles still fires
+ *  faster than a UI can use — and every post is a structured clone. Phase
+ *  *changes* always go out, so the label never lags behind the work. */
+const PROGRESS_INTERVAL_MS = 60;
+
+function makeProgressSink(seq: number) {
+  let lastPost = 0;
+  let lastPhase: string | null = null;
+  return (phase: string, fraction: number | null) => {
+    const now = performance.now();
+    if (phase === lastPhase && now - lastPost < PROGRESS_INTERVAL_MS) return;
+    lastPhase = phase;
+    lastPost = now;
+    (self as any).postMessage({ type: 'progress', seq, phase, fraction });
+  };
+}
+
 async function handleMessage(msg: any) {
   if (msg.type === 'init') {
     pkgUrl = msg.pkgUrl;
@@ -77,18 +101,20 @@ async function handleMessage(msg: any) {
       (self as any).postMessage(reply);
     } else if (msg.type === 'run') {
       const t0 = performance.now();
+      const onProgress = makeProgressSink(msg.seq);
       let raw: any;
       if (msg.source === 'thingi') {
         if (!handles.a || !handles.b) throw new Error('operands not imported');
-        raw = w.imported_boolean(
+        raw = w.imported_boolean_progress(
           handles.a, handles.b, msg.op, msg.engine,
           msg.ox, msg.oy, msg.oz, msg.rx, msg.ry, msg.rz, msg.repair ?? false,
+          onProgress,
         );
       } else {
-        raw = w.boolean_gallery_mesh_repair(
+        raw = w.boolean_gallery_mesh_progress(
           msg.shapeA, msg.shapeB, msg.op,
           msg.ox, msg.oy, msg.oz, msg.rx, msg.ry, msg.rz, msg.engine,
-          msg.repair ?? false,
+          msg.repair ?? false, onProgress,
         );
       }
       // Same extraction as wasm.ts toMeshData: capture the typed-array

@@ -30,6 +30,7 @@
 //! APIs may change before 1.0.
 
 pub mod cancel;
+pub mod progress;
 pub mod linalg;
 pub mod types;
 pub mod polygon;

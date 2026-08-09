@@ -309,6 +309,70 @@ ManifoldRs* manifold_rs_batch_boolean_ct(const ManifoldRs* const* manifolds,
                                          const CancelTokenRs* token);
 
 /*
+ * Progress reporting
+ * ------------------
+ *
+ * A boolean can run for seconds on large or self-intersecting input. Passing a
+ * ManifoldRsProgressFn to manifold_rs_boolean_progress() has the kernel call
+ * back as it enters each pipeline phase, and again as a phase advances.
+ *
+ *   phase_id  indexes the phase table; manifold_rs_progress_phase_name() turns
+ *             it into a static display string. Ids are APPEND ONLY, so a newer
+ *             library may report an id this header does not list - always go
+ *             through the name accessor and fall back to the raw id if it
+ *             returns NULL.
+ *   fraction  in [0, 1] for a phase whose work total is known, or NEGATIVE for
+ *             an indeterminate phase (running, no meaningful ratio - show a
+ *             spinner rather than a bar).
+ *   user      is passed straight back, untouched and never dereferenced by
+ *             this library.
+ *
+ * THREADING: the callback is never re-entered concurrently - the library holds
+ * a lock across every invocation - but it MAY run on an internal worker thread
+ * rather than the thread that made the call, because the boolean pipeline is
+ * parallel. Marshal inside your callback if that matters (post to a queue, set
+ * an atomic, etc.), and keep whatever `user` points at valid, from any thread,
+ * until the call returns.
+ *
+ * COST: reporting is throttled to at most ~100 callbacks per phase, and a NULL
+ * callback is exactly the un-instrumented pipeline - no counters, no branches
+ * in the inner loops. Progress reporting never changes the result: the same
+ * inputs produce the same triangles whether or not a callback is attached.
+ */
+typedef void (*ManifoldRsProgressFn)(uint32_t phase_id,
+                                     double fraction,
+                                     void* user);
+
+/* Static NUL-terminated name for a phase id ("narrow phase", "arrangements",
+ * "exact boolean", ...), or NULL for an id this build does not define. The
+ * pointer is valid for the process lifetime and must not be freed. */
+const char* manifold_rs_progress_phase_name(uint32_t phase_id);
+
+/* Number of phase ids this build defines; ids 0..count-1 all have names. */
+uint32_t manifold_rs_progress_phase_count(void);
+
+/*
+ * Binary boolean with optional cancellation AND optional progress reporting.
+ *
+ * op is MANIFOLD_RS_OP_*; engine is MANIFOLD_RS_ENGINE_* (taken explicitly
+ * here rather than from the process-global default, since a caller that wants
+ * progress detail usually also wants to pin the engine).
+ *
+ * token may be NULL (uncancellable) and progress may be NULL (no reporting);
+ * with both NULL this is the plain un-instrumented boolean. Cancellation
+ * behaves exactly as for manifold_rs_batch_boolean_ct: a VALID handle with
+ * status 14, never NULL. NULL is returned only for argument errors and caught
+ * panics.
+ */
+ManifoldRs* manifold_rs_boolean_progress(const ManifoldRs* a,
+                                         const ManifoldRs* b,
+                                         int32_t op,
+                                         int32_t engine,
+                                         const CancelTokenRs* token,
+                                         ManifoldRsProgressFn progress,
+                                         void* user);
+
+/*
  * Export m as a mesh handle. A manifold with a non-zero status exports as an
  * empty mesh rather than failing. Returns NULL if m is NULL or the export
  * panics.
