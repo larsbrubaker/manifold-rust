@@ -42,7 +42,7 @@
          progress) over the unchanged manifold-ffi 0.3.1 ABI. The handshake in
          NativeVersionCheck compares the native's major.minor only, so it is
          unaffected either way. -->
-    <Version>0.4.1</Version>
+    <Version>0.4.2</Version>
     <Authors>Lars Brubaker</Authors>
     <Company>Lars Brubaker</Company>
     <Copyright>Copyright 2026 Lars Brubaker</Copyright>
