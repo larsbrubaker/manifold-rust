@@ -203,13 +203,30 @@ words, no compiler-rt allocation churn).
    robust volumes agree to full precision, no referee needed).
    #252784 (889 k tris, extreme self-intersection) gets through the
    registries (119 s, formerly its point of death) but still exceeds
-   570 s in arrangements/CDT; its cancel also **overshot to 1188 s**
-   — the registry/phase-5 merge loops need cancel checks. Remaining
-   levers for it: translation lever for `arrangement.rs` sweeps (needs
-   its own soundness pass — box tests are not translation-invariant),
-   cheaper exact tier for genuine degeneracies, prims-duplication
-   memory, phase-5 materialization chunking. Also latent:
-   `triangulate_pseudo` recursion depth on 15 k-point arrangements.
+   570 s in arrangements/CDT — **it survived every lever tried since**
+   and is the corpus's one honest timeout. Tried and landed anyway for
+   other reasons: cancel checks (`42f28bc`, overshoot 1188 s → 0.6 s
+   at a 60 s budget; residual latency is destructor cost — dropping
+   ~6M rational prims entries takes 8–44 s through the system
+   allocator, paid on successful runs too, arena/allocator swap
+   flagged) and the arrangement translation lever (`e0a1867`,
+   performance-NEUTRAL on honest warm interleaved measurement; landed
+   for the single-translation architecture + gcd-free
+   `int_ratio_to_f64`). **Measurement lesson**: two rounds of 2–3×
+   "speedups" traced to benchmark-binary mistakes — Defender scanning
+   fresh exes, then an accidental `--features parallel` binary. That
+   accident is a real finding though: **the parallel feature is worth
+   2–4× on giants with bit-identical output** (#1716279: 254 s
+   parallel vs 420 s sequential; #1517923: 5.5 s vs 23.5 s) — the
+   corpus characterization is sequential, so headroom exists corpus-
+   wide. Even parallel, #252784 cancels at 570 s (867 s wall — rayon
+   inner loops don't check the token; at 570 s budgets an unchecked
+   later-phase stretch also shows ~100 s overshoot sequentially).
+   Remaining levers for it: cheaper exact tier for genuine
+   degeneracies, prims-duplication memory, phase-5 materialization
+   chunking, arena allocation for teardown. Also latent:
+   `triangulate_pseudo` recursion depth on 15 k-point arrangements;
+   the exact-rational sort in CDT is uninterruptible by design.
    Previous note, now historical: was **6**
    (was 43 pre-swap): 26 cleared by the dashu backend under 4-way batch
    contention, 11 more complete solo at 120 s. The survivors are all
