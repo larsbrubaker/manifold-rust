@@ -77,6 +77,25 @@ struct Cdt {
 /// crossings with other constraints — robust/arrangement.rs guarantees all
 /// three. Returns CCW index triangles exactly covering the input triangle.
 pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize; 3]> {
+    triangulate_with_token(points, constraints, None)
+        .expect("uncancellable triangulate cannot cancel")
+}
+
+/// [`triangulate`] with cooperative cancellation. Returns `None` when the
+/// token fires.
+///
+/// A single monster arrangement pushes >10⁶ points and constraints through one
+/// call and can run for minutes, so the per-arrangement check in
+/// robust/intersection_graph.rs is not enough on its own: a cancel that only
+/// the enclosing map notices waits out the worst triangulation in the mesh.
+/// The checks are strictly early returns — they never touch the insertion
+/// order, the arena, or any predicate — so a run that completes produces
+/// exactly the triangles [`triangulate`] produces.
+pub fn triangulate_with_token(
+    points: &[R2],
+    constraints: &[(usize, usize)],
+    token: Option<&crate::cancel::CancelToken>,
+) -> Option<Vec<[usize; 3]>> {
     assert!(points.len() >= 3, "need the three corner points");
     let hom: Vec<Homog2> = points.iter().map(homog2_of).collect();
     let mut corners = [0usize, 1, 2];
@@ -139,13 +158,23 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
         rank,
     };
 
+    // One point insertion is a located split plus a bounded flip cascade, so
+    // batching the check keeps it off the hot path; one constraint recovery is
+    // a whole corridor walk plus two pseudo-polygon retriangulations, which is
+    // expensive enough to check every time.
     for p in 3..cdt.pts.len() {
+        if p % 64 == 0 && crate::cancel::is_cancelled(token) {
+            return None;
+        }
         let first_new = cdt.tris.len();
         cdt.insert_point(p);
         cdt.seed_suspects(first_new);
         cdt.legalize_suspects();
     }
     for &(a, b) in constraints {
+        if crate::cancel::is_cancelled(token) {
+            return None;
+        }
         debug_assert_ne!(a, b, "zero-length constraint");
         let first_new = cdt.tris.len();
         cdt.insert_constraint(a, b);
@@ -153,7 +182,7 @@ pub fn triangulate(points: &[R2], constraints: &[(usize, usize)]) -> Vec<[usize;
         cdt.legalize_suspects();
     }
 
-    cdt.tris.iter().filter(|t| t.alive).map(|t| t.v).collect()
+    Some(cdt.tris.iter().filter(|t| t.alive).map(|t| t.v).collect())
 }
 
 /// Is `r` exactly representable in f64 — i.e. is `rat_to_f64(r)` equal to `r`?

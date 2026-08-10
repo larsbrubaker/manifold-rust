@@ -512,7 +512,7 @@ pub fn build(
     let t0 = crate::timing::Stopwatch::start();
 
     let constraint_pairs: Vec<(usize, usize)> = constraints.keys().copied().collect();
-    let tris = cdt::triangulate(&points2, &constraint_pairs);
+    let tris = cdt::triangulate_with_token(&points2, &constraint_pairs, token)?;
     stats::CDT_NS.fetch_add(t0.elapsed_ns(), Relaxed);
 
     let axis_comp = match axis {

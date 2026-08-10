@@ -360,7 +360,14 @@ pub fn build_graph_with_progress(
             };
             arrangement::candidate_points(meshes[m][ti], &input, token)
         })?;
-        for (&(m, ti), cands) in cand_work[base..base + len].iter().zip(cand_results) {
+        for (k, (&(m, ti), cands)) in cand_work[base..base + len]
+            .iter()
+            .zip(cand_results)
+            .enumerate()
+        {
+            if k % 1024 == 0 && cancelled() {
+                return None;
+            }
             let cands = cands?;
             n_cand_total += cands.len();
             candidates[m][ti] = Some(cands.iter().map(|pt| ptab.intern(pt)).collect());
@@ -378,6 +385,9 @@ pub fn build_graph_with_progress(
         seg_off[m].reserve(meshes[m].len() + 1);
         seg_off[m].push(0);
         for ti in 0..meshes[m].len() {
+            if ti % 1024 == 0 && cancelled() {
+                return None;
+            }
             for (a, b, _) in &prims[m][ti].segments {
                 let ia = ptab.intern(a);
                 let ib = ptab.intern(b);
@@ -466,7 +476,10 @@ pub fn build_graph_with_progress(
         }
         hits
     })?;
-    for (&(m, _), hits) in reg_work.iter().zip(&edge_hits) {
+    for (k, (&(m, _), hits)) in reg_work.iter().zip(&edge_hits).enumerate() {
+        if k % 1024 == 0 && cancelled() {
+            return None;
+        }
         for &(key, id) in hits {
             let e = edge_registry[m].entry(key).or_default();
             if e.1.insert(id) {
@@ -509,7 +522,10 @@ pub fn build_graph_with_progress(
         }
         hits
     })?;
-    for hits in &split_hits {
+    for (k, hits) in split_hits.iter().enumerate() {
+        if k % 1024 == 0 && cancelled() {
+            return None;
+        }
         for &(key, id) in hits {
             let e = seg_splits.entry(key).or_default();
             if e.1.insert(id) {
@@ -523,13 +539,21 @@ pub fn build_graph_with_progress(
     // The dedup sets have done their job; the arrangement phase below reads
     // only the id lists. Releasing them (and the candidate lists, which no
     // later phase touches) before phase 5 keeps the two peaks from stacking.
+    // Each step frees a set and reallocates a vector; millions of registry
+    // entries make even that a measurable stretch of uninterruptible work.
     for m in 0..2 {
-        for v in edge_registry[m].values_mut() {
+        for (k, v) in edge_registry[m].values_mut().enumerate() {
+            if k % 4096 == 0 && cancelled() {
+                return None;
+            }
             v.1 = HashSet::default();
             v.0.shrink_to_fit();
         }
     }
-    for v in seg_splits.values_mut() {
+    for (k, v) in seg_splits.values_mut().enumerate() {
+        if k % 4096 == 0 && cancelled() {
+            return None;
+        }
         v.1 = HashSet::default();
         v.0.shrink_to_fit();
     }
@@ -600,7 +624,10 @@ pub fn build_graph_with_progress(
     // Membership-only set (never iterated by this crate); order-invariant.
     let mut isect_edges: HashSet<EdgeKey> = HashSet::default();
     let mut interner = VertInterner::default();
-    for (&(m, ti), result) in arr_work.iter().zip(arr_results) {
+    for (k, (&(m, ti), result)) in arr_work.iter().zip(arr_results).enumerate() {
+        if k % 1024 == 0 && cancelled() {
+            return None;
+        }
         let t = meshes[m][ti];
         match result? {
             TriResult::Untouched => {
