@@ -4,9 +4,9 @@
     {
       "name": "demo",
       "runtimeExecutable": "bun",
-      "runtimeArgs": ["run", "server.ts"],
-      "autoPort": true,
-      "cwd": "demo"
+      "runtimeArgs": ["run", "dev.ts"],
+      "cwd": "demo",
+      "port": 3000
     }
   ]
 }
