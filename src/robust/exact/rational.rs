@@ -11,8 +11,8 @@
 // intersection points, and bit-for-bit on pass-through input vertices.
 
 use super::backend::{
-    self, denom, numer_mag, rat_from_f64, rat_is_negative, rat_is_zero, Rational, ToPrimitive,
-    Uint,
+    self, denom, int_mag, numer_mag, rat_from_f64, rat_is_negative, rat_is_zero, Int, Rational,
+    Signed, ToPrimitive, Uint,
 };
 
 use crate::linalg::{Vec2, Vec3};
@@ -49,11 +49,39 @@ pub fn rat_to_f64(r: &Rational) -> f64 {
     if rat_is_zero(r) {
         return 0.0;
     }
-    let neg = rat_is_negative(r);
     let n_mag = numer_mag(r);
-    let n: &Uint = n_mag.as_ref();
-    let d: &Uint = denom(r);
+    mag_ratio_to_f64(n_mag.as_ref(), denom(r), rat_is_negative(r)).0
+}
 
+/// Correctly rounded f64 of the exact value `numer / denom`, built straight
+/// from big integers — no `Rational`, hence no gcd reduction. Also reports
+/// whether the conversion was EXACT (the returned f64 equals `numer/denom`
+/// with no rounding at all).
+///
+/// The rounding core is shared with [`rat_to_f64`] and is value-based, not
+/// representation-based: it derives the binary exponent from bit lengths and
+/// rounds with one exact integer division, so an unreduced fraction and its
+/// reduced form produce the identical f64. That is what makes this a drop-in
+/// replacement for "subtract exactly in `Rational`, then round" — the two
+/// paths round the same exact value and are therefore bit-identical.
+///
+/// `denom` must be nonzero.
+pub fn int_ratio_to_f64(numer: &Int, denom: &Int) -> (f64, bool) {
+    debug_assert!(!denom.is_zero(), "int_ratio_to_f64: zero denominator");
+    if numer.is_zero() {
+        // Exact: the value is zero, and +0.0 is what `rat_to_f64` returns for
+        // a zero rational whatever the denominator's sign.
+        return (0.0, true);
+    }
+    let neg = numer.is_negative() != denom.is_negative();
+    mag_ratio_to_f64(&int_mag(numer), &int_mag(denom), neg)
+}
+
+/// `±n/d` from unsigned magnitudes (`n`, `d` both nonzero), correctly rounded
+/// to nearest with ties to even, plus an exactness flag. Values beyond f64
+/// range become ±infinity; values below half the smallest subnormal become
+/// (signed) zero. Both of those, and every rounding, report `false`.
+fn mag_ratio_to_f64(n: &Uint, d: &Uint, neg: bool) -> (f64, bool) {
     // Exact floor exponent e: 2^e <= n/d < 2^(e+1).
     let mut e = backend::uint_bits(n) as i64 - backend::uint_bits(d) as i64;
     let ge = if e >= 0 {
@@ -65,7 +93,7 @@ pub fn rat_to_f64(r: &Rational) -> f64 {
         e -= 1;
     }
     if e > 1023 {
-        return if neg { f64::NEG_INFINITY } else { f64::INFINITY };
+        return (if neg { f64::NEG_INFINITY } else { f64::INFINITY }, false);
     }
 
     // Position of the result's least significant bit. Normal numbers carry
@@ -81,6 +109,10 @@ pub fn rat_to_f64(r: &Rational) -> f64 {
     };
     let q = &num / &den;
     let rem = &num - &q * &den;
+    // `q` is the truncation of the value to a multiple of 2^lsb, so a zero
+    // remainder means the value IS such a multiple: no rounding happens below
+    // (both increments require a nonzero remainder) and the result is exact.
+    let exact = rem.is_zero();
     let mut m = q;
     let twice_rem = &rem << 1usize;
     match twice_rem.cmp(&den) {
@@ -94,21 +126,19 @@ pub fn rat_to_f64(r: &Rational) -> f64 {
     }
 
     if m.is_zero() {
-        return if neg { -0.0 } else { 0.0 };
+        // `n`/`d` are nonzero, so a zero mantissa means the value underflowed
+        // to (signed) zero — never exact.
+        return (if neg { -0.0 } else { 0.0 }, false);
     }
     // Rounding up may have crossed into the next binade (m = 2^53) or past
     // the largest finite value (2^1024 -> infinity).
     if backend::uint_bits(&m) as i64 - 1 + lsb > 1023 {
-        return if neg { f64::NEG_INFINITY } else { f64::INFINITY };
+        return (if neg { f64::NEG_INFINITY } else { f64::INFINITY }, false);
     }
     // m <= 2^53, so both the u64 and the f64 conversion are exact, and
     // m * 2^lsb is representable by construction — the multiply is exact.
     let val = m.to_u64().expect("mantissa fits in u64") as f64 * pow2(lsb);
-    if neg {
-        -val
-    } else {
-        val
-    }
+    (if neg { -val } else { val }, exact)
 }
 
 // ─── R2 — exact 2D point/vector ─────────────────────────────────────────────

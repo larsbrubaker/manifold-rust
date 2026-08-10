@@ -238,6 +238,163 @@ fn rat_to_f64_matches_the_backend_oracle() {
     }
 }
 
+/// `int_ratio_to_f64` shares `rat_to_f64`'s rounding core but skips the gcd
+/// that building a `Rational` would pay. It must therefore agree with
+/// `rat_to_f64` on the same value — including when the (numerator,
+/// denominator) pair handed to it is UNREDUCED, which is the whole point:
+/// robust/arrangement.rs feeds it raw homogeneous cross products.
+#[test]
+fn int_ratio_to_f64_agrees_with_rat_to_f64() {
+    use super::rational::int_ratio_to_f64;
+
+    let check = |n: &Int, d: &Int, what: &str| {
+        let (ours, exact) = int_ratio_to_f64(n, d);
+        let theirs = rat_to_f64(&rat_new(n.clone(), d.clone()));
+        assert_eq!(
+            ours.to_bits(),
+            theirs.to_bits(),
+            "{what}: int path {ours:e} vs rational path {theirs:e}"
+        );
+        // The exactness flag must mean what it says: the f64 round-trips to
+        // the original value.
+        if exact {
+            assert!(ours.is_finite(), "{what}: exact but not finite");
+            assert_eq!(
+                rat(ours),
+                rat_new(n.clone(), d.clone()),
+                "{what}: flagged exact but {ours:e} != n/d"
+            );
+        }
+    };
+
+    // Zero numerator with every denominator sign, and the sign rules.
+    for d in [1i64, -1, 7, -7] {
+        let (v, e) = int_ratio_to_f64(&Int::from(0), &Int::from(d));
+        assert_eq!(v.to_bits(), 0.0f64.to_bits(), "0/{d} must be +0.0");
+        assert!(e, "0/{d} is exact");
+    }
+    for (n, d) in [(1i64, 2i64), (-1, 2), (1, -2), (-1, -2), (3, 4), (-7, 8)] {
+        check(&Int::from(n), &Int::from(d), &format!("{n}/{d}"));
+    }
+
+    // Unreduced pairs must round exactly like their reduced form.
+    for k in [2i64, 3, 5, 1 << 20, 1 << 40] {
+        check(&Int::from(3 * k), &Int::from(4 * k), &format!("3k/4k k={k}"));
+        check(&Int::from(-3 * k), &Int::from(4 * k), &format!("-3k/4k k={k}"));
+    }
+
+    // Inexact values: 1/3 rounds, and must not be flagged exact.
+    let (third, third_exact) = int_ratio_to_f64(&Int::from(1), &Int::from(3));
+    assert_eq!(third, 1.0f64 / 3.0);
+    assert!(!third_exact, "1/3 is not representable");
+    // 2^-1074 is exact; half of it underflows to a tie with zero.
+    let (sub, sub_exact) = int_ratio_to_f64(&Int::one(), &(Int::one() << 1074usize));
+    assert_eq!(sub, 5e-324);
+    assert!(sub_exact);
+    let (under, under_exact) = int_ratio_to_f64(&Int::one(), &(Int::one() << 1075usize));
+    assert_eq!(under, 0.0);
+    assert!(!under_exact, "underflow is never exact");
+    // Overflow in both signs, never exact.
+    let (over, over_exact) = int_ratio_to_f64(&(Int::one() << 1024usize), &Int::one());
+    assert_eq!(over, f64::INFINITY);
+    assert!(!over_exact);
+    let (nover, _) = int_ratio_to_f64(&-(Int::one() << 1024usize), &Int::one());
+    assert_eq!(nover, f64::NEG_INFINITY);
+
+    // Huge multi-word magnitudes across the exponent range, both signs, with
+    // deliberately unreduced pairs (a shared random factor on both sides).
+    let mut rng = Lcg::new(0x5EED_F00D_2024);
+    let big = |rng: &mut Lcg, words: usize| -> Int {
+        let mut v = Int::from(0u32);
+        for _ in 0..words {
+            v = (v << 64usize) + Int::from(rng.next_u64());
+        }
+        v
+    };
+    for i in 0..4000 {
+        let nw = (rng.next_u64() % 4 + 1) as usize;
+        let dw = (rng.next_u64() % 4 + 1) as usize;
+        let mut n = big(&mut rng, nw);
+        let mut d = big(&mut rng, dw);
+        if d.is_zero() {
+            d = Int::one();
+        }
+        if rng.next_u64() & 1 == 0 {
+            n = -n;
+        }
+        if rng.next_u64() & 1 == 0 {
+            d = -d;
+        }
+        let shift = (rng.next_u64() % 1300) as usize;
+        if rng.next_u64() & 1 == 0 {
+            n <<= shift;
+        } else {
+            d <<= shift;
+        }
+        // Common factor: same value, different representation.
+        let f = Int::from(rng.next_u64() | 1);
+        check(&n, &d, &format!("random #{i}"));
+        check(&(&n * &f), &(&d * &f), &format!("random #{i} unreduced"));
+    }
+}
+
+/// The soundness claim behind the arrangement's gcd-free translated filter
+/// inputs: computing the translated coordinate from homogeneous cross products
+/// and rounding once produces the BIT-IDENTICAL f64 to subtracting exactly in
+/// `Rational` and rounding that. Both round the same exact value, and
+/// correctly rounded conversion is a function of the value alone.
+#[test]
+fn homogeneous_translation_rounds_identically_to_rational_subtraction() {
+    use super::backend::{denom, int_from_uint, mul_int_uint, mul_uint, numer};
+    use super::predicates::homog2_of;
+    use super::rational::int_ratio_to_f64;
+
+    let mut rng = Lcg::new(0xA11CE_777);
+    let coord = |rng: &mut Lcg| -> super::backend::Rational {
+        // A mix of plain f64 coordinates (exact dyadics, like mesh vertices)
+        // and constructed fractions with large numerators and denominators,
+        // like intersection points.
+        match rng.next_u64() % 3 {
+            // Far-from-origin dyadics, the case the translation lever targets.
+            0 => rat(((rng.next_u64() % (1 << 40)) as f64) * 0.5 - 5.0e11),
+            1 => rat((rng.next_u64() % 2_000_000) as f64 * 1e-3 - 1000.0),
+            _ => {
+                let n = Int::from(rng.next_u64()) * Int::from(rng.next_u64() | 1);
+                let d = Int::from(rng.next_u64() | 1) + Int::one();
+                rat_new(if rng.next_u64() & 1 == 0 { -n } else { n }, d)
+            }
+        }
+    };
+
+    for i in 0..3000 {
+        let o = R2::new(coord(&mut rng), coord(&mut rng));
+        let p = R2::new(coord(&mut rng), coord(&mut rng));
+        // Exactly robust/arrangement.rs's `translated_coord`: the unreduced
+        // fraction (pn·od − on·pd) / (pd·od), no Rational anywhere. Also
+        // checked through the homogeneous form, which is the same value with
+        // wider operands.
+        let coord = |pc: &super::backend::Rational, oc: &super::backend::Rational| -> f64 {
+            let (pn, pd) = (numer(pc), denom(pc));
+            let (on, od) = (numer(oc), denom(oc));
+            let num = mul_int_uint(pn, od) - mul_int_uint(on, pd);
+            let den = int_from_uint(mul_uint(pd, od));
+            int_ratio_to_f64(&num, &den).0
+        };
+        let (hx, hy) = (coord(&p.x, &o.x), coord(&p.y, &o.y));
+        let (ho, hp) = (homog2_of(&o), homog2_of(&p));
+        let hden = &hp.2 * &ho.2;
+        let (gx, _) = int_ratio_to_f64(&(&hp.0 * &ho.2 - &ho.0 * &hp.2), &hden);
+        let (gy, _) = int_ratio_to_f64(&(&hp.1 * &ho.2 - &ho.1 * &hp.2), &hden);
+        assert_eq!(gx.to_bits(), hx.to_bits(), "#{i} x: homogeneous form differs");
+        assert_eq!(gy.to_bits(), hy.to_bits(), "#{i} y: homogeneous form differs");
+        // Reference: exact rational subtraction, then one rounding.
+        let t = p.sub(&o);
+        let (rx, ry) = (rat_to_f64(&t.x), rat_to_f64(&t.y));
+        assert_eq!(hx.to_bits(), rx.to_bits(), "#{i} x: {hx:e} vs {rx:e}");
+        assert_eq!(hy.to_bits(), ry.to_bits(), "#{i} y: {hy:e} vs {ry:e}");
+    }
+}
+
 // ─── Predicates: filtered vs exact ground truth ──────────────────────────────
 
 #[test]

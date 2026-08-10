@@ -241,6 +241,13 @@ pub fn int_from_uint(v: Uint) -> Int {
     Int::from(v)
 }
 
+/// Magnitude of a signed integer, for the unsigned core of `rat_to_f64` and
+/// its `int_ratio_to_f64` sibling.
+#[inline]
+pub fn int_mag(v: &Int) -> Uint {
+    v.unsigned_abs()
+}
+
 /// Number of bits in the magnitude (0 for zero).
 #[inline]
 pub fn uint_bits(v: &Uint) -> u64 {

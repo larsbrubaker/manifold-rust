@@ -16,14 +16,16 @@
 
 use std::collections::BTreeMap;
 
-use super::exact::backend::{Int, Signed};
+use super::exact::backend::{
+    denom, int_from_uint, mul_int_uint, mul_uint, numer, Int, Rational, Signed,
+};
 
 use crate::linalg::Vec3;
 
 use super::cdt;
 use super::exact::approx::orient2d_a;
 use super::exact::predicates::{homog2_of, line_line_intersect_2d, orient2d_h, point_in_tri_2d, tri_normal_r, Homog2, TriLoc};
-use super::exact::rational::{rat_to_f64, R2, R2Key, R3};
+use super::exact::rational::{int_ratio_to_f64, R2, R2Key, R3};
 use super::exact::Sign;
 use super::tri_tri::{dominant_axis, lift_to_plane};
 
@@ -115,6 +117,51 @@ fn approx_box(pts: &[[f64; 2]]) -> [f64; 4] {
         b[2] + pad(b[2]),
         b[3] + pad(b[3]),
     ]
+}
+
+/// One coordinate of `p − o`, correctly rounded to f64, plus "this f64 is
+/// EXACTLY that difference".
+///
+/// `pn/pd − on/od = (pn·od − on·pd) / (pd·od)`, handed to
+/// [`int_ratio_to_f64`] as a raw — deliberately unreduced — big-integer ratio.
+/// Correct rounding is a function of the VALUE, not of the representation, so
+/// this is bit-identical to subtracting in `Rational` and rounding the result
+/// (pinned by
+/// `exact::tests::homogeneous_translation_rounds_identically_to_rational_subtraction`),
+/// but it skips the gcd that constructing the canonical difference would cost
+/// — one reduction per coordinate per point, on arrangements that reach over a
+/// million points.
+///
+/// Deliberately per-coordinate rather than over the `Homog2` values already on
+/// hand: homogenizing puts BOTH coordinates' denominators into every `W`, so
+/// the homogeneous form of this same difference carries a four-way denominator
+/// product and its wider operands cost more in the final division than the gcd
+/// ever did.
+#[inline]
+fn translated_coord(pc: &Rational, oc: &Rational) -> (f64, bool) {
+    let (pn, pd) = (numer(pc), denom(pc));
+    let (on, od) = (numer(oc), denom(oc));
+    let num = mul_int_uint(pn, od) - mul_int_uint(on, pd);
+    let den = int_from_uint(mul_uint(pd, od));
+    int_ratio_to_f64(&num, &den)
+}
+
+/// `p − o` in the projection plane: both coordinates via [`translated_coord`],
+/// with the exactness flags combined (the tight filters need the whole point
+/// to be exact).
+///
+/// The flag here is the conversion's own "no rounding occurred", which is the
+/// exact-input filters' actual precondition. It is strictly more permissive
+/// than cdt.rs's `is_exact` — that one is a cheap syntactic test on a reduced
+/// rational and gives up on representable-but-large dyadics — so some points
+/// gain the tight filter that the standalone `cdt::triangulate` path would not
+/// grant them. Sound either way: both filters certify true signs, and the flag
+/// is true only when the f64 really is the translated value.
+#[inline]
+fn translated_approx(o: &R2, p: &R2) -> ([f64; 2], bool) {
+    let (x, x_exact) = translated_coord(&p.x, &o.x);
+    let (y, y_exact) = translated_coord(&p.y, &o.y);
+    ([x, y], x_exact && y_exact)
 }
 
 #[inline]
@@ -393,8 +440,63 @@ pub fn build(
     // once (correctly rounded f64) for the semi-static filters that certify
     // generic-position signs without any Int work.
     let mut homogs: Vec<Homog2> = points2.iter().map(homog2_of).collect();
-    let approx = |p: &R2| -> [f64; 2] { [rat_to_f64(&p.x), rat_to_f64(&p.y)] };
-    let mut apts: Vec<[f64; 2]> = points2.iter().map(approx).collect();
+    // Approximations are taken of the points TRANSLATED by points2[0] (the
+    // triangle's first corner, so the origin is a deterministic function of
+    // the arrangement's own data), with the subtraction done EXACTLY in
+    // rationals and only the result rounded — the same lever robust/cdt.rs
+    // applies to its filter inputs, and sound here for the same two reasons:
+    //
+    //  (a) Predicates. Every filtered call below is orient2d_a, whose sign is
+    //      translation invariant, with the exact fallback (orient2d_h) still
+    //      running on the UNTRANSLATED homogenized rationals. A sign certified
+    //      for the translated configuration is therefore the sign of the
+    //      original one, while the filter's error bound — which is built from
+    //      the coordinate magnitudes |a|+|b|+|c|, not from the determinant —
+    //      shrinks from "distance to the world origin" to "extent of this one
+    //      triangle". Far-from-origin arrangements stop escalating on every
+    //      call.
+    //
+    //  (b) Box tests. `approx_box`/`boxes_overlap`/`box_contains` are NOT
+    //      translation invariant: translating changes the rounding, so the
+    //      sweep and the point-index query may admit a DIFFERENT superset of
+    //      candidates. That is sound here because both prefilters remain
+    //      conservative about the translated exact points (the pad is ~4.5 ulp
+    //      of the translated magnitude, and rounding error is ≤ 0.5 ulp of it),
+    //      and because every admitted candidate is then fully decided by exact
+    //      predicates: a spurious pair fails the strict-crossing test and
+    //      constructs nothing, a spurious point fails orient2d_h/the exact
+    //      range test and never enters `on_seg`. Enumeration order is unchanged
+    //      too: pairs still arrive in (i, ascending j) order, so the surviving
+    //      true crossings are constructed in the same sequence regardless of
+    //      which spurious pairs sit between them, and `on_seg` is ordered by an
+    //      exact rational parameter comparison over a set of distinct points,
+    //      which is independent of insertion order. Nothing that DEFINES output
+    //      order — point insertion indices, the constraints BTreeMap keys, the
+    //      `flipped` rational sign, or cdt::triangulate's untranslated `points2`
+    //      input — reads `apts` at all.
+    //
+    // The translation is computed from the homogeneous coordinates
+    // (`translated_approx`), which is the same exact value an R2 subtraction
+    // would produce but skips the gcd that constructing the difference as a
+    // canonical Rational costs — on million-point arrangements that gcd cost
+    // more than the escalations the lever saves.
+    let mut apts: Vec<[f64; 2]> = Vec::with_capacity(points2.len());
+    // Per-point "this f64 pair is EXACTLY the translated point", the
+    // precondition of cdt's tight exact-input filters. Handed to the CDT below
+    // so it does not repeat the translation.
+    let mut apts_exact: Vec<bool> = Vec::with_capacity(points2.len());
+    // A monster arrangement translates over a million points here, each one a
+    // pair of exact big-integer divisions, so this loop is long enough that a
+    // cancel arriving inside it must not wait it out. Strictly an early
+    // return: a run that completes builds the identical vectors.
+    for i in 0..points2.len() {
+        if i % 1024 == 0 && crate::cancel::is_cancelled(token) {
+            return None;
+        }
+        let (a, e) = translated_approx(&points2[0], &points2[i]);
+        apts.push(a);
+        apts_exact.push(e);
+    }
     let o2 = |apts: &[[f64; 2]], homogs: &[Homog2], i: usize, j: usize, k: usize| -> Sign {
         orient2d_a(apts[i], apts[j], apts[k])
             .unwrap_or_else(|| orient2d_h(&homogs[i], &homogs[j], &homogs[k]))
@@ -438,8 +540,13 @@ pub fn build(
     for p in points2.iter().skip(homogs.len()) {
         homogs.push(homog2_of(p));
     }
-    for p in points2.iter().skip(apts.len()) {
-        apts.push(approx(p));
+    for i in apts.len()..points2.len() {
+        if i % 1024 == 0 && crate::cancel::is_cancelled(token) {
+            return None;
+        }
+        let (a, e) = translated_approx(&points2[0], &points2[i]);
+        apts.push(a);
+        apts_exact.push(e);
     }
 
     debug_assert!(points2.iter().all(|p| {
@@ -512,7 +619,12 @@ pub fn build(
     let t0 = crate::timing::Stopwatch::start();
 
     let constraint_pairs: Vec<(usize, usize)> = constraints.keys().copied().collect();
-    let tris = cdt::triangulate_with_token(&points2, &constraint_pairs, token)?;
+    // The CDT translates by points2[0] for its own filters, which is exactly
+    // what `apts`/`apts_exact` already hold — hand them over rather than let it
+    // redo one exact subtraction per point. The token rides along on the same
+    // call: a monster triangulation must stay interruptible.
+    let tris =
+        cdt::triangulate_with_apts(&points2, &constraint_pairs, apts, apts_exact, token)?;
     stats::CDT_NS.fetch_add(t0.elapsed_ns(), Relaxed);
 
     let axis_comp = match axis {
@@ -581,10 +693,25 @@ pub fn candidate_points(
         .iter()
         .map(|(a, b)| (homog2_of(a), homog2_of(b)))
         .collect();
-    let approx = |p: &R2| -> [f64; 2] { [rat_to_f64(&p.x), rat_to_f64(&p.y)] };
+    // Same translated-filter-input lever as `build`, with the same origin
+    // (the triangle's first corner, projected) and the same soundness
+    // argument: orient2d_a's certified sign is translation invariant and its
+    // exact fallback still runs on the untranslated homogs, while the box
+    // sweep stays conservative about the translated points and only ever
+    // proposes candidates that the exact strict-crossing test then decides.
+    // `out` is keyed and ordered by untranslated rationals, so the set and
+    // sequence of registered points are unchanged.
+    // No CDT runs on this path, so only the filter inputs are needed — no
+    // exactness flags.
+    let origin = corners[0].project_drop(axis);
     let apts: Vec<([f64; 2], [f64; 2])> = segs2
         .iter()
-        .map(|(a, b)| (approx(a), approx(b)))
+        .map(|(a, b)| {
+            (
+                translated_approx(&origin, a).0,
+                translated_approx(&origin, b).0,
+            )
+        })
         .collect();
     let o2 = |a: ([f64; 2], &Homog2), b: ([f64; 2], &Homog2), c: ([f64; 2], &Homog2)| -> Sign {
         orient2d_a(a.0, b.0, c.0).unwrap_or_else(|| orient2d_h(a.1, b.1, c.1))

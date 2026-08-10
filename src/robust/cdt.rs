@@ -96,7 +96,50 @@ pub fn triangulate_with_token(
     constraints: &[(usize, usize)],
     token: Option<&crate::cancel::CancelToken>,
 ) -> Option<Vec<[usize; 3]>> {
+    let (apts, exact) = translated_filter_inputs(points);
+    triangulate_with_apts(points, constraints, apts, exact, token)
+}
+
+/// The translated filter inputs [`triangulate_with_token`] would build for
+/// `points`: each point minus `points[0]`, the subtraction exact in rationals
+/// and only the result rounded, plus a flag per point saying whether that f64
+/// is EXACTLY the translated value (see [`triangulate_with_apts`] for why
+/// translating is sound and why it matters).
+fn translated_filter_inputs(points: &[R2]) -> (Vec<[f64; 2]>, Vec<bool>) {
+    let origin = &points[0];
+    let (mut apts, mut exact) = (
+        Vec::with_capacity(points.len()),
+        Vec::with_capacity(points.len()),
+    );
+    for p in points {
+        let t = p.sub(origin);
+        apts.push([rat_to_f64(&t.x), rat_to_f64(&t.y)]);
+        exact.push(is_exact(&t.x) && is_exact(&t.y));
+    }
+    (apts, exact)
+}
+
+/// [`triangulate_with_token`] with the translated filter inputs supplied by
+/// the caller, so the per-point exact translation is paid once per arrangement
+/// instead of twice — robust/arrangement.rs derives exactly these values, from
+/// exactly this origin, for its own filtered sweeps.
+///
+/// `apts[i]` must be a correctly rounded f64 pair of `points[i] − points[0]`
+/// and `exact[i]` must be true only when that pair is EXACTLY that difference.
+/// Nothing else may be passed: the semi-static filters are sound for any
+/// inputs meeting those two conditions and unsound for any others. The exact
+/// fallbacks are unaffected either way — they run on `points`' own homogenized
+/// rationals, untranslated.
+pub(crate) fn triangulate_with_apts(
+    points: &[R2],
+    constraints: &[(usize, usize)],
+    apts: Vec<[f64; 2]>,
+    exact: Vec<bool>,
+    token: Option<&crate::cancel::CancelToken>,
+) -> Option<Vec<[usize; 3]>> {
     assert!(points.len() >= 3, "need the three corner points");
+    debug_assert_eq!(apts.len(), points.len(), "one filter input per point");
+    debug_assert_eq!(exact.len(), points.len(), "one exactness flag per point");
     let hom: Vec<Homog2> = points.iter().map(homog2_of).collect();
     let mut corners = [0usize, 1, 2];
     let orient = orient2d_h(&hom[0], &hom[1], &hom[2]);
@@ -125,13 +168,10 @@ pub fn triangulate_with_token(
     // The exact-input path stays sound under the same argument: what it
     // requires is that the f64 it sees be exactly the value whose determinant
     // it is bounding, which after translation is the translated rational.
-    let origin = &points[0];
-    let (mut apts, mut exact) = (Vec::with_capacity(points.len()), Vec::with_capacity(points.len()));
-    for p in points {
-        let t = p.sub(origin);
-        apts.push([rat_to_f64(&t.x), rat_to_f64(&t.y)]);
-        exact.push(is_exact(&t.x) && is_exact(&t.y));
-    }
+    //
+    // `apts`/`exact` arrive from the caller (see `translated_filter_inputs`
+    // for the values they must hold) because robust/arrangement.rs derives the
+    // identical pair, from the identical origin, for its own sweeps.
     let mut by_coord: Vec<usize> = (0..points.len()).collect();
     by_coord.sort_by(|&i, &j| {
         points[i]
