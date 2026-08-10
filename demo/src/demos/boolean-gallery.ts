@@ -364,8 +364,8 @@ export function init(container: HTMLElement): () => void {
     const a = operandMeta(thingiA);
     const b = operandMeta(thingiB);
     panel.operands.setLines([
-      { slot: 'a', title: thingiA.model.name, meta: a.text, caution: a.caution },
-      { slot: 'b', title: thingiB.model.name, meta: b.text, caution: b.caution },
+      { slot: 'a', title: thingiA.model.name, thingiId: thingiA.model.id, meta: a.text, caution: a.caution },
+      { slot: 'b', title: thingiB.model.name, thingiId: thingiB.model.id, meta: b.text, caution: b.caution },
     ], `rot [${Math.round(rotX)}, ${Math.round(rotY)}, ${Math.round(rotZ)}]°`);
     panel.operands.setMessage(message);
   }

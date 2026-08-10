@@ -353,6 +353,23 @@
   text-overflow: ellipsis;
 }
 
+/* Thingi10K name → previewer. It reads as text until pointed at, because the
+   row is information first; `display: block` keeps the ellipsis truncation the
+   div variant gets for free. */
+.bgw-op-link {
+  display: block;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.bgw-op-link:hover,
+.bgw-op-link:focus-visible {
+  color: var(--bg-accent-text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
 .bgw-op-meta {
   font-size: 11px;
   color: var(--bg-muted);

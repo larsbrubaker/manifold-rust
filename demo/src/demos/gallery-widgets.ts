@@ -321,10 +321,20 @@ export function createDisclosure(
   };
 }
 
+/// Where a Thingi10K model can be inspected on its own — the previewer reads
+/// `?model=<id>` and opens straight to that mesh.
+const THINGI_PREVIEW_URL = 'https://larsbrubaker.github.io/Thingi10K/?model=';
+
 export interface OperandLine {
   /** Swatch colour key: which viewport mesh this row describes. */
   slot: 'a' | 'b';
   title: string;
+  /**
+   * Thingi10K dataset id, when the operand came from that pool. Turns the
+   * name into a link to the previewer; primitives have no id and stay plain
+   * text. Only the name links — the card itself carries the swap chip.
+   */
+  thingiId?: number;
   /** `#849728 · 702 tris · manifold` */
   meta: string;
   /** Colour the meta line as a caution (non-manifold input). */
@@ -373,10 +383,19 @@ export function createOperandCard(onSwap: () => void): OperandCard {
         swatch.className = `bgw-swatch bgw-swatch-${line.slot}`;
         const text = document.createElement('div');
         text.className = 'bgw-op-text';
-        const t = document.createElement('div');
+        const t = line.thingiId === undefined
+          ? document.createElement('div')
+          : document.createElement('a');
         t.className = 'bgw-op-title';
         t.textContent = line.title;
         t.title = line.title;
+        if (t instanceof HTMLAnchorElement) {
+          t.className = 'bgw-op-title bgw-op-link';
+          t.href = THINGI_PREVIEW_URL + line.thingiId;
+          t.target = '_blank';
+          t.rel = 'noopener';
+          t.title = `${line.title} — open #${line.thingiId} in the Thingi10K previewer`;
+        }
         const m = document.createElement('div');
         m.className = line.caution ? 'bgw-op-meta bgw-mono is-caution' : 'bgw-op-meta bgw-mono';
         m.textContent = line.meta;
