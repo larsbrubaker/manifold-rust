@@ -56,13 +56,13 @@ export interface TroubleCase {
 export const TROUBLE_CASES: TroubleCase[] = [
   {
     value: '1663774-51334',
-    text: '1663774 ∪ 51334 — heavy fins (slowest known)',
+    text: '1663774 ∪ 51334 — heavy fins (perf stress)',
     a: 1663774, b: 51334, op: 'union', engine: 'robust',
     offset: [0.3, 0, 0], rot: [231.39999999999753, 124, 273.6000000000049], pairKind: 'nn',
   },
   {
     value: '91946-61459',
-    text: '91946 ∪ 61459 — doubled-surface windows (perf)',
+    text: '91946 ∪ 61459 — doubled-surface windows (regression watch)',
     a: 91946, b: 61459, op: 'union', engine: 'robust',
     offset: [0.3, 0, 0], rot: [236, 231, 42], pairKind: 'nn',
   },
@@ -74,7 +74,7 @@ export const TROUBLE_CASES: TroubleCase[] = [
   },
   {
     value: '1075458-91115',
-    text: '1075458 − 91115 — CDT constraint recovery (fixed)',
+    text: '1075458 − 91115 — CDT recovery (bit-identity gate)',
     a: 1075458, b: 91115, op: 'difference', engine: 'robust',
     offset: [0.7, -0.2, 0.4], rot: [311, 55, 345], pairKind: 'mn',
   },
