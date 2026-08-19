@@ -41,8 +41,15 @@
          Union / Subtract / Intersect overloads with engine, winding rule and
          progress) over the unchanged manifold-ffi 0.3.1 ABI. The handshake in
          NativeVersionCheck compares the native's major.minor only, so it is
-         unaffected either way. -->
-    <Version>0.4.2</Version>
+         unaffected either way.
+
+         0.5.0 pairs with manifold-ffi 0.3.2, which adds
+         manifold_rs_rebuild_solid / _ct (bound as RebuildSolid). Purely
+         additive exports keep the ffi minor - an older binding still works
+         against the newer native, and a newer binding against an older native
+         fails loudly with EntryPointNotFoundException rather than silently -
+         so the 0.3.x handshake is unchanged. -->
+    <Version>0.5.0</Version>
     <Authors>Lars Brubaker</Authors>
     <Company>Lars Brubaker</Company>
     <Copyright>Copyright 2026 Lars Brubaker</Copyright>

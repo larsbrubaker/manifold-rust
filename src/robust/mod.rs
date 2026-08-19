@@ -163,7 +163,6 @@ pub fn boolean_with_rule(
     token: Option<&CancelToken>,
     progress: Option<&crate::progress::ProgressReporter>,
 ) -> ManifoldImpl {
-    use crate::progress::{begin_phase, Phase};
     if is_cancelled(token) {
         return cancelled_impl();
     }
@@ -242,8 +241,35 @@ pub fn boolean_with_rule(
     // Subtraction needs no operand flip: the cell predicate expresses it
     // directly as "inside P and not inside Q", so both operands keep their
     // own winding and their corner properties stay in their original order.
+    let ctx = assemble::PropCtx {
+        num_prop: [a.num_prop, b.num_prop],
+        tris: [&p_tris, &q_tris],
+        props: [&p_props, &q_props],
+    };
+    classify_and_assemble(&ctx, op, rule, token, progress)
+}
+
+/// The pipeline proper: intersect (cross-mesh *and* self), arrange, build the
+/// cell complex, propagate winding numbers, keep the walls `op`/`rule`
+/// separates, assemble.
+///
+/// Everything the operands contribute travels in `ctx` — positions in
+/// `ctx.tris`, corner properties in `ctx.props` — so the single-operand entry
+/// ([`rebuild_with_rule`]) shares this body verbatim by handing mesh 1 an
+/// empty soup. Every stage is already indexed by mesh, and an empty mesh 1
+/// simply contributes no triangles, no boxes and no primitives; its winding
+/// is 0 in every cell, which no rule calls solid.
+fn classify_and_assemble(
+    ctx: &assemble::PropCtx,
+    op: OpType,
+    rule: WindingRule,
+    token: Option<&CancelToken>,
+    progress: Option<&crate::progress::ProgressReporter>,
+) -> ManifoldImpl {
+    use crate::progress::{begin_phase, Phase};
+    let [p_tris, q_tris] = ctx.tris;
     let Some(graph) =
-        intersection_graph::build_graph_with_progress(&p_tris, &q_tris, token, progress)
+        intersection_graph::build_graph_with_progress(p_tris, q_tris, token, progress)
     else {
         return cancelled_impl();
     };
@@ -259,7 +285,7 @@ pub fn boolean_with_rule(
     // fraction of without instrumenting the exact ray queries themselves.
     begin_phase(progress, Phase::Winding, 0);
     let t_winding = crate::timing::start();
-    let wind = cells::windings(&graph, &complex, [&p_tris, &q_tris]);
+    let wind = cells::windings(&graph, &complex, [p_tris, q_tris]);
     crate::timing::print("robust: winding propagation", t_winding);
     if is_cancelled(token) {
         return cancelled_impl();
@@ -268,16 +294,54 @@ pub fn boolean_with_rule(
     // Boundary of the result, wound from the cell labels.
     begin_phase(progress, Phase::Assemble, 0);
     let pieces = cells::extract(&graph, &complex, &wind, op, rule);
-    let ctx = assemble::PropCtx {
-        num_prop: [a.num_prop, b.num_prop],
-        tris: [&p_tris, &q_tris],
-        props: [&p_props, &q_props],
-    };
-    let props = (ctx.out_num_prop() > 0).then_some(&ctx);
+    let props = (ctx.out_num_prop() > 0).then_some(ctx);
     let t_asm = crate::timing::start();
     let out = assemble::assemble(&pieces, &graph.verts, &graph.verts_f64, |_| true, props);
     crate::timing::print("robust: assemble+import", t_asm);
     out.into_impl()
+}
+
+/// Rebuild one mesh into a fresh, properly paired 2-manifold enclosing the
+/// same solid region under `rule` — the single-operand form of the robust
+/// boolean.
+///
+/// The input may be arbitrary triangle soup: self-intersecting, T-junctioned,
+/// carrying duplicated or coincident sheets, more than two faces on an edge,
+/// or riddled with interior walls. It runs the identical pipeline
+/// [`boolean_with_rule`] uses ([`classify_and_assemble`]), with mesh 1 empty
+/// and `OpType::Add`, which reduces the cell predicate to "is mesh 0's
+/// winding inside under `rule`" — mesh 1's winding is 0 everywhere and no
+/// rule calls 0 solid. Self-intersections are still cut (the graph builder
+/// self-cuts every mesh, mesh 1's empty half included), so folds within the
+/// one operand classify exactly as they would against a partner.
+///
+/// This cannot be expressed as a union with an empty operand:
+/// [`boolean_with_rule`]'s empty-operand fast path returns the other operand
+/// *unclassified*, deliberately, to preserve the historical pass-through.
+///
+/// Corner properties survive: the operand occupies mesh slot 0, the same slot
+/// a two-operand boolean gives it, so [`assemble::PropCtx`] interpolates them
+/// onto the rebuilt triangles unchanged.
+pub fn rebuild_with_rule(
+    a: &ManifoldImpl,
+    rule: WindingRule,
+    token: Option<&CancelToken>,
+    progress: Option<&crate::progress::ProgressReporter>,
+) -> ManifoldImpl {
+    if is_cancelled(token) {
+        return cancelled_impl();
+    }
+    if a.is_empty() {
+        return ManifoldImpl::new();
+    }
+    let p_tris = soup::impl_to_tris(a);
+    let p_props = soup::impl_to_corner_props(a);
+    let ctx = assemble::PropCtx {
+        num_prop: [a.num_prop, 0],
+        tris: [&p_tris, &[]],
+        props: [&p_props, &[]],
+    };
+    classify_and_assemble(&ctx, OpType::Add, rule, token, progress)
 }
 
 /// Import a raw triangle list as a boolean result (used by
@@ -324,6 +388,10 @@ mod nonmanifold_tests;
 #[cfg(test)]
 #[path = "property_tests.rs"]
 mod property_tests;
+
+#[cfg(test)]
+#[path = "rebuild_tests.rs"]
+mod rebuild_tests;
 
 #[cfg(test)]
 #[path = "thingi_tests.rs"]

@@ -53,7 +53,7 @@ use std::ptr;
 use manifold_rust::cancel::CancelToken;
 use manifold_rust::csg_tree::CsgNode;
 use manifold_rust::manifold::Manifold;
-use manifold_rust::types::{Error, MeshGL, OpType};
+use manifold_rust::types::{Error, MeshGL, OpType, WindingRule};
 
 use crate::cancel::CancelTokenRs;
 use crate::error::{guard, last_error_message, set_last_error};
@@ -300,6 +300,82 @@ pub unsafe extern "C" fn manifold_rs_repair_orientation(m: *const ManifoldRs) ->
             return ptr::null_mut();
         };
         into_handle(handle.inner.repair_orientation())
+    })
+}
+
+/// Rebuild `m` into a fresh, properly paired 2-manifold enclosing the same
+/// solid region under `winding_rule` (`MANIFOLD_RS_WINDING_*`: 0 = positive
+/// `{w >= 1}`, 1 = nonzero `{w != 0}`).
+///
+/// Where [`manifold_rs_repair_orientation`] only rewinds triangles, this runs
+/// the full robust pipeline on the one mesh: self-intersections are cut,
+/// doubled and coincident sheets collapse, interior walls with material on
+/// both sides dissolve, and the surviving boundary is rewound from the winding
+/// numbers. The output is re-triangulated, so triangle and vertex counts do
+/// not match the input.
+///
+/// The input must already be closed and orientable — that is the soup
+/// importer's admission test, so an open mesh is an empty handle with status
+/// 15 (`NotClosed`) long before it reaches here, and rebuilding it is a no-op.
+/// Everything past closedness is fair game.
+///
+/// Returns NULL only if `m` is NULL, the rule value is unknown, or the rebuild
+/// panics; an empty input comes back as a valid empty handle.
+///
+/// # Safety
+/// `m` must be NULL or a live handle from this library.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_rebuild_solid(
+    m: *const ManifoldRs,
+    winding_rule: i32,
+) -> *mut ManifoldRs {
+    // SAFETY: the caller contract of this function is exactly the one
+    // `manifold_rs_rebuild_solid_ct` documents; a NULL token means
+    // "uncancellable", which is this function's behaviour.
+    unsafe { manifold_rs_rebuild_solid_ct(m, winding_rule, ptr::null()) }
+}
+
+/// [`manifold_rs_rebuild_solid`] with an optional cancellation token.
+///
+/// A rebuild costs what a boolean against a partner costs, so anything
+/// interactive wants this form. A NULL `token` is the uncancellable path and
+/// behaves identically to [`manifold_rs_rebuild_solid`]. When the token is
+/// cancelled the call returns a *valid* handle whose status is the cancelled
+/// code (14), never NULL — so the caller can tell cancellation apart from an
+/// argument error or a caught panic.
+///
+/// The token's shared flag is cloned out on entry, with the same ownership
+/// reasoning as [`manifold_rs_batch_boolean_ct`]: destroying the token handle
+/// mid-call is harmless, it just leaves later cancels nowhere to land.
+///
+/// # Safety
+/// `m` must be NULL or a live handle from this library. `token` must be NULL
+/// or a live handle at the moment of the call.
+#[no_mangle]
+pub unsafe extern "C" fn manifold_rs_rebuild_solid_ct(
+    m: *const ManifoldRs,
+    winding_rule: i32,
+    token: *const CancelTokenRs,
+) -> *mut ManifoldRs {
+    guard(ptr::null_mut(), || {
+        let rule = match winding_rule {
+            0 => WindingRule::Positive,
+            1 => WindingRule::Nonzero,
+            other => {
+                set_last_error(format!(
+                    "manifold_rs_rebuild_solid: unknown winding rule {other}"
+                ));
+                return ptr::null_mut();
+            }
+        };
+        // SAFETY: caller contract; as_ref() handles the NULL case.
+        let Some(handle) = (unsafe { m.as_ref() }) else {
+            set_last_error("manifold_rs_rebuild_solid: null manifold");
+            return ptr::null_mut();
+        };
+        // SAFETY: caller contract; as_ref() handles the NULL case.
+        let token: Option<CancelToken> = unsafe { token.as_ref() }.map(|t| t.inner.clone());
+        into_handle(handle.inner.rebuild_solid_with_token(rule, token.as_ref()))
     })
 }
 

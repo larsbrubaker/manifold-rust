@@ -200,6 +200,14 @@ namespace ManifoldRust
 		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
 		internal static partial int manifold_rs_has_self_intersections(IntPtr m);
 
+		// Only the _ct form is declared, for the same reason as
+		// manifold_rs_boolean_progress_rule: manifold_rs_rebuild_solid is
+		// implemented natively by forwarding here with a NULL token, and
+		// IntPtr.Zero is exactly that token.
+		[LibraryImport(LibraryName)]
+		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
+		internal static partial IntPtr manifold_rs_rebuild_solid_ct(IntPtr m, int windingRule, IntPtr token);
+
 		[LibraryImport(LibraryName)]
 		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
 		internal static partial IntPtr manifold_rs_progress_phase_name(uint phaseId);

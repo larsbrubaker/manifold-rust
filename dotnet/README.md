@@ -79,7 +79,7 @@ mismatch. The check runs once per process and costs one call to
 `manifold_rs_version` after that.
 
 ```
-manifold-ffi 0.3.1 (manifold-rust 0.12.0)
+manifold-ffi 0.3.2 (manifold-rust 0.14.0)
              ^^^^ compared, to major.minor
 ```
 
@@ -130,6 +130,7 @@ MeshGL mesh = result.GetMeshGL();
 | `Manifold.BatchBoolean(IReadOnlyList<Manifold>, ManifoldOpType, CancelToken)` | Lower level: reports cancellation as a result with `Status == Cancelled` instead of throwing. |
 | `Manifold.Boolean(Manifold, Manifold, ManifoldOpType, BooleanEngine, ...)` | Binary boolean with the engine pinned, plus optional `WindingRule`, progress sink and cancellation. `Union` / `Subtract` / `Intersect` are the named spellings. Use `BatchBoolean` for three or more operands: only it runs the CSG tree. |
 | `Manifold.RepairOrientation()` | Returns a **new** manifold with inside-out shells rewound so every body reads as solid under the `Positive` winding rule. A mesh that needs no repair comes back as a plain copy, so it is safe to call unconditionally. |
+| `Manifold.RebuildSolid(WindingRule, ...)` | Returns a **new** manifold rebuilt from the winding numbers: self-intersections, doubled sheets and interior walls are removed, not just rewound. Costs what a boolean costs, so there are `CancelToken` and `CancellationToken` overloads. The result is re-triangulated — counts change and properties are re-interpolated. |
 | `Manifold.HasSelfIntersections` | Whether two of the mesh's own triangles genuinely cross, overlap or coincide — shared edges and vertices do not count. Cached natively, so repeated reads are free. |
 | `Manifold.GetMeshGL()` | Eagerly copies every array into managed memory and frees the native mesh before returning. |
 | `Manifold.GetMeshGL64()` | The same, with `double[]` coordinates. |
@@ -276,7 +277,12 @@ rule is `Nonzero`):
 
 `RepairOrientation()` is the alternative to `Nonzero`: it rewinds the shells once
 so every later operation can keep using `Positive`, instead of changing what
-"solid" means for the whole call. `HasSelfIntersections` answers the other
+"solid" means for the whole call. `RebuildSolid(rule)` is the heavy option for
+when rewinding is not enough: it re-derives the surface from the winding numbers
+under `rule`, so self-intersections, doubled sheets and interior walls go away
+too — at the cost of re-triangulating, and of only accepting input that is
+already closed and orientable (an open mesh imports as `NotClosed` and never gets
+that far). `HasSelfIntersections` answers the other
 question worth asking before a boolean — geometry that overlaps itself breaks the
 exact engine's winding integral, which is why `BooleanEngine.Auto` routes it to
 `Robust`.

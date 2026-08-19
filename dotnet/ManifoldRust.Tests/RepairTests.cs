@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Managed-side tests for Manifold.RepairOrientation and
-// Manifold.HasSelfIntersections, mirroring repair_orientation_rewinds_inverted_cube
-// and has_self_intersections_flags_doubled_surface in ffi/src/tests_robust.rs so
-// the binding is checked against the same geometry as the ABI.
+// Managed-side tests for Manifold.RepairOrientation, Manifold.RebuildSolid and
+// Manifold.HasSelfIntersections, mirroring repair_orientation_rewinds_inverted_cube,
+// rebuild_solid_collapses_doubled_faces, rebuild_solid_rule_and_argument_errors and
+// has_self_intersections_flags_doubled_surface in ffi/src/tests_robust.rs so the
+// binding is checked against the same geometry as the ABI.
 
 using System;
 using System.Threading.Tasks;
@@ -62,6 +63,65 @@ namespace ManifoldRust.Tests
 
 			await Assert.That(() => cube.RepairOrientation()).Throws<ObjectDisposedException>();
 			await Assert.That(() => { _ = cube.HasSelfIntersections; }).Throws<ObjectDisposedException>();
+		}
+
+		[Test]
+		public async Task RebuildSolidCollapsesADoubledSoupToOneCube()
+		{
+			// Every face present twice: more than two faces on every edge, so nothing
+			// pairs and no amount of rewinding helps. Only a rebuild from the winding
+			// numbers gets back to one shell - the import keeps both copies, so the
+			// fixture really does double-count at 16 going in.
+			(float[] verts, uint[] tris) = TestMeshes.Cube(0, 0, 0, 2);
+			(float[] soupVerts, uint[] soupTris) = TestMeshes.AsSoup(verts, tris);
+
+			float[] doubledVerts = new float[soupVerts.Length * 2];
+			soupVerts.CopyTo(doubledVerts, 0);
+			soupVerts.CopyTo(doubledVerts, soupVerts.Length);
+
+			uint[] doubledTris = new uint[soupTris.Length * 2];
+			for (uint i = 0; i < doubledTris.Length; i++)
+			{
+				doubledTris[i] = i;
+			}
+
+			using Manifold doubled = Manifold.FromMeshRobust(doubledVerts, doubledTris);
+			await Assert.That(doubled.Status).IsEqualTo(ManifoldStatus.NoError);
+			await Assert.That(TestMeshes.SignedVolume(doubled.GetMeshGL())).IsEqualTo(16.0).Within(1e-6);
+
+			using Manifold rebuilt = doubled.RebuildSolid(WindingRule.Positive);
+			await Assert.That(rebuilt.Status).IsEqualTo(ManifoldStatus.NoError);
+			await Assert.That(TestMeshes.SignedVolume(rebuilt.GetMeshGL())).IsEqualTo(8.0).Within(1e-6);
+
+			// The doubled sheet is gone, which is what makes the result a solid again.
+			await Assert.That(rebuilt.HasSelfIntersections).IsFalse();
+		}
+
+		[Test]
+		public async Task RebuildSolidReadsAnInvertedCubeByTheWindingRule()
+		{
+			// {w != 0} calls the inside-out body material and rewinds it outward;
+			// {w >= 1} finds nothing solid in it at all.
+			(float[] verts, uint[] tris) = TestMeshes.Cube(0, 0, 0, 2);
+			using Manifold inverted = Manifold.FromMesh(verts, TestMeshes.Inverted(tris));
+			await Assert.That(inverted.Status).IsEqualTo(ManifoldStatus.NoError);
+
+			using Manifold nonzero = inverted.RebuildSolid(WindingRule.Nonzero);
+			await Assert.That(nonzero.Status).IsEqualTo(ManifoldStatus.NoError);
+			await Assert.That(TestMeshes.SignedVolume(nonzero.GetMeshGL())).IsEqualTo(8.0).Within(1e-6);
+
+			using Manifold positive = inverted.RebuildSolid(WindingRule.Positive);
+			await Assert.That(positive.Status).IsEqualTo(ManifoldStatus.NoError);
+			await Assert.That(positive.GetMeshGL().TriVerts.Length).IsEqualTo(0);
+		}
+
+		[Test]
+		public async Task RebuildSolidOnADisposedManifoldThrows()
+		{
+			Manifold cube = TestMeshes.CubeManifold(0, 0, 0, 2);
+			cube.Dispose();
+
+			await Assert.That(() => cube.RebuildSolid(WindingRule.Positive)).Throws<ObjectDisposedException>();
 		}
 
 		[Test]

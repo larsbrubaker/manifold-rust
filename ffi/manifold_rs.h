@@ -171,6 +171,37 @@ int32_t manifold_rs_get_boolean_engine(void);
 ManifoldRs* manifold_rs_repair_orientation(const ManifoldRs* m);
 
 /*
+ * Rebuild m into a fresh, properly paired 2-manifold enclosing the same solid
+ * region under winding_rule (MANIFOLD_RS_WINDING_*).
+ *
+ * Where manifold_rs_repair_orientation only rewinds triangles, this runs the
+ * full robust pipeline on the one mesh: self-intersections are cut, doubled
+ * and coincident sheets collapse, interior walls with material on both sides
+ * dissolve, and the surviving boundary is rewound from the winding numbers.
+ * The output is re-triangulated, so its triangle and vertex counts do not
+ * match the input's and per-vertex properties are re-interpolated.
+ *
+ * The input must already be closed and orientable - that is the soup
+ * importer's admission test (status 15 otherwise), so only geometry that got
+ * past it can be rebuilt. Everything past closedness is fair game.
+ *
+ * Returns NULL only if m is NULL, winding_rule is unknown, or the rebuild
+ * panics; empty input comes back as a valid empty handle.
+ */
+ManifoldRs* manifold_rs_rebuild_solid(const ManifoldRs* m, int32_t winding_rule);
+
+/*
+ * manifold_rs_rebuild_solid with an optional cancellation token. A rebuild
+ * costs what a boolean against a partner costs, so anything interactive wants
+ * this form. A NULL token is the uncancellable path. A cancelled run returns a
+ * valid handle whose status is 14, never NULL, so cancellation stays
+ * distinguishable from an argument error.
+ */
+ManifoldRs* manifold_rs_rebuild_solid_ct(const ManifoldRs* m,
+                                         int32_t winding_rule,
+                                         const CancelTokenRs* token);
+
+/*
  * 1 when two of m's own triangles genuinely intersect - they cross, they
  * overlap, or they are coincident surface (a doubled or multiply-wound
  * sheet) - 0 when they merely share edges and vertices as every closed mesh

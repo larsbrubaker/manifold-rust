@@ -227,6 +227,106 @@ fn has_self_intersections_flags_doubled_surface() {
     }
 }
 
+/// The single-operand rebuild: a cube soup carrying every face twice, which
+/// no amount of rewinding can fix (nothing pairs, >2 faces on every edge).
+/// Only a genuine re-derivation from the winding numbers collapses the doubled
+/// sheet back to one shell of volume 8 — the import keeps both copies, so the
+/// fixture really does double-count at 16 going in.
+#[test]
+fn rebuild_solid_collapses_doubled_faces() {
+    let (soup_verts, soup_tris) = cube_soup([0.0; 3], 2.0);
+    let mut verts = soup_verts.clone();
+    verts.extend(soup_verts);
+    let tris: Vec<u32> = (0..2 * soup_tris.len() as u32).collect();
+    let doubled = unsafe {
+        manifold_rs_from_mesh_robust(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3)
+    };
+    assert_eq!(unsafe { manifold_rs_status(doubled) }, 0);
+    let before = unsafe { exported_signed_volume(doubled) };
+    assert!((before - 16.0).abs() < 1e-6, "fixture volume {before}");
+
+    let rebuilt = unsafe { manifold_rs_rebuild_solid(doubled, 0) };
+    assert!(!rebuilt.is_null());
+    assert_eq!(unsafe { manifold_rs_status(rebuilt) }, 0);
+    let vol = unsafe { exported_signed_volume(rebuilt) };
+    assert!((vol - 8.0).abs() < 1e-6, "expected +8, got {vol}");
+
+    // The rebuilt mesh is a real manifold again: it no longer self-intersects.
+    assert_eq!(unsafe { manifold_rs_has_self_intersections(rebuilt) }, 0);
+    unsafe {
+        manifold_rs_destroy(rebuilt);
+        manifold_rs_destroy(doubled);
+    }
+}
+
+/// The rule argument decides whether an inside-out body is material at all,
+/// and the two argument-error paths must be errors rather than panics or
+/// garbage handles.
+#[test]
+fn rebuild_solid_rule_and_argument_errors() {
+    let (verts, tris) = cube_mesh([0.0; 3], 2.0);
+    let inverted: Vec<u32> = tris
+        .chunks_exact(3)
+        .flat_map(|t| [t[0], t[2], t[1]])
+        .collect();
+    let broken = unsafe {
+        manifold_rs_from_mesh(
+            verts.as_ptr(),
+            verts.len(),
+            inverted.as_ptr(),
+            inverted.len(),
+            3,
+        )
+    };
+    assert_eq!(unsafe { manifold_rs_status(broken) }, 0);
+
+    // {w != 0} reads the inverted cube as solid and rewinds it outward.
+    let nonzero = unsafe { manifold_rs_rebuild_solid(broken, 1) };
+    assert!(!nonzero.is_null());
+    assert_eq!(unsafe { manifold_rs_status(nonzero) }, 0);
+    let vol = unsafe { exported_signed_volume(nonzero) };
+    assert!((vol - 8.0).abs() < 1e-6, "expected +8, got {vol}");
+
+    // {w >= 1} finds no material in it at all.
+    let positive = unsafe { manifold_rs_rebuild_solid(broken, 0) };
+    assert!(!positive.is_null());
+    assert_eq!(unsafe { manifold_rs_status(positive) }, 0);
+    let empty = unsafe { exported_signed_volume(positive) };
+    assert!(empty.abs() < 1e-12, "expected empty, got {empty}");
+
+    assert!(unsafe { manifold_rs_rebuild_solid(std::ptr::null(), 0) }.is_null());
+    assert!(unsafe { manifold_rs_rebuild_solid(broken, 7) }.is_null());
+    unsafe {
+        manifold_rs_destroy(positive);
+        manifold_rs_destroy(nonzero);
+        manifold_rs_destroy(broken);
+    }
+}
+
+/// An already-cancelled token yields a valid handle carrying status 14, never
+/// NULL — the same contract the boolean entry points hold to, so a caller can
+/// still tell cancellation apart from an argument error.
+#[test]
+fn rebuild_solid_ct_honors_a_cancelled_token() {
+    let (verts, tris) = cube_soup([0.0; 3], 2.0);
+    let soup = unsafe {
+        manifold_rs_from_mesh_robust(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3)
+    };
+    assert_eq!(unsafe { manifold_rs_status(soup) }, 0);
+
+    let token = crate::cancel::manifold_rs_cancel_token_new();
+    assert!(!token.is_null());
+    unsafe { crate::cancel::manifold_rs_cancel_token_cancel(token) };
+    let out = unsafe { manifold_rs_rebuild_solid_ct(soup, 0, token) };
+    assert!(!out.is_null(), "cancellation returns a handle, not NULL");
+    assert_eq!(unsafe { manifold_rs_status(out) }, 14, "Cancelled");
+    unsafe {
+        crate::cancel::manifold_rs_cancel_token_destroy(token);
+        manifold_rs_destroy(out);
+        manifold_rs_destroy(soup);
+    }
+}
+
 /// The winding-rule entry point: an inside-out 2-cube at the origin unioned
 /// with a correctly wound 2-cube offset by one along each axis. Under the
 /// positive rule only the wound cube is material (volume 8); under the

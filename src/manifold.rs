@@ -462,6 +462,65 @@ impl Manifold {
         Self::from_impl(out)
     }
 
+    /// Rebuild this mesh into a fresh, properly paired 2-manifold enclosing
+    /// the same solid region under `rule`.
+    ///
+    /// The full robust pipeline — exact intersection (including the mesh
+    /// against itself), arrangement, cell complex, winding-number
+    /// classification, reassembly — run on this one mesh. Arbitrary triangle
+    /// soup is fair game: self-intersections, T-junctions, duplicated or
+    /// coincident sheets, more than two faces on an edge, interior walls.
+    /// Every wall the winding numbers say has material on both sides
+    /// dissolves, every surviving wall is rewound from the cell labels, and
+    /// the output is re-imported with real halfedge pairing.
+    ///
+    /// What is *not* fair game is a surface with a hole in it. Winding numbers
+    /// are only defined for a closed surface, and the soup import enforces it:
+    /// [`Manifold::from_mesh_gl_robust`] balances directed edges on
+    /// position-welded vertices and rejects anything left over with
+    /// [`Error::NotClosed`], so an open or non-orientable mesh never reaches
+    /// this method — it is already an empty `Manifold` carrying that status,
+    /// and the rebuild is a no-op on it. Closed and orientable is the
+    /// admission requirement; everything past that the pipeline will fix.
+    ///
+    /// Choose between this and the cheaper repairs by what is actually wrong:
+    ///
+    ///  * [`Manifold::repair_orientation`] when only the *winding* is wrong —
+    ///    inside-out shells on geometry that is otherwise a clean manifold.
+    ///    It touches nothing but triangle orientation, so it is fast, exact,
+    ///    and preserves triangle count, properties and relations verbatim.
+    ///  * `rebuild_solid` when the *geometry* is wrong — anything that cannot
+    ///    be fixed by flipping triangles. It re-triangulates, so vertex and
+    ///    triangle counts change and properties are re-interpolated.
+    ///
+    /// [`crate::types::WindingRule::Positive`] keeps `{w >= 1}`: an inverted body is not
+    /// material and disappears. [`crate::types::WindingRule::Nonzero`] keeps `{w != 0}`,
+    /// which reads an inside-out body as solid and rewinds it — the right
+    /// choice for scans and CAD exports whose shells are wound arbitrarily.
+    ///
+    /// Empty input returns empty. A cancelled run returns an empty mesh with
+    /// [`Error::Cancelled`]; other pipeline failures surface through
+    /// [`Manifold::status`] as usual.
+    pub fn rebuild_solid(&self, rule: crate::types::WindingRule) -> Self {
+        self.rebuild_solid_with_token(rule, None)
+    }
+
+    /// [`Manifold::rebuild_solid`] with cooperative cancellation. Soup
+    /// rebuilds are as expensive as a boolean against a partner, so anything
+    /// interactive wants this form.
+    pub fn rebuild_solid_with_token(
+        &self,
+        rule: crate::types::WindingRule,
+        token: Option<&crate::cancel::CancelToken>,
+    ) -> Self {
+        if self.is_empty() {
+            return self.clone();
+        }
+        Self::from_impl(crate::robust::rebuild_with_rule(
+            &self.imp, rule, token, None,
+        ))
+    }
+
     /// [`Manifold::boolean`] with an explicit engine choice, overriding the
     /// process-global default set via
     /// [`crate::types::BooleanConfig::set_default_engine`].
