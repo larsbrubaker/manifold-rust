@@ -38,7 +38,10 @@ fn shapes() -> Vec<(&'static str, Manifold)> {
         ("cube", Manifold::cube(v(2.0, 2.0, 2.0), true)),
         ("sphere8", Manifold::sphere(1.2, 8)),
         ("sphere12", Manifold::sphere(1.0, 12)),
-        ("cylinder", Manifold::cylinder_centered(2.0, 0.9, 0.9, 10, true)),
+        (
+            "cylinder",
+            Manifold::cylinder_centered(2.0, 0.9, 0.9, 10, true),
+        ),
         ("cone", Manifold::cylinder_centered(2.0, 1.1, 0.3, 8, true)),
         ("tetra", Manifold::tetrahedron().scale(v(1.5, 1.5, 1.5))),
     ]
@@ -104,7 +107,10 @@ fn cross_validate(a: &Manifold, b: &Manifold, what: &str) {
 
         assert_eq!(exact.status(), Error::NoError, "{ctx}: exact status");
         assert_eq!(robust.status(), Error::NoError, "{ctx}: robust status");
-        assert!(!robust.as_impl().is_soup, "{ctx}: robust output not manifold");
+        assert!(
+            !robust.as_impl().is_soup,
+            "{ctx}: robust output not manifold"
+        );
 
         let ve = exact.volume();
         let vr = robust.volume();
@@ -174,7 +180,10 @@ fn battery_extended() {
     let mut rng = Lcg(0x5EED);
     let mut shapes = shapes();
     shapes.push(("sphere20", Manifold::sphere(1.1, 20)));
-    shapes.push(("cyl16", Manifold::cylinder_centered(2.4, 1.0, 1.0, 16, true)));
+    shapes.push((
+        "cyl16",
+        Manifold::cylinder_centered(2.4, 1.0, 1.0, 16, true),
+    ));
     let n = shapes.len();
     for i in 0..30 {
         let sa = (rng.next() % n as u64) as usize;

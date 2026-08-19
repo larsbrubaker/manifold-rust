@@ -1,12 +1,13 @@
 // QuickHull algorithm internals — extracted from quickhull.rs
 // Contains MeshBuilder, Pool, FaceData, and QuickHull struct/impl
 
-use std::collections::VecDeque;
 use crate::linalg::{dot, Vec3};
 use crate::types::Halfedge;
+use std::collections::VecDeque;
 
-use super::{squared_distance, squared_distance_point_ray, triangle_normal,
-            Plane, signed_distance_to_plane};
+use super::{
+    signed_distance_to_plane, squared_distance, squared_distance_point_ray, triangle_normal, Plane,
+};
 
 // ---------------------------------------------------------------------------
 // MeshBuilder — internal half-edge mesh used during construction
@@ -120,15 +121,15 @@ impl MeshBuilder {
         self.push_he(0, b, 6, 0, 1); // 0: AB
         self.push_he(0, c, 9, 0, 2); // 1: BC
         self.push_he(0, a, 3, 0, 0); // 2: CA
-        // Face 1: AC, CD, DA
+                                     // Face 1: AC, CD, DA
         self.push_he(0, c, 2, 1, 4); // 3: AC
         self.push_he(0, d, 11, 1, 5); // 4: CD
         self.push_he(0, a, 7, 1, 3); // 5: DA
-        // Face 2: BA, AD, DB
+                                     // Face 2: BA, AD, DB
         self.push_he(0, a, 0, 2, 7); // 6: BA
         self.push_he(0, d, 5, 2, 8); // 7: AD
         self.push_he(0, b, 10, 2, 6); // 8: DB
-        // Face 3: CB, BD, DC
+                                      // Face 3: CB, BD, DC
         self.push_he(0, b, 1, 3, 10); // 9: CB
         self.push_he(0, d, 8, 3, 11); // 10: BD
         self.push_he(0, c, 4, 3, 9); // 11: DC
@@ -140,7 +141,10 @@ impl MeshBuilder {
     }
 
     fn push_he(&mut self, _start: i32, end: i32, paired: i32, face: i32, next: i32) {
-        self.halfedges.push(QHEdge { end_vert: end, paired_halfedge: paired });
+        self.halfedges.push(QHEdge {
+            end_vert: end,
+            paired_halfedge: paired,
+        });
         self.halfedge_to_face.push(face);
         self.halfedge_next.push(next);
     }
@@ -159,7 +163,10 @@ impl MeshBuilder {
 
     fn get_vertex_indices_of_halfedge(&self, he_idx: usize) -> [i32; 2] {
         let paired = self.halfedges[he_idx].paired_halfedge as usize;
-        [self.halfedges[paired].end_vert, self.halfedges[he_idx].end_vert]
+        [
+            self.halfedges[paired].end_vert,
+            self.halfedges[he_idx].end_vert,
+        ]
     }
 
     /// Returns halfedge indices of a face given its index. Does not borrow &Face.
@@ -305,7 +312,15 @@ impl QuickHull {
         // Reorder halfedges into 3-consecutive-per-face layout
         let mesh = &self.mesh;
         let he_count = mesh.halfedges.len();
-        let mut halfedges = vec![Halfedge { start_vert: 0, end_vert: 0, paired_halfedge: -1, prop_vert: 0 }; he_count];
+        let mut halfedges = vec![
+            Halfedge {
+                start_vert: 0,
+                end_vert: 0,
+                paired_halfedge: -1,
+                prop_vert: 0
+            };
+            he_count
+        ];
         let mut mapping = vec![0i32; he_count];
         let mut counts = vec![0i32; he_count.max(1)];
         let mut j = 0i32;
@@ -335,18 +350,23 @@ impl QuickHull {
             let k1 = mesh.halfedge_next[i] as usize;
             mapping[k1] = curr_index + 1;
             halfedges[(curr_index + 1) as usize].end_vert = mesh.halfedges[k1].end_vert;
-            halfedges[(curr_index + 1) as usize].paired_halfedge = mesh.halfedges[k1].paired_halfedge;
+            halfedges[(curr_index + 1) as usize].paired_halfedge =
+                mesh.halfedges[k1].paired_halfedge;
 
             // Third
             let k2 = mesh.halfedge_next[k1] as usize;
             mapping[k2] = curr_index + 2;
             halfedges[(curr_index + 2) as usize].end_vert = mesh.halfedges[k2].end_vert;
-            halfedges[(curr_index + 2) as usize].paired_halfedge = mesh.halfedges[k2].paired_halfedge;
+            halfedges[(curr_index + 2) as usize].paired_halfedge =
+                mesh.halfedges[k2].paired_halfedge;
 
             // Set start_vert from the previous halfedge's end_vert
-            halfedges[curr_index as usize].start_vert = halfedges[(curr_index + 2) as usize].end_vert;
-            halfedges[(curr_index + 1) as usize].start_vert = halfedges[curr_index as usize].end_vert;
-            halfedges[(curr_index + 2) as usize].start_vert = halfedges[(curr_index + 1) as usize].end_vert;
+            halfedges[curr_index as usize].start_vert =
+                halfedges[(curr_index + 2) as usize].end_vert;
+            halfedges[(curr_index + 1) as usize].start_vert =
+                halfedges[curr_index as usize].end_vert;
+            halfedges[(curr_index + 2) as usize].start_vert =
+                halfedges[(curr_index + 1) as usize].end_vert;
         }
         halfedges.truncate(j as usize);
 
@@ -407,7 +427,10 @@ impl QuickHull {
         // Init face stack
         self.face_list.clear();
         for i in 0..4 {
-            let has_points = self.mesh.faces[i].points_on_positive_side.as_ref().map_or(false, |v| !v.is_empty());
+            let has_points = self.mesh.faces[i]
+                .points_on_positive_side
+                .as_ref()
+                .map_or(false, |v| !v.is_empty());
             if has_points {
                 self.face_list.push_back(i);
                 self.mesh.faces[i].in_face_stack = true;
@@ -424,7 +447,8 @@ impl QuickHull {
             self.mesh.faces[top_face_index].in_face_stack = false;
 
             let has_points = self.mesh.faces[top_face_index]
-                .points_on_positive_side.as_ref()
+                .points_on_positive_side
+                .as_ref()
                 .map_or(false, |v| !v.is_empty());
             if !has_points || self.mesh.faces[top_face_index].is_disabled() {
                 continue;
@@ -477,11 +501,15 @@ impl QuickHull {
 
                 // Face is not visible -- the halfedge we came from is a horizon edge
                 self.mesh.faces[fi].is_visible_face_on_current_iteration = false;
-                self.horizon_edges_data.push(face_data.entered_from_halfedge as usize);
+                self.horizon_edges_data
+                    .push(face_data.entered_from_halfedge as usize);
 
                 // Mark which halfedge of the source face is the horizon edge
-                let source_face_idx = self.mesh.halfedge_to_face[face_data.entered_from_halfedge as usize] as usize;
-                let half_edges_mesh = self.mesh.get_halfedge_indices_of_face_by_index(source_face_idx);
+                let source_face_idx =
+                    self.mesh.halfedge_to_face[face_data.entered_from_halfedge as usize] as usize;
+                let half_edges_mesh = self
+                    .mesh
+                    .get_halfedge_indices_of_face_by_index(source_face_idx);
                 let ind = if half_edges_mesh[0] == face_data.entered_from_halfedge {
                     0u8
                 } else if half_edges_mesh[1] == face_data.entered_from_halfedge {
@@ -498,13 +526,18 @@ impl QuickHull {
             if !self.reorder_horizon_edges() {
                 self.failed_horizon_edges += 1;
                 // Remove the active point from the face's point list
-                let pts = self.mesh.faces[top_face_index].points_on_positive_side.as_mut();
+                let pts = self.mesh.faces[top_face_index]
+                    .points_on_positive_side
+                    .as_mut();
                 if let Some(pts) = pts {
                     if let Some(pos) = pts.iter().position(|&p| p == active_point_index) {
                         pts.remove(pos);
                     }
                     if pts.is_empty() {
-                        let v = self.mesh.faces[top_face_index].points_on_positive_side.take().unwrap();
+                        let v = self.mesh.faces[top_face_index]
+                            .points_on_positive_side
+                            .take()
+                            .unwrap();
                         self.index_vector_pool.reclaim(v);
                     }
                 }
@@ -524,10 +557,12 @@ impl QuickHull {
                 for j in 0..3u8 {
                     if (horizon_bits & (1 << j)) == 0 {
                         if disable_counter < horizon_edge_count * 2 {
-                            self.new_halfedge_indices.push(half_edges_mesh[j as usize] as usize);
+                            self.new_halfedge_indices
+                                .push(half_edges_mesh[j as usize] as usize);
                             disable_counter += 1;
                         } else {
-                            self.mesh.disable_halfedge(half_edges_mesh[j as usize] as usize);
+                            self.mesh
+                                .disable_halfedge(half_edges_mesh[j as usize] as usize);
                         }
                     }
                 }
@@ -572,13 +607,17 @@ impl QuickHull {
                 self.mesh.halfedges[ca].end_vert = a;
                 self.mesh.halfedges[bc].end_vert = c;
 
-                let plane_normal = triangle_normal(self.verts[a as usize], self.verts[b as usize], active_point);
+                let plane_normal =
+                    triangle_normal(self.verts[a as usize], self.verts[b as usize], active_point);
                 self.mesh.faces[new_face_index].plane = Plane::new(plane_normal, active_point);
                 self.mesh.faces[new_face_index].he = ab as i32;
 
                 // Set paired halfedge links for the new edges
-                self.mesh.halfedges[ca].paired_halfedge =
-                    self.new_halfedge_indices[if i > 0 { i * 2 - 1 } else { 2 * horizon_edge_count - 1 }] as i32;
+                self.mesh.halfedges[ca].paired_halfedge = self.new_halfedge_indices[if i > 0 {
+                    i * 2 - 1
+                } else {
+                    2 * horizon_edge_count - 1
+                }] as i32;
                 self.mesh.halfedges[bc].paired_halfedge =
                     self.new_halfedge_indices[((i + 1) * 2) % (horizon_edge_count * 2)] as i32;
             }
@@ -603,7 +642,10 @@ impl QuickHull {
 
             // Add new faces to the face list if they have points
             for &new_face_index in &self.new_face_indices {
-                let has_points = self.mesh.faces[new_face_index].points_on_positive_side.as_ref().map_or(false, |v| !v.is_empty());
+                let has_points = self.mesh.faces[new_face_index]
+                    .points_on_positive_side
+                    .as_ref()
+                    .map_or(false, |v| !v.is_empty());
                 let in_stack = self.mesh.faces[new_face_index].in_face_stack;
                 if has_points && !in_stack {
                     self.face_list.push_back(new_face_index);
@@ -619,18 +661,31 @@ impl QuickHull {
         let verts = &self.verts;
         let mut out = [0usize; 6];
         let mut extreme_vals = [
-            verts[0].x, verts[0].x,
-            verts[0].y, verts[0].y,
-            verts[0].z, verts[0].z,
+            verts[0].x, verts[0].x, verts[0].y, verts[0].y, verts[0].z, verts[0].z,
         ];
         for i in 1..verts.len() {
             let pos = verts[i];
-            if pos.x > extreme_vals[0] { extreme_vals[0] = pos.x; out[0] = i; }
-            else if pos.x < extreme_vals[1] { extreme_vals[1] = pos.x; out[1] = i; }
-            if pos.y > extreme_vals[2] { extreme_vals[2] = pos.y; out[2] = i; }
-            else if pos.y < extreme_vals[3] { extreme_vals[3] = pos.y; out[3] = i; }
-            if pos.z > extreme_vals[4] { extreme_vals[4] = pos.z; out[4] = i; }
-            else if pos.z < extreme_vals[5] { extreme_vals[5] = pos.z; out[5] = i; }
+            if pos.x > extreme_vals[0] {
+                extreme_vals[0] = pos.x;
+                out[0] = i;
+            } else if pos.x < extreme_vals[1] {
+                extreme_vals[1] = pos.x;
+                out[1] = i;
+            }
+            if pos.y > extreme_vals[2] {
+                extreme_vals[2] = pos.y;
+                out[2] = i;
+            } else if pos.y < extreme_vals[3] {
+                extreme_vals[3] = pos.y;
+                out[3] = i;
+            }
+            if pos.z > extreme_vals[4] {
+                extreme_vals[4] = pos.z;
+                out[4] = i;
+            } else if pos.z < extreme_vals[5] {
+                extreme_vals[5] = pos.z;
+                out[5] = i;
+            }
         }
         out
     }
@@ -699,7 +754,8 @@ impl QuickHull {
             if plane.is_point_on_positive_side(self.verts[v[3]]) {
                 v.swap(0, 1);
             }
-            self.mesh.setup(v[0] as i32, v[1] as i32, v[2] as i32, v[3] as i32);
+            self.mesh
+                .setup(v[0] as i32, v[1] as i32, v[2] as i32, v[3] as i32);
             return;
         }
 
@@ -708,7 +764,10 @@ impl QuickHull {
         let mut selected = (0usize, 0usize);
         for i in 0..6 {
             for j in (i + 1)..6 {
-                let d = squared_distance(self.verts[self.extreme_values[i]], self.verts[self.extreme_values[j]]);
+                let d = squared_distance(
+                    self.verts[self.extreme_values[i]],
+                    self.verts[self.extreme_values[j]],
+                );
                 if d > max_d {
                     max_d = d;
                     selected = (self.extreme_values[i], self.extreme_values[j]);
@@ -737,16 +796,29 @@ impl QuickHull {
         if max_d == self.epsilon_squared {
             // 1D degenerate
             let mut third = 0;
-            while third == selected.0 || third == selected.1 { third += 1; }
+            while third == selected.0 || third == selected.1 {
+                third += 1;
+            }
             let mut fourth = third + 1;
-            while fourth == selected.0 || fourth == selected.1 { fourth += 1; }
-            self.mesh.setup(selected.0 as i32, selected.1 as i32, third as i32, fourth as i32);
+            while fourth == selected.0 || fourth == selected.1 {
+                fourth += 1;
+            }
+            self.mesh.setup(
+                selected.0 as i32,
+                selected.1 as i32,
+                third as i32,
+                fourth as i32,
+            );
             return;
         }
 
         debug_assert!(selected.0 != max_i && selected.1 != max_i);
         let mut base_triangle = [selected.0, selected.1, max_i];
-        let base_verts = [self.verts[base_triangle[0]], self.verts[base_triangle[1]], self.verts[base_triangle[2]]];
+        let base_verts = [
+            self.verts[base_triangle[0]],
+            self.verts[base_triangle[1]],
+            self.verts[base_triangle[2]],
+        ];
 
         // Find 4th vertex farthest from the triangle plane
         let n = triangle_normal(base_verts[0], base_verts[1], base_verts[2]);
@@ -789,7 +861,11 @@ impl QuickHull {
 
         for fi in 0..self.mesh.faces.len() {
             let v = self.mesh.get_vertex_indices_of_face_by_index(fi);
-            let n1 = triangle_normal(self.verts[v[0] as usize], self.verts[v[1] as usize], self.verts[v[2] as usize]);
+            let n1 = triangle_normal(
+                self.verts[v[0] as usize],
+                self.verts[v[1] as usize],
+                self.verts[v[2] as usize],
+            );
             let plane = Plane::new(n1, self.verts[v[0] as usize]);
             self.mesh.faces[fi].plane = plane;
         }
@@ -806,13 +882,18 @@ impl QuickHull {
     }
 
     fn add_point_to_face(&mut self, face_index: usize, point_index: usize) -> bool {
-        let d = signed_distance_to_plane(self.verts[point_index], &self.mesh.faces[face_index].plane);
-        if d > 0.0 && d * d > self.epsilon_squared * self.mesh.faces[face_index].plane.sqr_n_length {
+        let d =
+            signed_distance_to_plane(self.verts[point_index], &self.mesh.faces[face_index].plane);
+        if d > 0.0 && d * d > self.epsilon_squared * self.mesh.faces[face_index].plane.sqr_n_length
+        {
             let f = &mut self.mesh.faces[face_index];
             if f.points_on_positive_side.is_none() {
                 f.points_on_positive_side = Some(self.index_vector_pool.get());
             }
-            f.points_on_positive_side.as_mut().unwrap().push(point_index);
+            f.points_on_positive_side
+                .as_mut()
+                .unwrap()
+                .push(point_index);
             if d > f.most_distant_point_dist {
                 f.most_distant_point_dist = d;
                 f.most_distant_point = point_index;

@@ -30,7 +30,11 @@ fn import(path: &str) -> Manifold {
             max[k] = max[k].max(v);
         }
     }
-    let c = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0, (min[2] + max[2]) / 2.0];
+    let c = [
+        (min[0] + max[0]) / 2.0,
+        (min[1] + max[1]) / 2.0,
+        (min[2] + max[2]) / 2.0,
+    ];
     let side = (max[0] - min[0]).max(max[1] - min[1]).max(max[2] - min[2]);
     let s = if side > 0.0 { 2.0 / side } else { 1.0 };
     for i in 0..nv {
@@ -59,7 +63,9 @@ impl Rng {
 
 fn main() {
     let a = import("src/robust/testdata/301921.stl");
-    let b = a.rotate(30.0, 45.0, 60.0).translate(Vec3::new(0.3, 0.0, 0.0));
+    let b = a
+        .rotate(30.0, 45.0, 60.0)
+        .translate(Vec3::new(0.3, 0.0, 0.0));
     let robust = a.union_with_engine(&b, BooleanEngine::Robust);
     let exact = a.union_with_engine(&b, BooleanEngine::Exact);
     println!(

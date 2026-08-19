@@ -5,9 +5,9 @@
 // MeshGLP interchange mesh in types_meshgl.rs; both are re-exported here so
 // this module remains the single public home for all core types.
 
-use std::collections::BTreeMap;
-use crate::linalg::{Vec2, Vec3, Vec4, Mat3, Mat3x4};
+use crate::linalg::{Mat3, Mat3x4, Vec2, Vec3, Vec4};
 use crate::math;
+use std::collections::BTreeMap;
 
 #[path = "types_bounds.rs"]
 mod types_bounds;
@@ -15,7 +15,7 @@ pub use types_bounds::{Box, Rect};
 
 #[path = "types_meshgl.rs"]
 mod types_meshgl;
-pub use types_meshgl::{MeshGLP, MeshGL, MeshGL64, MeshIndex, MeshPrecision};
+pub use types_meshgl::{MeshGL, MeshGL64, MeshGLP, MeshIndex, MeshPrecision};
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -278,8 +278,8 @@ impl BooleanConfig {
 // Quality (static global for circle quantization)
 // ---------------------------------------------------------------------------
 
-use std::sync::OnceLock;
 use std::sync::Mutex;
+use std::sync::OnceLock;
 
 struct QualityState {
     min_circular_angle: f64,
@@ -575,7 +575,11 @@ impl MeshRelationD {
 #[inline]
 pub fn next_halfedge(current: i32) -> i32 {
     let n = current + 1;
-    if n % 3 == 0 { n - 3 } else { n }
+    if n % 3 == 0 {
+        n - 3
+    } else {
+        n
+    }
 }
 
 /// Returns the previous halfedge index within the same triangle.
@@ -590,7 +594,11 @@ pub fn prev_halfedge(current: i32) -> i32 {
 #[inline]
 pub fn next3(i: i32) -> i32 {
     let n = i + 1;
-    if n == 3 { 0 } else { n }
+    if n == 3 {
+        0
+    } else {
+        n
+    }
 }
 
 // ---------------------------------------------------------------------------

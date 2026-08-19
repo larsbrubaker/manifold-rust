@@ -4,13 +4,12 @@
 // Sphere() requires Subdivide() (Phase 15) and is omitted here.
 // Cube, Tetrahedron, Octahedron are in impl_mesh.rs.
 
-use crate::linalg::{Vec2, Vec3, IVec3, Mat3x4};
-use crate::types::{
-    Polygons, SimplePolygon, PolygonsIdx, SimplePolygonIdx, PolyVert,
-    cosd, sind, Quality,
-};
-use crate::polygon::{triangulate_idx, triangulate};
 use crate::impl_mesh::ManifoldImpl;
+use crate::linalg::{IVec3, Mat3x4, Vec2, Vec3};
+use crate::polygon::{triangulate, triangulate_idx};
+use crate::types::{
+    cosd, sind, PolyVert, Polygons, PolygonsIdx, Quality, SimplePolygon, SimplePolygonIdx,
+};
 
 // -----------------------------------------------------------------------
 // Extrude
@@ -84,18 +83,18 @@ pub fn extrude(
                 if i == n_div as usize && is_cone {
                     // Connect to apex; apex index = n_cross * n_div + j
                     let apex = n_cross * n_div as i32 + j;
-                    tri_verts.push(IVec3::new(
-                        apex,
-                        last_vert - n_cross,
-                        this_vert - n_cross,
-                    ));
+                    tri_verts.push(IVec3::new(apex, last_vert - n_cross, this_vert - n_cross));
                 } else {
                     let pos2 = poly[vert as usize];
                     let px = t00 * pos2.x + t10 * pos2.y;
                     let py = t01 * pos2.x + t11 * pos2.y;
                     vert_pos.push(Vec3::new(px, py, height * alpha));
                     tri_verts.push(IVec3::new(this_vert, last_vert, this_vert - n_cross));
-                    tri_verts.push(IVec3::new(last_vert, last_vert - n_cross, this_vert - n_cross));
+                    tri_verts.push(IVec3::new(
+                        last_vert,
+                        last_vert - n_cross,
+                        this_vert - n_cross,
+                    ));
                 }
             }
             j += 1;
@@ -176,8 +175,7 @@ pub fn revolve(
             // Add axis-crossing interpolated point
             if (poly[next].x < 0.0) != (poly[i].x < 0.0) {
                 let y = poly[next].y
-                    - poly[next].x * (poly[i].y - poly[next].y)
-                        / (poly[i].x - poly[next].x);
+                    - poly[next].x * (poly[i].y - poly[next].y) / (poly[i].x - poly[next].x);
                 clipped.push(Vec2::new(0.0, y));
             }
             i = next;
@@ -213,7 +211,11 @@ pub fn revolve(
 
     let d_phi = revolve_degrees / n_divisions as f64;
     // First and last slice are distinct if not a full revolution
-    let n_slices = if is_full_revolution { n_divisions } else { n_divisions + 1 };
+    let n_slices = if is_full_revolution {
+        n_divisions
+    } else {
+        n_divisions + 1
+    };
 
     for poly in polygons.iter() {
         let n_pos_verts: usize = poly.iter().filter(|p| p.x > 0.0).count();
@@ -235,7 +237,11 @@ pub fn revolve(
             }
 
             let curr = poly[poly_vert];
-            let prev = poly[if poly_vert == 0 { poly.len() - 1 } else { poly_vert - 1 }];
+            let prev = poly[if poly_vert == 0 {
+                poly.len() - 1
+            } else {
+                poly_vert - 1
+            }];
 
             // Index of the previous poly_vert's first position
             let prev_start_pos_index = start_pos_index
@@ -244,17 +250,17 @@ pub fn revolve(
                 } else {
                     0
                 })
-                + if prev.x == 0.0 { -1 } else { -(n_slices as i32) };
+                + if prev.x == 0.0 {
+                    -1
+                } else {
+                    -(n_slices as i32)
+                };
 
             for slice in 0..n_slices {
                 let phi = slice as f64 * d_phi;
                 // Only push a vertex when it's the first slice OR the vert is not on axis
                 if slice == 0 || curr.x > 0.0 {
-                    vert_pos.push(Vec3::new(
-                        curr.x * cosd(phi),
-                        curr.x * sind(phi),
-                        curr.y,
-                    ));
+                    vert_pos.push(Vec3::new(curr.x * cosd(phi), curr.x * sind(phi), curr.y));
                 }
 
                 if is_full_revolution || slice > 0 {
@@ -294,10 +300,18 @@ pub fn revolve(
     if !is_full_revolution {
         let front_tris = triangulate(&polygons, -1.0, false);
         for t in &front_tris {
-            tri_verts.push(IVec3::new(start_poses[t.x as usize], start_poses[t.y as usize], start_poses[t.z as usize]));
+            tri_verts.push(IVec3::new(
+                start_poses[t.x as usize],
+                start_poses[t.y as usize],
+                start_poses[t.z as usize],
+            ));
         }
         for t in &front_tris {
-            tri_verts.push(IVec3::new(end_poses[t.z as usize], end_poses[t.y as usize], end_poses[t.x as usize]));
+            tri_verts.push(IVec3::new(
+                end_poses[t.z as usize],
+                end_poses[t.y as usize],
+                end_poses[t.x as usize],
+            ));
         }
     }
 
@@ -358,7 +372,11 @@ pub fn cylinder(
         return cone;
     }
 
-    let scale = if radius_high >= 0.0 { radius_high / radius_low } else { 1.0 };
+    let scale = if radius_high >= 0.0 {
+        radius_high / radius_low
+    } else {
+        1.0
+    };
     let radius = radius_low.max(if radius_high >= 0.0 { radius_high } else { 0.0 });
     let n = if circular_segments > 2 {
         circular_segments
@@ -375,13 +393,7 @@ pub fn cylinder(
         ));
     }
 
-    let mut m = extrude(
-        &vec![circle],
-        height,
-        0,
-        0.0,
-        Vec2::new(scale, scale),
-    );
+    let mut m = extrude(&vec![circle], height, 0, 0.0, Vec2::new(scale, scale));
 
     if center {
         for v in m.vert_pos.iter_mut() {

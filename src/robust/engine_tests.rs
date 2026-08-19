@@ -33,8 +33,16 @@ fn check_ops_match(a: &Manifold, b: &Manifold, what: &str) {
         let exact = a.boolean_with_engine(b, op, BooleanEngine::Exact);
         let robust = a.boolean_with_engine(b, op, BooleanEngine::Robust);
         assert_eq!(robust.status(), Error::NoError, "{what} {op:?}");
-        assert!(!robust.as_impl().is_soup, "{what} {op:?}: output must be manifold");
-        assert_close(robust.volume(), exact.volume(), 1e-9, &format!("{what} {op:?} volume"));
+        assert!(
+            !robust.as_impl().is_soup,
+            "{what} {op:?}: output must be manifold"
+        );
+        assert_close(
+            robust.volume(),
+            exact.volume(),
+            1e-9,
+            &format!("{what} {op:?} volume"),
+        );
         assert_close(
             robust.surface_area(),
             exact.surface_area(),
@@ -71,7 +79,9 @@ fn sphere_cylinder_matches_exact() {
 #[test]
 fn tetra_tetra_matches_exact() {
     let a = Manifold::tetrahedron();
-    let b = Manifold::tetrahedron().rotate(0.0, 0.0, 45.0).translate(v(0.2, 0.1, 0.3));
+    let b = Manifold::tetrahedron()
+        .rotate(0.0, 0.0, 45.0)
+        .translate(v(0.2, 0.1, 0.3));
     check_ops_match(&a, &b, "tetra/tetra");
 }
 
@@ -170,7 +180,12 @@ fn disjoint_union_classifies_inverted_operand() {
         WindingRule::Positive,
     );
     assert_eq!(pos.status(), Error::NoError);
-    assert_close(signed_volume(&pos), 8.0, 1e-12, "positive-rule disjoint union");
+    assert_close(
+        signed_volume(&pos),
+        8.0,
+        1e-12,
+        "positive-rule disjoint union",
+    );
 
     let nz = a.boolean_with_engine_and_rule(
         &b,
@@ -179,7 +194,12 @@ fn disjoint_union_classifies_inverted_operand() {
         WindingRule::Nonzero,
     );
     assert_eq!(nz.status(), Error::NoError);
-    assert_close(signed_volume(&nz), 16.0, 1e-12, "nonzero-rule disjoint union");
+    assert_close(
+        signed_volume(&nz),
+        16.0,
+        1e-12,
+        "nonzero-rule disjoint union",
+    );
 }
 
 /// The same gap on the disjoint `Subtract` fast path, which returned operand
@@ -215,7 +235,12 @@ fn disjoint_subtract_classifies_inverted_minuend() {
         WindingRule::Nonzero,
     );
     assert_eq!(nz.status(), Error::NoError);
-    assert_close(signed_volume(&nz), 8.0, 1e-12, "nonzero-rule disjoint subtract");
+    assert_close(
+        signed_volume(&nz),
+        8.0,
+        1e-12,
+        "nonzero-rule disjoint subtract",
+    );
 }
 
 /// Clean minuend: the disjoint difference still returns operand A verbatim.
@@ -337,8 +362,7 @@ fn auto_dispatches_soup_operands_to_robust() {
 #[test]
 fn auto_dispatches_self_intersecting_operands_to_robust() {
     let a = import_stl_like_demo(include_bytes!("testdata/92068.stl"));
-    let b = import_stl_like_demo(include_bytes!("testdata/39926.stl"))
-        .translate(v(0.3, 0.0, 0.0));
+    let b = import_stl_like_demo(include_bytes!("testdata/39926.stl")).translate(v(0.3, 0.0, 0.0));
     assert_eq!(a.status(), Error::NoError, "operand A import");
     assert_eq!(b.status(), Error::NoError, "operand B import");
     assert!(!a.as_impl().is_soup, "operand A welds to a manifold");
@@ -377,7 +401,10 @@ fn coincident_cubes_union_and_subtract() {
     assert_close(u.volume(), 8.0, 1e-12, "self union volume");
     assert_close(u.surface_area(), 24.0, 1e-12, "self union area");
     let d = a.difference_with_engine(&a.clone(), BooleanEngine::Robust);
-    assert!(d.is_empty() || d.volume().abs() < 1e-12, "self difference must vanish");
+    assert!(
+        d.is_empty() || d.volume().abs() < 1e-12,
+        "self difference must vanish"
+    );
     let i = a.intersection_with_engine(&a.clone(), BooleanEngine::Robust);
     assert_close(i.volume(), 8.0, 1e-12, "self intersection volume");
 }

@@ -70,11 +70,23 @@ where
     if n >= threshold {
         (0..n)
             .into_par_iter()
-            .map(|i| if token.is_cancelled() { None } else { Some(f(i)) })
+            .map(|i| {
+                if token.is_cancelled() {
+                    None
+                } else {
+                    Some(f(i))
+                }
+            })
             .collect()
     } else {
         (0..n)
-            .map(|i| if token.is_cancelled() { None } else { Some(f(i)) })
+            .map(|i| {
+                if token.is_cancelled() {
+                    None
+                } else {
+                    Some(f(i))
+                }
+            })
             .collect()
     }
 }
@@ -94,6 +106,12 @@ where
         return Some(maybe_par_map(n, threshold, f));
     };
     (0..n)
-        .map(|i| if token.is_cancelled() { None } else { Some(f(i)) })
+        .map(|i| {
+            if token.is_cancelled() {
+                None
+            } else {
+                Some(f(i))
+            }
+        })
         .collect()
 }

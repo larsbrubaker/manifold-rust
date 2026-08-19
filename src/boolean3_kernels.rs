@@ -23,7 +23,11 @@ use super::Intersections;
 
 #[inline]
 fn with_sign(pos: bool, v: f64) -> f64 {
-    if pos { v } else { -v }
+    if pos {
+        v
+    } else {
+        -v
+    }
 }
 
 /// Interpolate along edge (aL, aR) at x-coordinate `x`.
@@ -32,10 +36,7 @@ fn with_sign(pos: bool, v: f64) -> f64 {
 fn interpolate(a_l: Vec3, a_r: Vec3, x: f64) -> Vec2 {
     let dx_l = x - a_l.x;
     let dx_r = x - a_r.x;
-    debug_assert!(
-        dx_l * dx_r <= 0.0,
-        "Boolean manifold error: not in domain"
-    );
+    debug_assert!(dx_l * dx_r <= 0.0, "Boolean manifold error: not in domain");
     let use_l = dx_l.abs() < dx_r.abs();
     let d_lr = a_r - a_l;
     let lambda = (if use_l { dx_l } else { dx_r }) / d_lr.x;
@@ -69,7 +70,11 @@ fn intersect_edges(a_l: Vec3, a_r: Vec3, b_l: Vec3, b_r: Vec3) -> Vec4 {
     let use_a = a_dy.abs() < b_dy.abs();
     let y = lambda * (if use_a { a_dy } else { b_dy })
         + if use_l {
-            if use_a { a_l.y } else { b_l.y }
+            if use_a {
+                a_l.y
+            } else {
+                b_l.y
+            }
         } else if use_a {
             a_r.y
         } else {
@@ -84,7 +89,11 @@ fn intersect_edges(a_l: Vec3, a_r: Vec3, b_l: Vec3, b_r: Vec3) -> Vec4 {
 /// When p == q, the tie is broken by the sign of dir.
 #[inline]
 fn shadows(p: f64, q: f64, dir: f64) -> bool {
-    if p == q { dir < 0.0 } else { p < q }
+    if p == q {
+        dir < 0.0
+    } else {
+        p < q
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +245,12 @@ fn kernel02(
 
         let (s01, yz01) = shadow01(a0, b1f, in_a, in_b, expand_p, forward);
         if yz01.x.is_finite() {
-            s02 += s01 * if forward == edge_b.is_forward() { -1 } else { 1 };
+            s02 += s01
+                * if forward == edge_b.is_forward() {
+                    -1
+                } else {
+                    1
+                };
             if k < 2 && (k == 0 || (s01 != 0) != shadow_state) {
                 shadow_state = s01 != 0;
                 yzz_rl[k] = Vec3::new(yz01.x, yz01.y, yz01.y);
@@ -255,7 +269,11 @@ fn kernel02(
             if !shadows(vert_pos_a.z, z02, -in_b.face_normal[b2].z) {
                 s02 = 0;
             }
-        } else if !shadows(z02, vert_pos_a.z, with_sign(expand_p, in_b.face_normal[b2].z)) {
+        } else if !shadows(
+            z02,
+            vert_pos_a.z,
+            with_sign(expand_p, in_b.face_normal[b2].z),
+        ) {
             s02 = 0;
         }
     }
@@ -289,7 +307,11 @@ pub(super) fn kernel12(
     for vert_a in [edge_a.start_vert as usize, edge_a.end_vert as usize] {
         let (s, z) = kernel02(vert_a, b2, in_a, in_b, expand_p, forward);
         if z.is_finite() {
-            x12 += s * if (vert_a == edge_a.start_vert as usize) == forward { 1 } else { -1 };
+            x12 += s * if (vert_a == edge_a.start_vert as usize) == forward {
+                1
+            } else {
+                -1
+            };
             if k < 2 && (k == 0 || (s != 0) != shadow_state) {
                 shadow_state = s != 0;
                 let pos = in_a.vert_pos[vert_a];
@@ -382,8 +404,7 @@ pub(super) fn intersect12(
                 a.vert_pos[a.halfedge[query_idx].end_vert as usize],
             );
             collider.collisions_one(&query, query_idx, |query_idx, face_idx| {
-                let (x, v) =
-                    kernel12(query_idx, face_idx, a, b, in_p, in_q, expand_p, forward);
+                let (x, v) = kernel12(query_idx, face_idx, a, b, in_p, in_q, expand_p, forward);
                 if v.x.is_finite() {
                     let pair = if forward {
                         [query_idx as i32, face_idx as i32]
@@ -512,14 +533,17 @@ pub(super) fn winding03(
     // Use BVH for winding number queries.
     // The winding number shoots a Z-ray, so we need XY overlap with infinite Z.
     // Build query boxes with the vertex XY position and infinite Z extent.
-    let query_boxes: Vec<(usize, BBox)> = verts.iter().map(|&vi| {
-        let pt = a.vert_pos[vi];
-        let qbox = BBox::from_points(
-            Vec3::new(pt.x, pt.y, f64::NEG_INFINITY),
-            Vec3::new(pt.x, pt.y, f64::INFINITY),
-        );
-        (vi, qbox)
-    }).collect();
+    let query_boxes: Vec<(usize, BBox)> = verts
+        .iter()
+        .map(|&vi| {
+            let pt = a.vert_pos[vi];
+            let qbox = BBox::from_points(
+                Vec3::new(pt.x, pt.y, f64::NEG_INFINITY),
+                Vec3::new(pt.x, pt.y, f64::INFINITY),
+            );
+            (vi, qbox)
+        })
+        .collect();
 
     // For each representative vert, query the BVH and sum kernel02 winding
     // contributions. The sums are integers, so accumulation order is

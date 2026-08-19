@@ -22,11 +22,17 @@ fn bracelet_base(
 ) -> Manifold {
     let mut base = Manifold::cylinder(width, radius + twist_radius / 2.0, -1.0, 0);
 
-    let circle = CrossSection::circle(decor_radius, n_division)
-        .translate(Vec2::new(twist_radius, 0.0));
-    let decor = Manifold::extrude(&circle.to_polygons(), width, n_division, 180.0, Vec2::new(1.0, 1.0))
-        .scale(Vec3::new(1.0, 0.5, 1.0))
-        .translate(Vec3::new(0.0, radius, 0.0));
+    let circle =
+        CrossSection::circle(decor_radius, n_division).translate(Vec2::new(twist_radius, 0.0));
+    let decor = Manifold::extrude(
+        &circle.to_polygons(),
+        width,
+        n_division,
+        180.0,
+        Vec2::new(1.0, 1.0),
+    )
+    .scale(Vec3::new(1.0, 0.5, 1.0))
+    .translate(Vec3::new(0.0, radius, 0.0));
 
     for i in 0..n_decor {
         let angle_deg = (360.0 / n_decor as f64) * i as f64;
@@ -52,8 +58,7 @@ fn bracelet_base(
     }
     let stretch: Polygons = vec![ring];
 
-    base = Manifold::extrude(&stretch, width, 0, 0.0, Vec2::new(1.0, 1.0))
-        .intersection(&base);
+    base = Manifold::extrude(&stretch, width, 0, 0.0, Vec2::new(1.0, 1.0)).intersection(&base);
     base.as_original()
 }
 
@@ -112,6 +117,9 @@ fn test_cpp_properties_mingap_stretchy_bracelet() {
     let a = stretchy_bracelet();
     let b = stretchy_bracelet().translate(Vec3::new(0.0, 0.0, 20.0));
     let distance = a.min_gap(&b, 10.0);
-    assert!((distance - 5.0).abs() < 0.001,
-        "MingapStretchyBracelet: distance={}, expected ~5", distance);
+    assert!(
+        (distance - 5.0).abs() < 0.001,
+        "MingapStretchyBracelet: distance={}, expected ~5",
+        distance
+    );
 }

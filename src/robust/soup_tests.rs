@@ -63,7 +63,10 @@ fn robust_import_of_manifold_mesh_matches_strict() {
     assert_eq!(a.num_vert(), b.num_vert());
     assert_eq!(a.num_tri(), b.num_tri());
     assert_eq!(a.volume(), b.volume());
-    assert!(!b.as_impl().is_soup, "manifold input must not become a soup");
+    assert!(
+        !b.as_impl().is_soup,
+        "manifold input must not become a soup"
+    );
 }
 
 #[test]
@@ -142,7 +145,10 @@ fn degenerate_triangles_are_dropped_on_soup_import() {
 #[test]
 fn tiny_or_empty_meshes() {
     let empty = MeshGL::default();
-    assert_eq!(Manifold::from_mesh_gl_robust(&empty).status(), Error::NoError);
+    assert_eq!(
+        Manifold::from_mesh_gl_robust(&empty).status(),
+        Error::NoError
+    );
     let two_tris = soup_mesh_gl(&cube_tris([0.0; 3], [1.0; 3])[..2].to_vec());
     assert_eq!(
         Manifold::from_mesh_gl_robust(&two_tris).status(),

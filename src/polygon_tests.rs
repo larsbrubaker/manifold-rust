@@ -6,18 +6,45 @@ fn make_poly(coords: &[(f64, f64)]) -> SimplePolygonIdx {
     coords
         .iter()
         .enumerate()
-        .map(|(i, &(x, y))| PolyVert { pos: Vec2::new(x, y), idx: i as i32 })
+        .map(|(i, &(x, y))| PolyVert {
+            pos: Vec2::new(x, y),
+            idx: i as i32,
+        })
         .collect()
 }
 
 #[test]
 fn test_ccw_basic() {
     // CCW triangle
-    assert_eq!(ccw(Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(0.5, 1.0), 1e-10), 1);
+    assert_eq!(
+        ccw(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(0.5, 1.0),
+            1e-10
+        ),
+        1
+    );
     // CW triangle
-    assert_eq!(ccw(Vec2::new(0.0, 0.0), Vec2::new(0.5, 1.0), Vec2::new(1.0, 0.0), 1e-10), -1);
+    assert_eq!(
+        ccw(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(0.5, 1.0),
+            Vec2::new(1.0, 0.0),
+            1e-10
+        ),
+        -1
+    );
     // Colinear
-    assert_eq!(ccw(Vec2::new(0.0, 0.0), Vec2::new(1.0, 0.0), Vec2::new(2.0, 0.0), 1e-10), 0);
+    assert_eq!(
+        ccw(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 0.0),
+            Vec2::new(2.0, 0.0),
+            1e-10
+        ),
+        0
+    );
 }
 
 #[test]

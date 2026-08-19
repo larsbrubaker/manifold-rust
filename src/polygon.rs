@@ -3,9 +3,9 @@
 // Key algorithm: ear-clipping with 2D KD-tree acceleration, convex fast-path,
 // hole key-holing. Must produce identical triangulations to the C++ version.
 
+use crate::linalg::{IVec3, Vec2};
+use crate::types::{Halfedge, PolyVert, Polygons, PolygonsIdx, Rect, SimplePolygonIdx};
 use std::collections::HashMap;
-use crate::linalg::{Vec2, IVec3};
-use crate::types::{Halfedge, PolyVert, PolygonsIdx, SimplePolygonIdx, Polygons, Rect};
 
 #[path = "polygon_earclip.rs"]
 mod polygon_earclip;
@@ -64,9 +64,19 @@ fn dot2d(a: Vec2, b: Vec2) -> f64 {
 /// Alternates between sorting by x and y.
 fn build_two_d_tree_impl(points: &mut [PolyVert], sort_x: bool) {
     if sort_x {
-        points.sort_by(|a, b| a.pos.x.partial_cmp(&b.pos.x).unwrap_or(std::cmp::Ordering::Equal));
+        points.sort_by(|a, b| {
+            a.pos
+                .x
+                .partial_cmp(&b.pos.x)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     } else {
-        points.sort_by(|a, b| a.pos.y.partial_cmp(&b.pos.y).unwrap_or(std::cmp::Ordering::Equal));
+        points.sort_by(|a, b| {
+            a.pos
+                .y
+                .partial_cmp(&b.pos.y)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     }
     if points.len() < 2 {
         return;

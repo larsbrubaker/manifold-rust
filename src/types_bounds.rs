@@ -6,7 +6,7 @@
 // broadphase queries in boolean3.rs are the main consumers of Box; Rect
 // backs the 2D cross-section pipeline (cross_section.rs, tree2d.rs).
 
-use crate::linalg::{Vec2, Vec3, Mat3x4};
+use crate::linalg::{Mat3x4, Vec2, Vec3};
 
 // ---------------------------------------------------------------------------
 // Box (3D axis-aligned bounding box)
@@ -72,15 +72,21 @@ impl Box {
     }
 
     pub fn contains_point(&self, p: Vec3) -> bool {
-        p.x >= self.min.x && p.x <= self.max.x
-            && p.y >= self.min.y && p.y <= self.max.y
-            && p.z >= self.min.z && p.z <= self.max.z
+        p.x >= self.min.x
+            && p.x <= self.max.x
+            && p.y >= self.min.y
+            && p.y <= self.max.y
+            && p.z >= self.min.z
+            && p.z <= self.max.z
     }
 
     pub fn contains_box(&self, other: &Box) -> bool {
-        other.min.x >= self.min.x && other.max.x <= self.max.x
-            && other.min.y >= self.min.y && other.max.y <= self.max.y
-            && other.min.z >= self.min.z && other.max.z <= self.max.z
+        other.min.x >= self.min.x
+            && other.max.x <= self.max.x
+            && other.min.y >= self.min.y
+            && other.max.y <= self.max.y
+            && other.min.z >= self.min.z
+            && other.max.z <= self.max.z
     }
 
     /// Expand in-place to include the given point.
@@ -115,14 +121,26 @@ impl Box {
         let min_t = *t * V4::new(self.min.x, self.min.y, self.min.z, 1.0);
         let max_t = *t * V4::new(self.max.x, self.max.y, self.max.z, 1.0);
         Box {
-            min: Vec3::new(min_t.x.min(max_t.x), min_t.y.min(max_t.y), min_t.z.min(max_t.z)),
-            max: Vec3::new(min_t.x.max(max_t.x), min_t.y.max(max_t.y), min_t.z.max(max_t.z)),
+            min: Vec3::new(
+                min_t.x.min(max_t.x),
+                min_t.y.min(max_t.y),
+                min_t.z.min(max_t.z),
+            ),
+            max: Vec3::new(
+                min_t.x.max(max_t.x),
+                min_t.y.max(max_t.y),
+                min_t.z.max(max_t.z),
+            ),
         }
     }
 
     pub fn does_overlap_box(&self, other: &Box) -> bool {
-        self.min.x <= other.max.x && self.min.y <= other.max.y && self.min.z <= other.max.z
-            && self.max.x >= other.min.x && self.max.y >= other.min.y && self.max.z >= other.min.z
+        self.min.x <= other.max.x
+            && self.min.y <= other.max.y
+            && self.min.z <= other.max.z
+            && self.max.x >= other.min.x
+            && self.max.y >= other.min.y
+            && self.max.z >= other.min.z
     }
 
     /// Does the given point project within the XY extent (including equality)?
@@ -131,15 +149,22 @@ impl Box {
     }
 
     pub fn is_finite(&self) -> bool {
-        self.min.x.is_finite() && self.min.y.is_finite() && self.min.z.is_finite()
-            && self.max.x.is_finite() && self.max.y.is_finite() && self.max.z.is_finite()
+        self.min.x.is_finite()
+            && self.min.y.is_finite()
+            && self.min.z.is_finite()
+            && self.max.x.is_finite()
+            && self.max.y.is_finite()
+            && self.max.z.is_finite()
     }
 }
 
 impl std::ops::Add<Vec3> for Box {
     type Output = Box;
     fn add(self, shift: Vec3) -> Box {
-        Box { min: self.min + shift, max: self.max + shift }
+        Box {
+            min: self.min + shift,
+            max: self.max + shift,
+        }
     }
 }
 impl std::ops::AddAssign<Vec3> for Box {
@@ -151,7 +176,10 @@ impl std::ops::AddAssign<Vec3> for Box {
 impl std::ops::Mul<Vec3> for Box {
     type Output = Box;
     fn mul(self, scale: Vec3) -> Box {
-        Box { min: self.min * scale, max: self.max * scale }
+        Box {
+            min: self.min * scale,
+            max: self.max * scale,
+        }
     }
 }
 impl std::ops::MulAssign<Vec3> for Box {
@@ -217,13 +245,17 @@ impl Rect {
     }
 
     pub fn contains_rect(&self, other: &Rect) -> bool {
-        other.min.x >= self.min.x && other.max.x <= self.max.x
-            && other.min.y >= self.min.y && other.max.y <= self.max.y
+        other.min.x >= self.min.x
+            && other.max.x <= self.max.x
+            && other.min.y >= self.min.y
+            && other.max.y <= self.max.y
     }
 
     pub fn does_overlap(&self, other: &Rect) -> bool {
-        self.min.x <= other.max.x && self.min.y <= other.max.y
-            && self.max.x >= other.min.x && self.max.y >= other.min.y
+        self.min.x <= other.max.x
+            && self.min.y <= other.max.y
+            && self.max.x >= other.min.x
+            && self.max.y >= other.min.y
     }
 
     pub fn is_empty(&self) -> bool {
@@ -231,8 +263,10 @@ impl Rect {
     }
 
     pub fn is_finite(&self) -> bool {
-        self.min.x.is_finite() && self.min.y.is_finite()
-            && self.max.x.is_finite() && self.max.y.is_finite()
+        self.min.x.is_finite()
+            && self.min.y.is_finite()
+            && self.max.x.is_finite()
+            && self.max.y.is_finite()
     }
 
     pub fn union_point(&mut self, p: Vec2) {
@@ -253,7 +287,10 @@ impl Rect {
 impl std::ops::Add<Vec2> for Rect {
     type Output = Rect;
     fn add(self, shift: Vec2) -> Rect {
-        Rect { min: self.min + shift, max: self.max + shift }
+        Rect {
+            min: self.min + shift,
+            max: self.max + shift,
+        }
     }
 }
 impl std::ops::AddAssign<Vec2> for Rect {
@@ -265,7 +302,10 @@ impl std::ops::AddAssign<Vec2> for Rect {
 impl std::ops::Mul<Vec2> for Rect {
     type Output = Rect;
     fn mul(self, scale: Vec2) -> Rect {
-        Rect { min: self.min * scale, max: self.max * scale }
+        Rect {
+            min: self.min * scale,
+            max: self.max * scale,
+        }
     }
 }
 impl std::ops::MulAssign<Vec2> for Rect {

@@ -88,11 +88,9 @@ fn phase_names() -> &'static [CString] {
 /// freed.
 #[no_mangle]
 pub extern "C" fn manifold_rs_progress_phase_name(phase_id: u32) -> *const c_char {
-    guard(ptr::null(), || {
-        match phase_names().get(phase_id as usize) {
-            Some(name) => name.as_ptr(),
-            None => ptr::null(),
-        }
+    guard(ptr::null(), || match phase_names().get(phase_id as usize) {
+        Some(name) => name.as_ptr(),
+        None => ptr::null(),
     })
 }
 

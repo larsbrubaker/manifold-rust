@@ -126,11 +126,14 @@ fn empty_input_fast_paths_still_honour_a_pre_cancelled_token() {
     let cube = Manifold::cube(Vec3::splat(1.0), true);
 
     assert_eq!(
-        empty.boolean_with_token(&cube, OpType::Add, Some(&token)).status(),
+        empty
+            .boolean_with_token(&cube, OpType::Add, Some(&token))
+            .status(),
         Error::Cancelled
     );
     assert_eq!(
-        cube.boolean_with_token(&empty, OpType::Add, Some(&token)).status(),
+        cube.boolean_with_token(&empty, OpType::Add, Some(&token))
+            .status(),
         Error::Cancelled
     );
 }
@@ -224,7 +227,8 @@ fn a_used_then_cancelled_token_does_not_affect_later_ops_with_a_fresh_token() {
 
     // The stale token is still cancelled and still bites when it is used.
     assert_eq!(
-        a.boolean_with_token(&b, OpType::Subtract, Some(&used)).status(),
+        a.boolean_with_token(&b, OpType::Subtract, Some(&used))
+            .status(),
         Error::Cancelled
     );
 }
@@ -297,7 +301,10 @@ fn cancelled_status_survives_the_csg_tree_root() {
         CsgNode::leaf(a.as_impl().clone()),
         CsgNode::leaf(b.as_impl().clone()),
     );
-    assert_eq!(tree.evaluate_with_token(Some(&token)).status, Error::Cancelled);
+    assert_eq!(
+        tree.evaluate_with_token(Some(&token)).status,
+        Error::Cancelled
+    );
     // Same tree, no token: unaffected.
     assert_eq!(tree.evaluate().status, Error::NoError);
 }

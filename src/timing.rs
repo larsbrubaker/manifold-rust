@@ -11,9 +11,7 @@ use std::time::Instant;
 
 fn enabled() -> bool {
     static ENABLED: OnceLock<bool> = OnceLock::new();
-    *ENABLED.get_or_init(|| {
-        std::env::var("MANIFOLD_TIMING").map_or(false, |v| !v.is_empty())
-    })
+    *ENABLED.get_or_init(|| std::env::var("MANIFOLD_TIMING").map_or(false, |v| !v.is_empty()))
 }
 
 /// Start a stage timer. Returns None (and times nothing) unless the

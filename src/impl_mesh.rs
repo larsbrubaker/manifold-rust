@@ -5,11 +5,9 @@
 //
 // Phases 5-9 will fill in SortGeometry, CleanupTopology, SetNormalsAndCoplanar, etc.
 
+use crate::linalg::{normalize, IVec3, Mat3x4, Vec3, Vec4};
+use crate::types::{Box as BBox, Error, Halfedge, MeshRelationD, Relation, TriRef, K_PRECISION};
 use std::sync::atomic::{AtomicU32, Ordering};
-use crate::linalg::{Vec3, Vec4, Mat3x4, IVec3, normalize};
-use crate::types::{
-    Box as BBox, Error, Halfedge, MeshRelationD, Relation, TriRef, K_PRECISION,
-};
 
 // ---------------------------------------------------------------------------
 // Global mesh ID counter (mirrors Manifold::Impl::meshIDCounter_)
@@ -31,23 +29,39 @@ pub const K_REMOVED_HALFEDGE: i32 = -2;
 #[inline]
 pub fn next_halfedge(current: i32) -> i32 {
     let n = current + 1;
-    if n % 3 == 0 { n - 3 } else { n }
+    if n % 3 == 0 {
+        n - 3
+    } else {
+        n
+    }
 }
 
 #[inline]
 pub fn next3(i: usize) -> usize {
-    if i == 2 { 0 } else { i + 1 }
+    if i == 2 {
+        0
+    } else {
+        i + 1
+    }
 }
 
 /// Safe normalize: returns zero vector if input is zero or non-finite.
 fn safe_normalize(v: Vec3) -> Vec3 {
     let n = normalize(v);
-    if n.x.is_finite() { n } else { Vec3::new(0.0, 0.0, 0.0) }
+    if n.x.is_finite() {
+        n
+    } else {
+        Vec3::new(0.0, 0.0, 0.0)
+    }
 }
 
 fn max_epsilon(min_epsilon: f64, bbox: &BBox) -> f64 {
     let epsilon = min_epsilon.max(K_PRECISION * bbox.scale());
-    if epsilon.is_finite() { epsilon } else { -1.0 }
+    if epsilon.is_finite() {
+        epsilon
+    } else {
+        -1.0
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -236,7 +250,9 @@ impl ManifoldImpl {
     // -----------------------------------------------------------------------
 
     pub fn is_finite(&self) -> bool {
-        self.vert_pos.iter().all(|v| v.x.is_finite() && v.y.is_finite() && v.z.is_finite())
+        self.vert_pos
+            .iter()
+            .all(|v| v.x.is_finite() && v.y.is_finite() && v.z.is_finite())
     }
 
     // -----------------------------------------------------------------------
@@ -332,12 +348,15 @@ impl ManifoldImpl {
         let num_edge = num_halfedge / 2;
 
         self.halfedge.clear();
-        self.halfedge.resize(num_halfedge, Halfedge {
-            start_vert: -1,
-            end_vert: -1,
-            paired_halfedge: -1,
-            prop_vert: -1,
-        });
+        self.halfedge.resize(
+            num_halfedge,
+            Halfedge {
+                start_vert: -1,
+                end_vert: -1,
+                paired_halfedge: -1,
+                prop_vert: -1,
+            },
+        );
 
         let use_prop = tri_vert.is_empty();
 
@@ -351,8 +370,16 @@ impl ManifoldImpl {
             for i in 0usize..3 {
                 let j = next3(i);
                 let e = 3 * tri + i;
-                let v0 = if use_prop { tri_prop[tri][i] } else { tri_vert[tri][i] };
-                let v1 = if use_prop { tri_prop[tri][j] } else { tri_vert[tri][j] };
+                let v0 = if use_prop {
+                    tri_prop[tri][i]
+                } else {
+                    tri_vert[tri][i]
+                };
+                let v1 = if use_prop {
+                    tri_prop[tri][j]
+                } else {
+                    tri_vert[tri][j]
+                };
                 self.halfedge[e] = Halfedge {
                     start_vert: v0,
                     end_vert: v1,
@@ -440,8 +467,18 @@ impl ManifoldImpl {
                 self.halfedge[pair1].paired_halfedge = pair0 as i32;
             } else {
                 // Invalidate both (opposed triangles removed)
-                self.halfedge[pair0] = Halfedge { start_vert: -1, end_vert: -1, paired_halfedge: -1, prop_vert: 0 };
-                self.halfedge[pair1] = Halfedge { start_vert: -1, end_vert: -1, paired_halfedge: -1, prop_vert: 0 };
+                self.halfedge[pair0] = Halfedge {
+                    start_vert: -1,
+                    end_vert: -1,
+                    paired_halfedge: -1,
+                    prop_vert: 0,
+                };
+                self.halfedge[pair1] = Halfedge {
+                    start_vert: -1,
+                    end_vert: -1,
+                    paired_halfedge: -1,
+                    prop_vert: 0,
+                };
             }
         }
     }
@@ -459,7 +496,9 @@ impl ManifoldImpl {
         let mesh_id = reserve_ids(1) as i32;
         self.mesh_relation.original_id = mesh_id;
         let num_tri = self.num_tri();
-        self.mesh_relation.tri_ref.resize(num_tri, TriRef::default());
+        self.mesh_relation
+            .tri_ref
+            .resize(num_tri, TriRef::default());
         for (tri, tri_ref) in self.mesh_relation.tri_ref.iter_mut().enumerate() {
             tri_ref.mesh_id = mesh_id;
             tri_ref.original_id = mesh_id;
@@ -467,12 +506,15 @@ impl ManifoldImpl {
             tri_ref.coplanar_id = tri as i32;
         }
         self.mesh_relation.mesh_id_transform.clear();
-        self.mesh_relation.mesh_id_transform.insert(mesh_id, Relation {
-            original_id: mesh_id,
-            transform: Mat3x4::identity(),
-            back_side: false,
-            has_normals: had_normals,
-        });
+        self.mesh_relation.mesh_id_transform.insert(
+            mesh_id,
+            Relation {
+                original_id: mesh_id,
+                transform: Mat3x4::identity(),
+                back_side: false,
+                has_normals: had_normals,
+            },
+        );
     }
 
     /// True only when every meshID carries normals at slot 0..2 — the condition
@@ -520,7 +562,11 @@ impl ManifoldImpl {
         // OR semantics (any meshID has normals), unlike all_have_normals():
         // mixed inputs still need the per-meshID iteration below to rotate the
         // with-normals subset.
-        if !mesh_relation.mesh_id_transform.values().any(|m| m.has_normals) {
+        if !mesh_relation
+            .mesh_id_transform
+            .values()
+            .any(|m| m.has_normals)
+        {
             return;
         }
         let tri_has_normals = |tri: usize| -> bool {
@@ -568,12 +614,16 @@ impl ManifoldImpl {
         let old_transforms: BTreeMap<i32, Relation> =
             std::mem::take(&mut self.mesh_relation.mesh_id_transform);
         let num_mesh_ids = old_transforms.len() as u32;
-        if num_mesh_ids == 0 { return; }
+        if num_mesh_ids == 0 {
+            return;
+        }
         let mut next_mesh_id = reserve_ids(num_mesh_ids) as i32;
         let mut old2new: HashMap<i32, i32> = HashMap::new();
         for (old_id, relation) in old_transforms {
             old2new.insert(old_id, next_mesh_id);
-            self.mesh_relation.mesh_id_transform.insert(next_mesh_id, relation);
+            self.mesh_relation
+                .mesh_id_transform
+                .insert(next_mesh_id, relation);
             next_mesh_id += 1;
         }
 
@@ -593,14 +643,18 @@ impl ManifoldImpl {
     /// across paired halfedges within the same mesh.
     pub fn dedupe_prop_verts(&mut self) {
         let num_prop = self.num_prop;
-        if num_prop == 0 { return; }
+        if num_prop == 0 {
+            return;
+        }
 
         let n_edges = self.halfedge.len();
         // Collect (prop0, prop1) pairs for edges where properties match
         let mut vert2vert: Vec<(i32, i32)> = vec![(-1, -1); n_edges];
         for edge_idx in 0..n_edges {
             let edge = self.halfedge[edge_idx];
-            if edge.paired_halfedge < 0 { continue; }
+            if edge.paired_halfedge < 0 {
+                continue;
+            }
             let edge_face = edge_idx / 3;
             let pair_face = edge.paired_halfedge as usize / 3;
 
@@ -612,7 +666,9 @@ impl ManifoldImpl {
 
             let prop0 = self.halfedge[edge_idx].prop_vert;
             let prop1 = self.halfedge[next_halfedge(edge.paired_halfedge) as usize].prop_vert;
-            if prop0 < 0 || prop1 < 0 { continue; }
+            if prop0 < 0 || prop1 < 0 {
+                continue;
+            }
 
             let mut prop_equal = true;
             for p in 0..num_prop {
@@ -701,10 +757,10 @@ impl ManifoldImpl {
 
     pub fn tetrahedron(transform: &Mat3x4) -> Self {
         let vert_pos_raw: Vec<[f64; 3]> = vec![
-            [-1.0, -1.0,  1.0],
-            [-1.0,  1.0, -1.0],
-            [ 1.0, -1.0, -1.0],
-            [ 1.0,  1.0,  1.0],
+            [-1.0, -1.0, 1.0],
+            [-1.0, 1.0, -1.0],
+            [1.0, -1.0, -1.0],
+            [1.0, 1.0, 1.0],
         ];
         let tri_verts: Vec<IVec3> = vec![
             IVec3::new(2, 0, 1),
@@ -727,30 +783,40 @@ impl ManifoldImpl {
             [1.0, 1.0, 1.0],
         ];
         let tri_verts: Vec<IVec3> = vec![
-            IVec3::new(1, 0, 4), IVec3::new(2, 4, 0),
-            IVec3::new(1, 3, 0), IVec3::new(3, 1, 5),
-            IVec3::new(3, 2, 0), IVec3::new(3, 7, 2),
-            IVec3::new(5, 4, 6), IVec3::new(5, 1, 4),
-            IVec3::new(6, 4, 2), IVec3::new(7, 6, 2),
-            IVec3::new(7, 3, 5), IVec3::new(7, 5, 6),
+            IVec3::new(1, 0, 4),
+            IVec3::new(2, 4, 0),
+            IVec3::new(1, 3, 0),
+            IVec3::new(3, 1, 5),
+            IVec3::new(3, 2, 0),
+            IVec3::new(3, 7, 2),
+            IVec3::new(5, 4, 6),
+            IVec3::new(5, 1, 4),
+            IVec3::new(6, 4, 2),
+            IVec3::new(7, 6, 2),
+            IVec3::new(7, 3, 5),
+            IVec3::new(7, 5, 6),
         ];
         Self::from_shape(vert_pos_raw, tri_verts, transform)
     }
 
     pub fn octahedron(transform: &Mat3x4) -> Self {
         let vert_pos_raw: Vec<[f64; 3]> = vec![
-            [ 1.0,  0.0,  0.0],
-            [-1.0,  0.0,  0.0],
-            [ 0.0,  1.0,  0.0],
-            [ 0.0, -1.0,  0.0],
-            [ 0.0,  0.0,  1.0],
-            [ 0.0,  0.0, -1.0],
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
         ];
         let tri_verts: Vec<IVec3> = vec![
-            IVec3::new(0, 2, 4), IVec3::new(1, 5, 3),
-            IVec3::new(2, 1, 4), IVec3::new(3, 5, 0),
-            IVec3::new(1, 3, 4), IVec3::new(0, 5, 2),
-            IVec3::new(3, 0, 4), IVec3::new(2, 5, 1),
+            IVec3::new(0, 2, 4),
+            IVec3::new(1, 5, 3),
+            IVec3::new(2, 1, 4),
+            IVec3::new(3, 5, 0),
+            IVec3::new(1, 3, 4),
+            IVec3::new(0, 5, 2),
+            IVec3::new(3, 0, 4),
+            IVec3::new(2, 5, 1),
         ];
         Self::from_shape(vert_pos_raw, tri_verts, transform)
     }
@@ -782,7 +848,7 @@ impl ManifoldImpl {
 
     /// Apply affine transform, returning a new ManifoldImpl.
     pub fn transform(&self, t: &Mat3x4) -> Self {
-        use crate::linalg::{Vec4, Mat3};
+        use crate::linalg::{Mat3, Vec4};
         let identity = Mat3x4::identity();
         if t == &identity {
             // Clone self — this is a simplified version (full version uses Collider)
@@ -826,9 +892,11 @@ impl ManifoldImpl {
         }
 
         // Transform vertex positions
-        result.vert_pos = self.vert_pos.iter().map(|&v| {
-            *t * Vec4::new(v.x, v.y, v.z, 1.0)
-        }).collect();
+        result.vert_pos = self
+            .vert_pos
+            .iter()
+            .map(|&v| *t * Vec4::new(v.x, v.y, v.z, 1.0))
+            .collect();
 
         // Transform normals (using inverse-transpose of 3x3 part)
         let m3 = Mat3::from_cols(
@@ -838,12 +906,16 @@ impl ManifoldImpl {
         );
         let normal_t = m3.inverse().transpose();
 
-        result.face_normal = self.face_normal.iter().map(|&n| {
-            safe_normalize(normal_t * n)
-        }).collect();
-        result.vert_normal = self.vert_normal.iter().map(|&n| {
-            safe_normalize(normal_t * n)
-        }).collect();
+        result.face_normal = self
+            .face_normal
+            .iter()
+            .map(|&n| safe_normalize(normal_t * n))
+            .collect();
+        result.vert_normal = self
+            .vert_normal
+            .iter()
+            .map(|&n| safe_normalize(normal_t * n))
+            .collect();
 
         // Per #1718: the properties clone above doesn't go through the vertPos /
         // faceNormal transform, so eager-transform slot 0..2 per-meshID to keep
@@ -867,7 +939,8 @@ impl ManifoldImpl {
         // Transform tangents — C++ TransformTangents
         // Must happen BEFORE FlipTris (matches C++ order)
         if !self.halfedge_tangent.is_empty() {
-            result.halfedge_tangent = vec![Vec4::new(0.0, 0.0, 0.0, 0.0); self.halfedge_tangent.len()];
+            result.halfedge_tangent =
+                vec![Vec4::new(0.0, 0.0, 0.0, 0.0); self.halfedge_tangent.len()];
             for edge_out in 0..self.halfedge_tangent.len() {
                 let edge_in = if invert {
                     let tri = edge_out / 3;
@@ -967,7 +1040,12 @@ fn mat3x4_mul_mat3x4(t1: &Mat3x4, t2: &Mat3x4) -> Mat3x4 {
     let c1 = *t1 * Vec4::new(t2.y.x, t2.y.y, t2.y.z, 0.0);
     let c2 = *t1 * Vec4::new(t2.z.x, t2.z.y, t2.z.z, 0.0);
     let c3 = *t1 * Vec4::new(t2.w.x, t2.w.y, t2.w.z, 1.0);
-    Mat3x4 { x: c0, y: c1, z: c2, w: c3 }
+    Mat3x4 {
+        x: c0,
+        y: c1,
+        z: c2,
+        w: c3,
+    }
 }
 
 // ---------------------------------------------------------------------------

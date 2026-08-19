@@ -36,10 +36,7 @@ fn test_box_default() {
 
 #[test]
 fn test_box_from_points() {
-    let b = Box::from_points(
-        Vec3::new(1.0, 2.0, 3.0),
-        Vec3::new(-1.0, -2.0, -3.0),
-    );
+    let b = Box::from_points(Vec3::new(1.0, 2.0, 3.0), Vec3::new(-1.0, -2.0, -3.0));
     assert_eq!(b.min, Vec3::new(-1.0, -2.0, -3.0));
     assert_eq!(b.max, Vec3::new(1.0, 2.0, 3.0));
 }
@@ -100,18 +97,43 @@ fn test_next_halfedge() {
 
 #[test]
 fn test_halfedge_forward() {
-    let h = Halfedge { start_vert: 1, end_vert: 3, paired_halfedge: 0, prop_vert: 0 };
+    let h = Halfedge {
+        start_vert: 1,
+        end_vert: 3,
+        paired_halfedge: 0,
+        prop_vert: 0,
+    };
     assert!(h.is_forward());
-    let h2 = Halfedge { start_vert: 3, end_vert: 1, paired_halfedge: 0, prop_vert: 0 };
+    let h2 = Halfedge {
+        start_vert: 3,
+        end_vert: 1,
+        paired_halfedge: 0,
+        prop_vert: 0,
+    };
     assert!(!h2.is_forward());
 }
 
 #[test]
 fn test_tri_ref_same_face() {
-    let a = TriRef { mesh_id: 1, original_id: 2, face_id: 3, coplanar_id: 4 };
-    let b = TriRef { mesh_id: 1, original_id: 99, face_id: 3, coplanar_id: 4 };
+    let a = TriRef {
+        mesh_id: 1,
+        original_id: 2,
+        face_id: 3,
+        coplanar_id: 4,
+    };
+    let b = TriRef {
+        mesh_id: 1,
+        original_id: 99,
+        face_id: 3,
+        coplanar_id: 4,
+    };
     assert!(a.same_face(&b));
-    let c = TriRef { mesh_id: 1, original_id: 2, face_id: 99, coplanar_id: 4 };
+    let c = TriRef {
+        mesh_id: 1,
+        original_id: 2,
+        face_id: 99,
+        coplanar_id: 4,
+    };
     assert!(!a.same_face(&c));
 }
 

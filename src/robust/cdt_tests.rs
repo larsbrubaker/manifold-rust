@@ -36,7 +36,10 @@ fn validate(points: &[R2], constraints: &[(usize, usize)], tris: &[[usize; 3]]) 
         total = total + a2;
     }
     let base = rat_abs(&area2(&points[0], &points[1], &points[2]));
-    assert_eq!(total, base, "sub-triangle areas do not sum to the base area");
+    assert_eq!(
+        total, base,
+        "sub-triangle areas do not sum to the base area"
+    );
 
     // Edge set + Euler.
     let mut edges: BTreeSet<(usize, usize)> = BTreeSet::new();
@@ -48,7 +51,11 @@ fn validate(points: &[R2], constraints: &[(usize, usize)], tris: &[[usize; 3]]) 
             used.insert(u);
         }
     }
-    assert_eq!(used.len(), points.len(), "not every point appears in the output");
+    assert_eq!(
+        used.len(),
+        points.len(),
+        "not every point appears in the output"
+    );
     let euler = points.len() as i64 - edges.len() as i64 + tris.len() as i64;
     assert_eq!(euler, 1, "Euler characteristic violated");
 
@@ -73,7 +80,11 @@ fn validate(points: &[R2], constraints: &[(usize, usize)], tris: &[[usize; 3]]) 
         }
     }
     for (edge, owners) in &edge_tris {
-        assert!(owners.len() <= 2, "edge shared by {} triangles", owners.len());
+        assert!(
+            owners.len() <= 2,
+            "edge shared by {} triangles",
+            owners.len()
+        );
         if owners.len() != 2 || con.contains(edge) {
             continue;
         }
@@ -220,7 +231,11 @@ fn fuzz_random_interior_points() {
         }
         let tris = triangulate(&pts, &[]);
         validate(&pts, &[], &tris);
-        assert_eq!(tris.len(), 2 * seen.len() + 1, "round {round}: T = 2*interior + 1");
+        assert_eq!(
+            tris.len(),
+            2 * seen.len() + 1,
+            "round {round}: T = 2*interior + 1"
+        );
     }
 }
 
@@ -278,8 +293,12 @@ fn fuzz_random_constraints() {
                 let s2 = orient2d_r(&pts[a], &pts[b], &pts[d]);
                 let s3 = orient2d_r(&pts[c], &pts[d], &pts[a]);
                 let s4 = orient2d_r(&pts[c], &pts[d], &pts[b]);
-                if s1 != Sign::Zero && s2 != Sign::Zero && s1 != s2
-                    && s3 != Sign::Zero && s4 != Sign::Zero && s3 != s4
+                if s1 != Sign::Zero
+                    && s2 != Sign::Zero
+                    && s1 != s2
+                    && s3 != Sign::Zero
+                    && s4 != Sign::Zero
+                    && s3 != s4
                 {
                     continue 'outer;
                 }
@@ -330,5 +349,8 @@ fn is_exact_only_accepts_values_that_round_trip() {
             );
         }
     }
-    assert!(accepted > 5_000, "test should exercise the accept path ({accepted})");
+    assert!(
+        accepted > 5_000,
+        "test should exercise the accept path ({accepted})"
+    );
 }

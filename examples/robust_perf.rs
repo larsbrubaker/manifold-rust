@@ -21,20 +21,45 @@ fn make_spiky_dodecahedron(spike_height: f64) -> Manifold {
     let inv_phi = 1.0 / phi;
     let scale = 0.5;
     let raw_verts: [(f64, f64, f64); 20] = [
-        (1.0, 1.0, 1.0), (1.0, 1.0, -1.0), (1.0, -1.0, 1.0), (1.0, -1.0, -1.0),
-        (-1.0, 1.0, 1.0), (-1.0, 1.0, -1.0), (-1.0, -1.0, 1.0), (-1.0, -1.0, -1.0),
-        (0.0, inv_phi, phi), (0.0, inv_phi, -phi), (0.0, -inv_phi, phi), (0.0, -inv_phi, -phi),
-        (inv_phi, phi, 0.0), (-inv_phi, phi, 0.0), (inv_phi, -phi, 0.0), (-inv_phi, -phi, 0.0),
-        (phi, 0.0, inv_phi), (phi, 0.0, -inv_phi), (-phi, 0.0, inv_phi), (-phi, 0.0, -inv_phi),
+        (1.0, 1.0, 1.0),
+        (1.0, 1.0, -1.0),
+        (1.0, -1.0, 1.0),
+        (1.0, -1.0, -1.0),
+        (-1.0, 1.0, 1.0),
+        (-1.0, 1.0, -1.0),
+        (-1.0, -1.0, 1.0),
+        (-1.0, -1.0, -1.0),
+        (0.0, inv_phi, phi),
+        (0.0, inv_phi, -phi),
+        (0.0, -inv_phi, phi),
+        (0.0, -inv_phi, -phi),
+        (inv_phi, phi, 0.0),
+        (-inv_phi, phi, 0.0),
+        (inv_phi, -phi, 0.0),
+        (-inv_phi, -phi, 0.0),
+        (phi, 0.0, inv_phi),
+        (phi, 0.0, -inv_phi),
+        (-phi, 0.0, inv_phi),
+        (-phi, 0.0, -inv_phi),
     ];
     let faces: [[usize; 5]; 12] = [
-        [0, 8, 10, 2, 16], [0, 16, 17, 1, 12], [0, 12, 13, 4, 8],
-        [1, 17, 3, 11, 9], [1, 9, 5, 13, 12], [2, 10, 6, 15, 14],
-        [2, 14, 3, 17, 16], [4, 13, 5, 19, 18], [4, 18, 6, 10, 8],
-        [5, 9, 11, 7, 19], [6, 18, 19, 7, 15], [3, 14, 15, 7, 11],
+        [0, 8, 10, 2, 16],
+        [0, 16, 17, 1, 12],
+        [0, 12, 13, 4, 8],
+        [1, 17, 3, 11, 9],
+        [1, 9, 5, 13, 12],
+        [2, 10, 6, 15, 14],
+        [2, 14, 3, 17, 16],
+        [4, 13, 5, 19, 18],
+        [4, 18, 6, 10, 8],
+        [5, 9, 11, 7, 19],
+        [6, 18, 19, 7, 15],
+        [3, 14, 15, 7, 11],
     ];
-    let verts: Vec<(f64, f64, f64)> =
-        raw_verts.iter().map(|&(x, y, z)| (x * scale, y * scale, z * scale)).collect();
+    let verts: Vec<(f64, f64, f64)> = raw_verts
+        .iter()
+        .map(|&(x, y, z)| (x * scale, y * scale, z * scale))
+        .collect();
     let mut positions: Vec<f32> = Vec::with_capacity(32 * 3);
     let mut tri_verts: Vec<u32> = Vec::with_capacity(60 * 3);
     for &(x, y, z) in &verts {
@@ -98,7 +123,11 @@ fn import_stl(path: &str) -> Manifold {
             max[k] = max[k].max(v);
         }
     }
-    let c = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0, (min[2] + max[2]) / 2.0];
+    let c = [
+        (min[0] + max[0]) / 2.0,
+        (min[1] + max[1]) / 2.0,
+        (min[2] + max[2]) / 2.0,
+    ];
     let side = (max[0] - min[0]).max(max[1] - min[1]).max(max[2] - min[2]);
     let s = if side > 0.0 { 2.0 / side } else { 1.0 };
     for i in 0..nv {
@@ -136,7 +165,10 @@ fn main() {
     );
 
     // Whole-op comparison, best of 3.
-    for (name, engine) in [("exact ", BooleanEngine::Exact), ("robust", BooleanEngine::Robust)] {
+    for (name, engine) in [
+        ("exact ", BooleanEngine::Exact),
+        ("robust", BooleanEngine::Robust),
+    ] {
         let mut best = f64::INFINITY;
         let mut out_tris = 0;
         for _ in 0..3 {
@@ -146,7 +178,10 @@ fn main() {
             best = best.min(dt);
             out_tris = out.num_tri();
         }
-        println!("{name} union: {:8.2} ms   ({out_tris} tris out)", best * 1e3);
+        println!(
+            "{name} union: {:8.2} ms   ({out_tris} tris out)",
+            best * 1e3
+        );
     }
 
     // Dense-mesh case (sparse intersections relative to size): sphere pair.
@@ -155,7 +190,10 @@ fn main() {
     // the overlapping region.
     let s1 = Manifold::sphere(1.0, 64);
     let s2 = Manifold::sphere(1.0, 64).translate(Vec3::new(1.7, 0.0, 0.0));
-    for (name, engine) in [("exact ", BooleanEngine::Exact), ("robust", BooleanEngine::Robust)] {
+    for (name, engine) in [
+        ("exact ", BooleanEngine::Exact),
+        ("robust", BooleanEngine::Robust),
+    ] {
         let t0 = Instant::now();
         let out = s1.union_with_engine(&s2, engine);
         println!(
@@ -236,7 +274,13 @@ fn main() {
     let t_wind = t0.elapsed().as_secs_f64();
 
     let t0 = Instant::now();
-    let pieces = cells::extract(&graph, &complex, &wind, manifold_rust::types::OpType::Add, manifold_rust::types::WindingRule::Positive);
+    let pieces = cells::extract(
+        &graph,
+        &complex,
+        &wind,
+        manifold_rust::types::OpType::Add,
+        manifold_rust::types::WindingRule::Positive,
+    );
     let t_extract = t0.elapsed().as_secs_f64();
 
     let t0 = Instant::now();
@@ -251,9 +295,21 @@ fn main() {
     let _ = out;
 
     println!("robust stages:");
-    println!("  build_graph    {:8.2} ms   ({} pieces)", t_graph * 1e3, graph.pieces.len());
-    println!("  build_cells    {:8.2} ms   ({} cells)", t_cells * 1e3, complex.num_cells);
+    println!(
+        "  build_graph    {:8.2} ms   ({} pieces)",
+        t_graph * 1e3,
+        graph.pieces.len()
+    );
+    println!(
+        "  build_cells    {:8.2} ms   ({} cells)",
+        t_cells * 1e3,
+        complex.num_cells
+    );
     println!("  windings       {:8.2} ms", t_wind * 1e3);
-    println!("  extract        {:8.2} ms   ({} walls kept)", t_extract * 1e3, pieces.len());
+    println!(
+        "  extract        {:8.2} ms   ({} walls kept)",
+        t_extract * 1e3,
+        pieces.len()
+    );
     println!("  assemble       {:8.2} ms", t_assemble * 1e3);
 }

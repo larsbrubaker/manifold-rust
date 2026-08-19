@@ -1,13 +1,23 @@
 use super::*;
-use crate::linalg::Mat3x4;
-use crate::impl_mesh::ManifoldImpl;
 use crate::face_op::set_normals_and_coplanar;
+use crate::impl_mesh::ManifoldImpl;
+use crate::linalg::Mat3x4;
 
 #[test]
 fn test_pair_up() {
     let mut halfedges = vec![
-        Halfedge { start_vert: 0, end_vert: 1, paired_halfedge: -1, prop_vert: 0 },
-        Halfedge { start_vert: 1, end_vert: 0, paired_halfedge: -1, prop_vert: 1 },
+        Halfedge {
+            start_vert: 0,
+            end_vert: 1,
+            paired_halfedge: -1,
+            prop_vert: 0,
+        },
+        Halfedge {
+            start_vert: 1,
+            end_vert: 0,
+            paired_halfedge: -1,
+            prop_vert: 1,
+        },
     ];
     pair_up(&mut halfedges, 0, 1);
     assert_eq!(halfedges[0].paired_halfedge, 1);
@@ -34,8 +44,10 @@ fn test_simplify_topology_noop_on_clean_mesh() {
     // After simplify, cube should still be 2-manifold (no degenerate edges)
     // (Some verts/edges may be removed, but topology must be valid)
     // Just check it's still 2-manifold where halfedges are valid
-    let valid = m.halfedge.iter().filter(|h| h.paired_halfedge >= 0).all(|h| {
-        h.paired_halfedge < m.halfedge.len() as i32
-    });
+    let valid = m
+        .halfedge
+        .iter()
+        .filter(|h| h.paired_halfedge >= 0)
+        .all(|h| h.paired_halfedge < m.halfedge.len() as i32);
     assert!(valid, "invalid paired halfedge after simplify");
 }

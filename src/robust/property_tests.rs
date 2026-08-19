@@ -18,20 +18,45 @@ fn spiky_dodecahedron(spike_height: f64) -> Manifold {
     let inv_phi = 1.0 / phi;
     let scale = 0.5;
     let raw_verts: [(f64, f64, f64); 20] = [
-        (1.0, 1.0, 1.0), (1.0, 1.0, -1.0), (1.0, -1.0, 1.0), (1.0, -1.0, -1.0),
-        (-1.0, 1.0, 1.0), (-1.0, 1.0, -1.0), (-1.0, -1.0, 1.0), (-1.0, -1.0, -1.0),
-        (0.0, inv_phi, phi), (0.0, inv_phi, -phi), (0.0, -inv_phi, phi), (0.0, -inv_phi, -phi),
-        (inv_phi, phi, 0.0), (-inv_phi, phi, 0.0), (inv_phi, -phi, 0.0), (-inv_phi, -phi, 0.0),
-        (phi, 0.0, inv_phi), (phi, 0.0, -inv_phi), (-phi, 0.0, inv_phi), (-phi, 0.0, -inv_phi),
+        (1.0, 1.0, 1.0),
+        (1.0, 1.0, -1.0),
+        (1.0, -1.0, 1.0),
+        (1.0, -1.0, -1.0),
+        (-1.0, 1.0, 1.0),
+        (-1.0, 1.0, -1.0),
+        (-1.0, -1.0, 1.0),
+        (-1.0, -1.0, -1.0),
+        (0.0, inv_phi, phi),
+        (0.0, inv_phi, -phi),
+        (0.0, -inv_phi, phi),
+        (0.0, -inv_phi, -phi),
+        (inv_phi, phi, 0.0),
+        (-inv_phi, phi, 0.0),
+        (inv_phi, -phi, 0.0),
+        (-inv_phi, -phi, 0.0),
+        (phi, 0.0, inv_phi),
+        (phi, 0.0, -inv_phi),
+        (-phi, 0.0, inv_phi),
+        (-phi, 0.0, -inv_phi),
     ];
     let faces: [[usize; 5]; 12] = [
-        [0, 8, 10, 2, 16], [0, 16, 17, 1, 12], [0, 12, 13, 4, 8],
-        [1, 17, 3, 11, 9], [1, 9, 5, 13, 12], [2, 10, 6, 15, 14],
-        [2, 14, 3, 17, 16], [4, 13, 5, 19, 18], [4, 18, 6, 10, 8],
-        [5, 9, 11, 7, 19], [6, 18, 19, 7, 15], [3, 14, 15, 7, 11],
+        [0, 8, 10, 2, 16],
+        [0, 16, 17, 1, 12],
+        [0, 12, 13, 4, 8],
+        [1, 17, 3, 11, 9],
+        [1, 9, 5, 13, 12],
+        [2, 10, 6, 15, 14],
+        [2, 14, 3, 17, 16],
+        [4, 13, 5, 19, 18],
+        [4, 18, 6, 10, 8],
+        [5, 9, 11, 7, 19],
+        [6, 18, 19, 7, 15],
+        [3, 14, 15, 7, 11],
     ];
-    let verts: Vec<(f64, f64, f64)> =
-        raw_verts.iter().map(|&(x, y, z)| (x * scale, y * scale, z * scale)).collect();
+    let verts: Vec<(f64, f64, f64)> = raw_verts
+        .iter()
+        .map(|&(x, y, z)| (x * scale, y * scale, z * scale))
+        .collect();
     let mut positions: Vec<f32> = Vec::with_capacity(32 * 3);
     let mut tri_verts: Vec<u32> = Vec::with_capacity(60 * 3);
     for &(x, y, z) in &verts {
@@ -103,7 +128,8 @@ fn constant_colors_survive_robust_union() {
     let out = a.union_with_engine(&b, BooleanEngine::Robust);
     assert_eq!(out.status(), Error::NoError);
     assert_eq!(
-        out.as_impl().num_prop, 4,
+        out.as_impl().num_prop,
+        4,
         "robust output must keep the 4 color channels"
     );
     let gl = out.get_mesh_gl(-1);
@@ -111,15 +137,24 @@ fn constant_colors_survive_robust_union() {
     let n = gl.vert_properties.len() / 7;
     let (mut blue, mut red) = (0usize, 0usize);
     for i in 0..n {
-        let c: Vec<f64> = (3..7).map(|k| gl.vert_properties[i * 7 + k] as f64).collect();
+        let c: Vec<f64> = (3..7)
+            .map(|k| gl.vert_properties[i * 7 + k] as f64)
+            .collect();
         let is = |rgba: [f64; 4]| (0..4).all(|k| (c[k] - rgba[k]).abs() < 1e-6);
         assert!(
             is(BLUE) || is(RED),
             "vertex {i} color {c:?} is neither operand color"
         );
-        if is(BLUE) { blue += 1 } else { red += 1 }
+        if is(BLUE) {
+            blue += 1
+        } else {
+            red += 1
+        }
     }
-    assert!(blue > 0 && red > 0, "both operands must contribute vertices");
+    assert!(
+        blue > 0 && red > 0,
+        "both operands must contribute vertices"
+    );
 }
 
 /// Robust and exact engines must produce the same set of output vertex
@@ -154,7 +189,11 @@ fn robust_matches_exact_vertices_and_colors() {
     let key = |p: [f32; 3]| (p[0].to_bits(), p[1].to_bits(), p[2].to_bits());
     let mut exact_colors: std::collections::BTreeMap<_, Vec<[f32; 4]>> = Default::default();
     for i in 0..ge.vert_properties.len() / np {
-        let p = [ge.vert_properties[i * np], ge.vert_properties[i * np + 1], ge.vert_properties[i * np + 2]];
+        let p = [
+            ge.vert_properties[i * np],
+            ge.vert_properties[i * np + 1],
+            ge.vert_properties[i * np + 2],
+        ];
         let c = [
             ge.vert_properties[i * np + 3],
             ge.vert_properties[i * np + 4],
@@ -164,7 +203,11 @@ fn robust_matches_exact_vertices_and_colors() {
         exact_colors.entry(key(p)).or_default().push(c);
     }
     for i in 0..gr.vert_properties.len() / np {
-        let p = [gr.vert_properties[i * np], gr.vert_properties[i * np + 1], gr.vert_properties[i * np + 2]];
+        let p = [
+            gr.vert_properties[i * np],
+            gr.vert_properties[i * np + 1],
+            gr.vert_properties[i * np + 2],
+        ];
         let c = [
             gr.vert_properties[i * np + 3],
             gr.vert_properties[i * np + 4],
@@ -175,7 +218,9 @@ fn robust_matches_exact_vertices_and_colors() {
             panic!("robust vertex {p:?} not among exact vertices");
         };
         assert!(
-            cands.iter().any(|e| (0..4).all(|k| (e[k] - c[k]).abs() < 1e-6)),
+            cands
+                .iter()
+                .any(|e| (0..4).all(|k| (e[k] - c[k]).abs() < 1e-6)),
             "color mismatch at {p:?}: robust {c:?} vs exact {cands:?}"
         );
     }

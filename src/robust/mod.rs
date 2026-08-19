@@ -70,10 +70,6 @@ use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::Vec3;
 use crate::types::{Error, OpType, WindingRule};
 
-
-
-
-
 fn is_cancelled(token: Option<&CancelToken>) -> bool {
     token.is_some_and(|t| t.is_cancelled())
 }
@@ -207,7 +203,11 @@ pub fn boolean_with_rule(
                     .enumerate()
                     .map(|(i, t)| intersection_graph::Piece {
                         mesh: if i < p_tris.len() { 0 } else { 1 },
-                        tri: if i < p_tris.len() { i } else { i - p_tris.len() },
+                        tri: if i < p_tris.len() {
+                            i
+                        } else {
+                            i - p_tris.len()
+                        },
                         vi: [
                             interner.intern_f64(t[0]),
                             interner.intern_f64(t[1]),
@@ -299,7 +299,14 @@ pub(crate) fn assemble_all(tris: &[[Vec3; 3]]) -> ManifoldImpl {
             ],
         })
         .collect();
-    assemble::assemble(&pieces, &interner.verts, &interner.verts_f64, |_| true, None).into_impl()
+    assemble::assemble(
+        &pieces,
+        &interner.verts,
+        &interner.verts_f64,
+        |_| true,
+        None,
+    )
+    .into_impl()
 }
 
 #[cfg(test)]

@@ -1,12 +1,12 @@
 // WASM bindings for manifold-rust
 // Exposes a compact browser-facing API for the demo site.
 
+use js_sys::{Float32Array, Uint32Array};
 use manifold_rust::cross_section::CrossSection;
 use manifold_rust::linalg::{Vec2, Vec3};
 use manifold_rust::manifold::Manifold;
 use manifold_rust::quickhull;
 use wasm_bindgen::prelude::*;
-use js_sys::{Float32Array, Uint32Array};
 
 mod progress;
 mod soup;
@@ -130,7 +130,11 @@ impl MeshData {
 pub(crate) fn mesh_data_from(m: &Manifold) -> MeshData {
     let gl = m.get_mesh_gl(-1);
     let num_prop = gl.num_prop as usize;
-    let vert_count = if num_prop > 0 { gl.vert_properties.len() / num_prop } else { 0 };
+    let vert_count = if num_prop > 0 {
+        gl.vert_properties.len() / num_prop
+    } else {
+        0
+    };
     let tri_count = gl.tri_verts.len() / 3;
 
     // Extract positions
@@ -244,7 +248,12 @@ pub fn sphere_mesh(radius: f64, circular_segments: i32) -> MeshData {
 }
 
 #[wasm_bindgen]
-pub fn cylinder_mesh(height: f64, radius_low: f64, radius_high: f64, circular_segments: i32) -> MeshData {
+pub fn cylinder_mesh(
+    height: f64,
+    radius_low: f64,
+    radius_high: f64,
+    circular_segments: i32,
+) -> MeshData {
     let m = Manifold::cylinder(height, radius_low, radius_high, circular_segments);
     mesh_data_from(&m)
 }
@@ -289,7 +298,8 @@ pub fn hull_mesh(points_flat: &[f32]) -> MeshData {
 #[wasm_bindgen]
 pub fn union_mesh(offset_x: f64) -> MeshData {
     let a = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false);
-    let b = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false).translate(Vec3::new(offset_x, 0.0, 0.0));
+    let b =
+        Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false).translate(Vec3::new(offset_x, 0.0, 0.0));
     let result = a.union(&b);
     mesh_data_from(&result)
 }
@@ -297,7 +307,8 @@ pub fn union_mesh(offset_x: f64) -> MeshData {
 #[wasm_bindgen]
 pub fn intersect_mesh(offset_x: f64) -> MeshData {
     let a = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false);
-    let b = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false).translate(Vec3::new(offset_x, 0.0, 0.0));
+    let b =
+        Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false).translate(Vec3::new(offset_x, 0.0, 0.0));
     let result = a.intersection(&b);
     mesh_data_from(&result)
 }
@@ -305,7 +316,8 @@ pub fn intersect_mesh(offset_x: f64) -> MeshData {
 #[wasm_bindgen]
 pub fn difference_mesh(offset_x: f64) -> MeshData {
     let a = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false);
-    let b = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false).translate(Vec3::new(offset_x, 0.0, 0.0));
+    let b =
+        Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false).translate(Vec3::new(offset_x, 0.0, 0.0));
     let result = a.difference(&b);
     mesh_data_from(&result)
 }
@@ -325,8 +337,12 @@ fn menger_sponge_impl(depth: i32) -> Manifold {
     for axis in 0..3 {
         for i in [-1.0, 0.0, 1.0] {
             for j in [-1.0, 0.0, 1.0] {
-                if (i == 0.0) && (j == 0.0) { continue; }
-                if (i != 0.0) && (j != 0.0) { continue; }
+                if (i == 0.0) && (j == 0.0) {
+                    continue;
+                }
+                if (i != 0.0) && (j != 0.0) {
+                    continue;
+                }
                 let pos = match axis {
                     0 => Vec3::new(0.0, i * size, j * size),
                     1 => Vec3::new(i * size, 0.0, j * size),
@@ -352,12 +368,21 @@ fn menger_sponge_impl(depth: i32) -> Manifold {
             for y in [-1.0, 0.0, 1.0] {
                 for z in [-1.0, 0.0, 1.0] {
                     let zeros = (x == 0.0) as i32 + (y == 0.0) as i32 + (z == 0.0) as i32;
-                    if zeros >= 2 { continue; } // skip center and face-centers
-                    pieces.push(child.clone().scale(Vec3::splat(size)).translate(Vec3::new(x * size, y * size, z * size)));
+                    if zeros >= 2 {
+                        continue;
+                    } // skip center and face-centers
+                    pieces.push(child.clone().scale(Vec3::splat(size)).translate(Vec3::new(
+                        x * size,
+                        y * size,
+                        z * size,
+                    )));
                 }
             }
         }
-        result = pieces.iter().skip(1).fold(pieces[0].clone(), |acc, p| acc.union(p));
+        result = pieces
+            .iter()
+            .skip(1)
+            .fold(pieces[0].clone(), |acc, p| acc.union(p));
     }
     result
 }
@@ -383,25 +408,51 @@ fn make_spiky_dodecahedron(spike_height: f64) -> Manifold {
     let scale = 0.5;
     let raw_verts: [(f64, f64, f64); 20] = [
         // Cube vertices (±1, ±1, ±1)
-        ( 1.0,  1.0,  1.0), ( 1.0,  1.0, -1.0), ( 1.0, -1.0,  1.0), ( 1.0, -1.0, -1.0),
-        (-1.0,  1.0,  1.0), (-1.0,  1.0, -1.0), (-1.0, -1.0,  1.0), (-1.0, -1.0, -1.0),
+        (1.0, 1.0, 1.0),
+        (1.0, 1.0, -1.0),
+        (1.0, -1.0, 1.0),
+        (1.0, -1.0, -1.0),
+        (-1.0, 1.0, 1.0),
+        (-1.0, 1.0, -1.0),
+        (-1.0, -1.0, 1.0),
+        (-1.0, -1.0, -1.0),
         // (0, ±1/φ, ±φ)
-        (0.0,  inv_phi,  phi), (0.0,  inv_phi, -phi), (0.0, -inv_phi,  phi), (0.0, -inv_phi, -phi),
+        (0.0, inv_phi, phi),
+        (0.0, inv_phi, -phi),
+        (0.0, -inv_phi, phi),
+        (0.0, -inv_phi, -phi),
         // (±1/φ, ±φ, 0)
-        ( inv_phi,  phi, 0.0), (-inv_phi,  phi, 0.0), ( inv_phi, -phi, 0.0), (-inv_phi, -phi, 0.0),
+        (inv_phi, phi, 0.0),
+        (-inv_phi, phi, 0.0),
+        (inv_phi, -phi, 0.0),
+        (-inv_phi, -phi, 0.0),
         // (±φ, 0, ±1/φ)
-        ( phi, 0.0,  inv_phi), ( phi, 0.0, -inv_phi), (-phi, 0.0,  inv_phi), (-phi, 0.0, -inv_phi),
+        (phi, 0.0, inv_phi),
+        (phi, 0.0, -inv_phi),
+        (-phi, 0.0, inv_phi),
+        (-phi, 0.0, -inv_phi),
     ];
 
     // 12 pentagonal faces (vertex indices, counterclockwise when viewed from outside)
     let faces: [[usize; 5]; 12] = [
-        [0, 8, 10, 2, 16],   [0, 16, 17, 1, 12],  [0, 12, 13, 4, 8],
-        [1, 17, 3, 11, 9],   [1, 9, 5, 13, 12],   [2, 10, 6, 15, 14],
-        [2, 14, 3, 17, 16],  [4, 13, 5, 19, 18],   [4, 18, 6, 10, 8],
-        [5, 9, 11, 7, 19],   [6, 18, 19, 7, 15],   [3, 14, 15, 7, 11],
+        [0, 8, 10, 2, 16],
+        [0, 16, 17, 1, 12],
+        [0, 12, 13, 4, 8],
+        [1, 17, 3, 11, 9],
+        [1, 9, 5, 13, 12],
+        [2, 10, 6, 15, 14],
+        [2, 14, 3, 17, 16],
+        [4, 13, 5, 19, 18],
+        [4, 18, 6, 10, 8],
+        [5, 9, 11, 7, 19],
+        [6, 18, 19, 7, 15],
+        [3, 14, 15, 7, 11],
     ];
 
-    let verts: Vec<(f64, f64, f64)> = raw_verts.iter().map(|&(x, y, z)| (x * scale, y * scale, z * scale)).collect();
+    let verts: Vec<(f64, f64, f64)> = raw_verts
+        .iter()
+        .map(|&(x, y, z)| (x * scale, y * scale, z * scale))
+        .collect();
 
     // Build mesh: 20 original verts + 12 spike verts = 32 verts, 60 triangles
     let mut positions: Vec<f32> = Vec::with_capacity(32 * 3);
@@ -466,21 +517,56 @@ pub(crate) fn color_shape(m: &Manifold, r: f64, g: f64, b: f64, a: f64) -> Manif
 }
 
 #[wasm_bindgen]
-pub fn boolean_gallery_mesh(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64) -> MeshData {
-    boolean_gallery_mesh_rotated(shape_a, shape_b, op, offset_x, offset_y, offset_z, 0.0, 0.0, 0.0)
+pub fn boolean_gallery_mesh(
+    shape_a: i32,
+    shape_b: i32,
+    op: i32,
+    offset_x: f64,
+    offset_y: f64,
+    offset_z: f64,
+) -> MeshData {
+    boolean_gallery_mesh_rotated(
+        shape_a, shape_b, op, offset_x, offset_y, offset_z, 0.0, 0.0, 0.0,
+    )
 }
 
 #[wasm_bindgen]
-pub fn boolean_gallery_mesh_rotated(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64) -> MeshData {
-    boolean_gallery_mesh_engine(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, 0)
+pub fn boolean_gallery_mesh_rotated(
+    shape_a: i32,
+    shape_b: i32,
+    op: i32,
+    offset_x: f64,
+    offset_y: f64,
+    offset_z: f64,
+    rot_x: f64,
+    rot_y: f64,
+    rot_z: f64,
+) -> MeshData {
+    boolean_gallery_mesh_engine(
+        shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, 0,
+    )
 }
 
 /// Boolean Gallery with an explicit engine: 0=Exact, 1=Robust, 2=Auto.
 /// Both engines carry the per-shape colors through to the result.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
-pub fn boolean_gallery_mesh_engine(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32) -> MeshData {
-    boolean_gallery_mesh_repair(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, false, false)
+pub fn boolean_gallery_mesh_engine(
+    shape_a: i32,
+    shape_b: i32,
+    op: i32,
+    offset_x: f64,
+    offset_y: f64,
+    offset_z: f64,
+    rot_x: f64,
+    rot_y: f64,
+    rot_z: f64,
+    engine: i32,
+) -> MeshData {
+    boolean_gallery_mesh_repair(
+        shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, false,
+        false,
+    )
 }
 
 /// [`boolean_gallery_mesh_engine`] with the orientation-repair and
@@ -493,8 +579,24 @@ pub fn boolean_gallery_mesh_engine(shape_a: i32, shape_b: i32, op: i32, offset_x
 /// is honored uniformly so the demo's one switch drives both paths.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
-pub fn boolean_gallery_mesh_repair(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32, repair: bool, nonzero: bool) -> MeshData {
-    boolean_gallery_mesh_impl(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, repair, nonzero, None)
+pub fn boolean_gallery_mesh_repair(
+    shape_a: i32,
+    shape_b: i32,
+    op: i32,
+    offset_x: f64,
+    offset_y: f64,
+    offset_z: f64,
+    rot_x: f64,
+    rot_y: f64,
+    rot_z: f64,
+    engine: i32,
+    repair: bool,
+    nonzero: bool,
+) -> MeshData {
+    boolean_gallery_mesh_impl(
+        shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, repair,
+        nonzero, None,
+    )
 }
 
 /// [`boolean_gallery_mesh_repair`] that reports pipeline progress to
@@ -502,14 +604,45 @@ pub fn boolean_gallery_mesh_repair(shape_a: i32, shape_b: i32, op: i32, offset_x
 /// `undefined` for the un-instrumented path.
 #[wasm_bindgen]
 #[allow(clippy::too_many_arguments)]
-pub fn boolean_gallery_mesh_progress(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32, repair: bool, nonzero: bool, on_progress: Option<js_sys::Function>) -> MeshData {
+pub fn boolean_gallery_mesh_progress(
+    shape_a: i32,
+    shape_b: i32,
+    op: i32,
+    offset_x: f64,
+    offset_y: f64,
+    offset_z: f64,
+    rot_x: f64,
+    rot_y: f64,
+    rot_z: f64,
+    engine: i32,
+    repair: bool,
+    nonzero: bool,
+    on_progress: Option<js_sys::Function>,
+) -> MeshData {
     progress::with_reporter(on_progress, |reporter| {
-        boolean_gallery_mesh_impl(shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine, repair, nonzero, reporter)
+        boolean_gallery_mesh_impl(
+            shape_a, shape_b, op, offset_x, offset_y, offset_z, rot_x, rot_y, rot_z, engine,
+            repair, nonzero, reporter,
+        )
     })
 }
 
 #[allow(clippy::too_many_arguments)]
-fn boolean_gallery_mesh_impl(shape_a: i32, shape_b: i32, op: i32, offset_x: f64, offset_y: f64, offset_z: f64, rot_x: f64, rot_y: f64, rot_z: f64, engine: i32, repair: bool, nonzero: bool, reporter: Option<&manifold_rust::progress::ProgressReporter>) -> MeshData {
+fn boolean_gallery_mesh_impl(
+    shape_a: i32,
+    shape_b: i32,
+    op: i32,
+    offset_x: f64,
+    offset_y: f64,
+    offset_z: f64,
+    rot_x: f64,
+    rot_y: f64,
+    rot_z: f64,
+    engine: i32,
+    repair: bool,
+    nonzero: bool,
+    reporter: Option<&manifold_rust::progress::ProgressReporter>,
+) -> MeshData {
     // Distinct colors: shape A = blue (opaque), shape B = off-red (translucent)
     let mut a = make_shape(shape_a);
     let mut b = make_shape(shape_b);
@@ -520,7 +653,9 @@ fn boolean_gallery_mesh_impl(shape_a: i32, shape_b: i32, op: i32, offset_x: f64,
     let a = color_shape(&a, 0.27, 0.53, 0.80, 1.0);
     let b = color_shape(&b, 0.85, 0.25, 0.25, 0.6);
     // Rotate shape B about its offset center, then translate
-    let b = b.rotate(rot_x, rot_y, rot_z).translate(Vec3::new(offset_x, offset_y, offset_z));
+    let b = b
+        .rotate(rot_x, rot_y, rot_z)
+        .translate(Vec3::new(offset_x, offset_y, offset_z));
     let result = soup::op_with_engine_progress(&a, &b, op, engine, nonzero, reporter);
     mesh_data_from(&result)
 }
@@ -546,9 +681,22 @@ pub fn refined_shape_mesh(shape: i32, refine_level: i32) -> MeshData {
 // ---------------------------------------------------------------------------
 
 #[wasm_bindgen]
-pub fn extrude_twist_mesh(radius: f64, segments: i32, height: f64, twist_degrees: f64, n_divisions: i32, scale_top: f64) -> MeshData {
+pub fn extrude_twist_mesh(
+    radius: f64,
+    segments: i32,
+    height: f64,
+    twist_degrees: f64,
+    n_divisions: i32,
+    scale_top: f64,
+) -> MeshData {
     let cs = CrossSection::circle(radius, segments);
-    let m = Manifold::extrude(&cs.to_polygons(), height, n_divisions, twist_degrees, Vec2::new(scale_top, scale_top));
+    let m = Manifold::extrude(
+        &cs.to_polygons(),
+        height,
+        n_divisions,
+        twist_degrees,
+        Vec2::new(scale_top, scale_top),
+    );
     mesh_data_from(&m)
 }
 
@@ -577,8 +725,7 @@ pub fn revolve_partial_mesh(profile: i32, segments: i32, degrees: f64) -> MeshDa
 #[wasm_bindgen]
 pub fn test_mirror_union_mesh() -> MeshData {
     let a = Manifold::cube(Vec3::new(5.0, 5.0, 5.0), true);
-    let b = Manifold::cube(Vec3::new(5.0, 5.0, 5.0), true)
-        .translate(Vec3::new(2.5, 2.5, 2.5));
+    let b = Manifold::cube(Vec3::new(5.0, 5.0, 5.0), true).translate(Vec3::new(2.5, 2.5, 2.5));
     let b_mirrored = b.mirror(Vec3::new(1.0, 1.0, 0.0));
     let result = a.union(&b).union(&b_mirrored);
     mesh_data_from(&result)
@@ -591,7 +738,11 @@ pub fn test_split_by_plane_mesh(half: i32) -> MeshData {
         .translate(Vec3::new(0.0, 1.0, 0.0))
         .rotate(90.0, 0.0, 0.0);
     let (top, bottom) = cube.split_by_plane(Vec3::new(0.0, 0.0, 1.0), 1.0);
-    if half == 0 { mesh_data_from(&top) } else { mesh_data_from(&bottom) }
+    if half == 0 {
+        mesh_data_from(&top)
+    } else {
+        mesh_data_from(&bottom)
+    }
 }
 
 /// Vug (cavity): outer cube with inner cube subtracted
@@ -609,8 +760,9 @@ pub fn test_vug_mesh() -> MeshData {
 #[wasm_bindgen]
 pub fn test_warp_mesh() -> MeshData {
     let square = CrossSection::square(1.0);
-    let m = Manifold::extrude(&square.to_polygons(), 2.0, 10, 0.0, Vec2::new(1.0, 1.0))
-        .warp(|v| { v.x += v.z * v.z; });
+    let m = Manifold::extrude(&square.to_polygons(), 2.0, 10, 0.0, Vec2::new(1.0, 1.0)).warp(|v| {
+        v.x += v.z * v.z;
+    });
     mesh_data_from(&m)
 }
 
@@ -620,16 +772,16 @@ pub fn test_spiral_mesh() -> MeshData {
     fn spiral(rec: i32, r: f64, add: f64, d: f64) -> Manifold {
         let rot = 360.0 / (std::f64::consts::PI * r * 2.0) * d;
         let r_next = r + add / 360.0 * rot;
-        let cube = Manifold::cube(Vec3::splat(1.0), true)
-            .translate(Vec3::new(0.0, r, 0.0));
+        let cube = Manifold::cube(Vec3::splat(1.0), true).translate(Vec3::new(0.0, r, 0.0));
         if rec > 0 {
-            spiral(rec - 1, r_next, add, d).rotate(0.0, 0.0, rot).union(&cube)
+            spiral(rec - 1, r_next, add, d)
+                .rotate(0.0, 0.0, rot)
+                .union(&cube)
         } else {
             cube
         }
     }
-    let result = spiral(10, 25.0, 2.0, 2.0)
-        .scale(Vec3::splat(0.1)); // Scale down from ~50 units to ~5 for viewer
+    let result = spiral(10, 25.0, 2.0, 2.0).scale(Vec3::splat(0.1)); // Scale down from ~50 units to ~5 for viewer
     mesh_data_from(&result)
 }
 
@@ -646,10 +798,8 @@ pub fn test_sphere_diff_mesh() -> MeshData {
 #[wasm_bindgen]
 pub fn test_cubes_union_mesh() -> MeshData {
     let a = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true);
-    let b = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true)
-        .translate(Vec3::new(0.3, 0.3, 0.0));
-    let c = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true)
-        .translate(Vec3::new(-0.3, 0.3, 0.3));
+    let b = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true).translate(Vec3::new(0.3, 0.3, 0.0));
+    let c = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), true).translate(Vec3::new(-0.3, 0.3, 0.3));
     let result = a.union(&b).union(&c);
     mesh_data_from(&result)
 }
@@ -658,12 +808,9 @@ pub fn test_cubes_union_mesh() -> MeshData {
 #[wasm_bindgen]
 pub fn test_batch_subtract_mesh() -> MeshData {
     let slab = Manifold::cube(Vec3::new(10.0, 10.0, 1.0), true);
-    let c1 = Manifold::cylinder(2.0, 0.5, 0.5, 32)
-        .translate(Vec3::new(-3.0, -3.0, 0.0));
-    let c2 = Manifold::cylinder(2.0, 0.5, 0.5, 32)
-        .translate(Vec3::new(3.0, 3.0, 0.0));
-    let c3 = Manifold::cylinder(2.0, 0.5, 0.5, 32)
-        .translate(Vec3::new(0.0, 0.0, 0.0));
+    let c1 = Manifold::cylinder(2.0, 0.5, 0.5, 32).translate(Vec3::new(-3.0, -3.0, 0.0));
+    let c2 = Manifold::cylinder(2.0, 0.5, 0.5, 32).translate(Vec3::new(3.0, 3.0, 0.0));
+    let c3 = Manifold::cylinder(2.0, 0.5, 0.5, 32).translate(Vec3::new(0.0, 0.0, 0.0));
     let result = slab.difference(&c1).difference(&c2).difference(&c3);
     mesh_data_from(&result)
 }

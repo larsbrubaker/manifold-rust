@@ -77,7 +77,11 @@ impl Plane {
     }
 
     fn default() -> Self {
-        Self { n: Vec3::new(0.0, 0.0, 0.0), d: 0.0, sqr_n_length: 0.0 }
+        Self {
+            n: Vec3::new(0.0, 0.0, 0.0),
+            d: 0.0,
+            sqr_n_length: 0.0,
+        }
     }
 
     #[inline]

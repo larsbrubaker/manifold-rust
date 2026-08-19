@@ -47,10 +47,7 @@ fn test_convex_hull_single_point() {
 
 #[test]
 fn test_convex_hull_two_points() {
-    let hull = convex_hull(&[
-        Vec3::new(0.0, 0.0, 0.0),
-        Vec3::new(1.0, 0.0, 0.0),
-    ]);
+    let hull = convex_hull(&[Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 0.0, 0.0)]);
     let _ = hull.num_tri();
 }
 

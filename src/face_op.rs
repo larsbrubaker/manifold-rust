@@ -6,10 +6,10 @@
 
 use std::collections::BTreeMap;
 
-use crate::linalg::{Vec2, Vec3, cross, dot, normalize, length2};
+use crate::impl_mesh::ManifoldImpl;
+use crate::linalg::{cross, dot, length2, normalize, Vec2, Vec3};
 use crate::math;
 use crate::types::{next_halfedge, Halfedge, PolyVert, PolygonsIdx};
-use crate::impl_mesh::ManifoldImpl;
 
 // -----------------------------------------------------------------------
 // Proj2x3 — 2-row, 3-column projection matrix (drops one axis)
@@ -59,7 +59,10 @@ pub fn get_axis_aligned_projection(normal: Vec3) -> Proj2x3 {
     // If the dominant axis is negative, flip the first row so that the
     // projected winding order is consistent.
     if xyz_max < 0.0 {
-        Proj2x3 { row0: Vec3::new(-row0.x, -row0.y, -row0.z), row1 }
+        Proj2x3 {
+            row0: Vec3::new(-row0.x, -row0.y, -row0.z),
+            row1,
+        }
     } else {
         Proj2x3 { row0, row1 }
     }
@@ -105,12 +108,19 @@ pub fn set_normals_and_coplanar(mesh: &mut ManifoldImpl) {
             } else {
                 normal
             };
-            TriPriority { area2: length2(n), tri }
+            TriPriority {
+                area2: length2(n),
+                tri,
+            }
         })
         .collect();
 
     // Sort by area descending (largest triangles first → better coplanar seeds)
-    tri_priority.sort_by(|a, b| b.area2.partial_cmp(&a.area2).unwrap_or(std::cmp::Ordering::Equal));
+    tri_priority.sort_by(|a, b| {
+        b.area2
+            .partial_cmp(&a.area2)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
 
     // Flood-fill coplanar groups from each unassigned face
     let mut interior_halfedges: Vec<usize> = Vec::new();
@@ -256,7 +266,11 @@ pub fn calculate_vert_normals(mesh: &mut ManifoldImpl) {
         }
 
         let len = length2(normal).sqrt();
-        if len > 0.0 { normal / len } else { Vec3::new(0.0, 0.0, 0.0) }
+        if len > 0.0 {
+            normal / len
+        } else {
+            Vec3::new(0.0, 0.0, 0.0)
+        }
     });
     mesh.vert_normal = normals;
 }
@@ -360,10 +374,7 @@ pub fn get_barycentric(v: Vec3, tri_pos: [Vec3; 3], tolerance: f64) -> Vec3 {
 /// `start_halfedge_idx`).
 ///
 /// Mirrors `AssembleHalfedges` in `src/face_op.cpp`.
-pub fn assemble_halfedges(
-    halfedges: &[Halfedge],
-    start_halfedge_idx: i32,
-) -> Vec<Vec<i32>> {
+pub fn assemble_halfedges(halfedges: &[Halfedge], start_halfedge_idx: i32) -> Vec<Vec<i32>> {
     // Build multimap: start_vert → local edge index
     let mut vert_edge: BTreeMap<i32, Vec<usize>> = BTreeMap::new();
     for (i, he) in halfedges.iter().enumerate() {
@@ -385,7 +396,10 @@ pub fn assemble_halfedges(
             this_edge = start_edge;
             polys.push(Vec::new());
         }
-        polys.last_mut().unwrap().push(start_halfedge_idx + this_edge as i32);
+        polys
+            .last_mut()
+            .unwrap()
+            .push(start_halfedge_idx + this_edge as i32);
         let end_vert = halfedges[this_edge].end_vert;
         let edges = vert_edge.get_mut(&end_vert).expect("non-manifold edge");
         // Remove the first occurrence
@@ -493,8 +507,8 @@ pub fn reorder_halfedges(mesh: &mut ManifoldImpl) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::linalg::Mat3x4;
     use crate::impl_mesh::ManifoldImpl;
+    use crate::linalg::Mat3x4;
 
     #[test]
     fn test_get_axis_aligned_projection_z() {
@@ -544,7 +558,11 @@ mod tests {
         // Every face normal should be unit length
         for n in &m.face_normal {
             let len = length2(*n).sqrt();
-            assert!((len - 1.0).abs() < 1e-10, "face normal not unit: len={}", len);
+            assert!(
+                (len - 1.0).abs() < 1e-10,
+                "face normal not unit: len={}",
+                len
+            );
         }
         // Every vert normal should be nonzero (tetrahedron has no degenerate verts)
         for n in &m.vert_normal {
@@ -559,8 +577,7 @@ mod tests {
         set_normals_and_coplanar(&mut m);
         assert_eq!(m.face_normal.len(), m.num_tri());
         // Coplanar IDs should be assigned
-        let any_coplanar_id_set = m.mesh_relation.tri_ref.iter()
-            .any(|r| r.coplanar_id >= 0);
+        let any_coplanar_id_set = m.mesh_relation.tri_ref.iter().any(|r| r.coplanar_id >= 0);
         assert!(any_coplanar_id_set, "no coplanar IDs were set");
     }
 }
@@ -615,7 +632,8 @@ impl ManifoldImpl {
             for j in 0..3usize {
                 let next_j = (j + 1) % 3;
                 if self.vert_pos[self.halfedge[3 * start_tri + j].start_vert as usize].z > height
-                    && self.vert_pos[self.halfedge[3 * start_tri + next_j].start_vert as usize].z <= height
+                    && self.vert_pos[self.halfedge[3 * start_tri + next_j].start_vert as usize].z
+                        <= height
                 {
                     k = next_j;
                     break;
@@ -668,7 +686,8 @@ impl ManifoldImpl {
         // and the other points down (z-component of normals)
         let mut cusps: Vec<crate::types::Halfedge> = Vec::new();
         for edge in &self.halfedge {
-            let paired_face = self.halfedge[edge.paired_halfedge as usize].paired_halfedge as usize / 3;
+            let paired_face =
+                self.halfedge[edge.paired_halfedge as usize].paired_halfedge as usize / 3;
             let this_face = edge.paired_halfedge as usize / 3;
             if self.face_normal[paired_face].z >= 0.0 && self.face_normal[this_face].z < 0.0 {
                 cusps.push(*edge);

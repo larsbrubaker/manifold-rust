@@ -7,9 +7,12 @@ use std::collections::BTreeMap;
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{cross, dot, normalize, Vec3, Vec4};
 use crate::math;
-use crate::types::{next_halfedge, prev_halfedge, radians, K_PI, K_TWO_PI, Smoothness};
+use crate::types::{next_halfedge, prev_halfedge, radians, Smoothness, K_PI, K_TWO_PI};
 
-use super::{vec3_from_vec4, safe_normalize, angle_between, circular_tangent, equal_normals, wrap, collect_vertex_cycle};
+use super::{
+    angle_between, circular_tangent, collect_vertex_cycle, equal_normals, safe_normalize,
+    vec3_from_vec4, wrap,
+};
 
 impl ManifoldImpl {
     pub fn vert_halfedge(&self) -> Vec<i32> {
@@ -35,8 +38,14 @@ impl ManifoldImpl {
             let d = dot(self.face_normal[e / 3], self.face_normal[pair / 3]).clamp(-1.0, 1.0);
             let dihedral = math::acos(d);
             if dihedral > min_radians {
-                out.push(Smoothness { halfedge: e, smoothness: min_smoothness });
-                out.push(Smoothness { halfedge: pair, smoothness: min_smoothness });
+                out.push(Smoothness {
+                    halfedge: e,
+                    smoothness: min_smoothness,
+                });
+                out.push(Smoothness {
+                    halfedge: pair,
+                    smoothness: min_smoothness,
+                });
             }
         }
         out
@@ -47,7 +56,11 @@ impl ManifoldImpl {
             smoothness * self.halfedge_tangent[halfedge].x,
             smoothness * self.halfedge_tangent[halfedge].y,
             smoothness * self.halfedge_tangent[halfedge].z,
-            if smoothness == 0.0 { 0.0 } else { self.halfedge_tangent[halfedge].w },
+            if smoothness == 0.0 {
+                0.0
+            } else {
+                self.halfedge_tangent[halfedge].w
+            },
         );
     }
 
@@ -67,8 +80,10 @@ impl ManifoldImpl {
                 - self.vert_pos[self.halfedge[halfedge].start_vert as usize];
 
             if flat[0] && flat[1] {
-                self.halfedge_tangent[halfedge] = Vec4::new(edge_vec.x / 3.0, edge_vec.y / 3.0, edge_vec.z / 3.0, 1.0);
-                self.halfedge_tangent[pair] = Vec4::new(-edge_vec.x / 3.0, -edge_vec.y / 3.0, -edge_vec.z / 3.0, 1.0);
+                self.halfedge_tangent[halfedge] =
+                    Vec4::new(edge_vec.x / 3.0, edge_vec.y / 3.0, edge_vec.z / 3.0, 1.0);
+                self.halfedge_tangent[pair] =
+                    Vec4::new(-edge_vec.x / 3.0, -edge_vec.y / 3.0, -edge_vec.z / 3.0, 1.0);
             } else if flat[0] {
                 let other_v = vec3_from_vec4(other);
                 let v = (edge_vec + other_v) / 2.0;
@@ -109,15 +124,17 @@ impl ManifoldImpl {
                 if guard > self.halfedge.len() + 1 {
                     break;
                 }
-                current = crate::impl_mesh::next_halfedge(self.halfedge[current].paired_halfedge) as usize;
+                current = crate::impl_mesh::next_halfedge(self.halfedge[current].paired_halfedge)
+                    as usize;
                 if self.is_marked_inside_quad(current) {
                     if current == start {
                         break;
                     }
                     continue;
                 }
-                let this_edge_vec =
-                    safe_normalize(self.vert_pos[self.halfedge[current].end_vert as usize] - center);
+                let this_edge_vec = safe_normalize(
+                    self.vert_pos[self.halfedge[current].end_vert as usize] - center,
+                );
                 let this_tangent = safe_normalize(vec3_from_vec4(self.halfedge_tangent[current]));
                 normal = normal + cross(this_tangent, last_tangent);
 
@@ -165,7 +182,8 @@ impl ManifoldImpl {
                 if guard > self.halfedge.len() + 1 {
                     break;
                 }
-                current = crate::impl_mesh::next_halfedge(self.halfedge[current].paired_halfedge) as usize;
+                current = crate::impl_mesh::next_halfedge(self.halfedge[current].paired_halfedge)
+                    as usize;
                 // Per #1671: stop before processing a *different* fixed halfedge
                 // (the terminating fixed edge is no longer rotated here).
                 if current != start && fixed_halfedges[current] {
@@ -181,7 +199,9 @@ impl ManifoldImpl {
                 let last_angle = if i > 0 { desired_angle[i - 1] } else { 0.0 };
                 if desired_angle[i] - last_angle > K_PI {
                     desired_angle[i] = last_angle + K_PI;
-                } else if i + 1 < desired_angle.len() && scale * desired_angle[i + 1] - desired_angle[i] > K_PI {
+                } else if i + 1 < desired_angle.len()
+                    && scale * desired_angle[i + 1] - desired_angle[i] > K_PI
+                {
                     desired_angle[i] = scale * desired_angle[i + 1] - K_PI;
                 }
 
@@ -269,11 +289,17 @@ impl ManifoldImpl {
                             start_halfedge = -2;
                         }
                     }
-                    tangent[halfedge] = Vec4::new(last_normal.x, last_normal.y, last_normal.z, K_MISSING_NORMAL);
+                    tangent[halfedge] = Vec4::new(
+                        last_normal.x,
+                        last_normal.y,
+                        last_normal.z,
+                        K_MISSING_NORMAL,
+                    );
                 }
 
                 if self.is_inside_quad(halfedge) {
-                    tangent[halfedge] = Vec4::new(last_normal.x, last_normal.y, last_normal.z, K_INSIDE_QUAD);
+                    tangent[halfedge] =
+                        Vec4::new(last_normal.x, last_normal.y, last_normal.z, K_INSIDE_QUAD);
                 }
 
                 if tangent[halfedge].w < 0.0 {
@@ -321,7 +347,8 @@ impl ManifoldImpl {
                 let mut current = start;
                 loop {
                     if tangent[current].w == K_MISSING_NORMAL {
-                        let stored = Vec3::new(tangent[current].x, tangent[current].y, tangent[current].z);
+                        let stored =
+                            Vec3::new(tangent[current].x, tangent[current].y, tangent[current].z);
                         let next_norm = if stored == Vec3::new(0.0, 0.0, 0.0) {
                             last_normal
                         } else {
@@ -426,7 +453,10 @@ impl ManifoldImpl {
             *tan = if self.is_inside_quad(edge_idx) {
                 Vec4::new(0.0, 0.0, 0.0, -1.0)
             } else {
-                self.tangent_from_normal(vert_normal[self.halfedge[edge_idx].start_vert as usize], edge_idx)
+                self.tangent_from_normal(
+                    vert_normal[self.halfedge[edge_idx].start_vert as usize],
+                    edge_idx,
+                )
             };
         }
         self.halfedge_tangent = tangent;
@@ -440,7 +470,10 @@ impl ManifoldImpl {
                 if !tri_is_flat_face[tri2]
                     || !self.mesh_relation.tri_ref[tri].same_face(&self.mesh_relation.tri_ref[tri2])
                 {
-                    sharpened_edges.push(Smoothness { halfedge: 3 * tri + j, smoothness: 0.0 });
+                    sharpened_edges.push(Smoothness {
+                        halfedge: 3 * tri + j,
+                        smoothness: 0.0,
+                    });
                 }
             }
         }
@@ -454,13 +487,24 @@ impl ManifoldImpl {
             let forward = self.halfedge[edge.halfedge].is_forward();
             let pair = self.halfedge[edge.halfedge].paired_halfedge as usize;
             let idx = if forward { edge.halfedge } else { pair };
-            edges.entry(idx)
+            edges
+                .entry(idx)
                 .and_modify(|existing| {
-                    let e = if forward { &mut existing.0 } else { &mut existing.1 };
+                    let e = if forward {
+                        &mut existing.0
+                    } else {
+                        &mut existing.1
+                    };
                     e.smoothness = e.smoothness.min(edge.smoothness);
                 })
                 .or_insert_with(|| {
-                    let mut pair_entry = (edge, Smoothness { halfedge: pair, smoothness: 1.0 });
+                    let mut pair_entry = (
+                        edge,
+                        Smoothness {
+                            halfedge: pair,
+                            smoothness: 1.0,
+                        },
+                    );
                     if !forward {
                         pair_entry = (pair_entry.1, pair_entry.0);
                     }
@@ -496,13 +540,19 @@ impl ManifoldImpl {
                 let second = vert[1].0.halfedge;
                 fixed_halfedge[first] = true;
                 fixed_halfedge[second] = true;
-                let new_tangent =
-                    normalize(vec3_from_vec4(self.halfedge_tangent[first]) - vec3_from_vec4(self.halfedge_tangent[second]));
+                let new_tangent = normalize(
+                    vec3_from_vec4(self.halfedge_tangent[first])
+                        - vec3_from_vec4(self.halfedge_tangent[second]),
+                );
                 let pos = self.vert_pos[self.halfedge[first].start_vert as usize];
-                self.halfedge_tangent[first] =
-                    circular_tangent(new_tangent, self.vert_pos[self.halfedge[first].end_vert as usize] - pos);
-                self.halfedge_tangent[second] =
-                    circular_tangent(-new_tangent, self.vert_pos[self.halfedge[second].end_vert as usize] - pos);
+                self.halfedge_tangent[first] = circular_tangent(
+                    new_tangent,
+                    self.vert_pos[self.halfedge[first].end_vert as usize] - pos,
+                );
+                self.halfedge_tangent[second] = circular_tangent(
+                    -new_tangent,
+                    self.vert_pos[self.halfedge[second].end_vert as usize] - pos,
+                );
 
                 let mut smoothness = (vert[0].1.smoothness + vert[1].0.smoothness) / 2.0;
                 for current in collect_vertex_cycle(self, first) {

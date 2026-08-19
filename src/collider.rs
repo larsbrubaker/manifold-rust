@@ -93,7 +93,6 @@ impl Collider {
         }
     }
 
-
     /// Build radix tree from sorted Morton codes (matches C++ CreateRadixTree).
     /// Only fills in topology (internal_children, node_parent); boxes are
     /// populated afterwards by update_boxes.
@@ -126,7 +125,13 @@ impl Collider {
         // RangeEnd: find the other end of the range for internal node i
         let range_end = |i: i32| -> i32 {
             let dir_val = prefix_length(i, i + 1) - prefix_length(i, i - 1);
-            let dir = if dir_val > 0 { 1i32 } else if dir_val < 0 { -1i32 } else { -1i32 };
+            let dir = if dir_val > 0 {
+                1i32
+            } else if dir_val < 0 {
+                -1i32
+            } else {
+                -1i32
+            };
             let common_prefix = prefix_length(i, i - dir);
             let mut max_length = K_INITIAL_LENGTH;
             while prefix_length(i, i + dir * max_length) > common_prefix {
@@ -157,7 +162,9 @@ impl Collider {
                         split = new_split;
                     }
                 }
-                if step <= 1 { break; }
+                if step <= 1 {
+                    break;
+                }
             }
             split
         };
@@ -259,12 +266,8 @@ impl Collider {
     /// BVH-accelerated collision query with function-generated query boxes.
     /// For each query index 0..n, calls query_box_fn(i) to get the query AABB,
     /// then traverses the BVH to find overlapping leaves.
-    pub fn collisions_fn<F, R>(
-        &self,
-        query_box_fn: F,
-        n: usize,
-        mut record: R,
-    ) where
+    pub fn collisions_fn<F, R>(&self, query_box_fn: F, n: usize, mut record: R)
+    where
         F: Fn(usize) -> BBox,
         R: FnMut(usize, usize),
     {
@@ -301,12 +304,8 @@ impl Collider {
     }
 
     /// Point-based collision query using BVH.
-    pub fn collisions_point<F, R>(
-        &self,
-        point_fn: F,
-        n: usize,
-        mut record: R,
-    ) where
+    pub fn collisions_point<F, R>(&self, point_fn: F, n: usize, mut record: R)
+    where
         F: Fn(usize) -> Vec3,
         R: FnMut(usize, usize),
     {
@@ -336,7 +335,9 @@ impl Collider {
         loop {
             let internal = node_to_internal(node);
             if internal < 0 || internal as usize >= self.internal_children.len() {
-                if top < 0 { break; }
+                if top < 0 {
+                    break;
+                }
                 node = stack[top as usize];
                 top -= 1;
                 continue;
@@ -429,7 +430,6 @@ impl Collider {
         }
         true
     }
-
 }
 
 pub fn edge_edge_dist(p: Vec3, a: Vec3, q: Vec3, b: Vec3) -> (Vec3, Vec3) {
@@ -450,7 +450,11 @@ pub fn edge_edge_dist(p: Vec3, a: Vec3, q: Vec3, b: Vec3) -> (Vec3, Vec3) {
     let u = if b_dot_b != 0.0 {
         let u = (t * a_dot_b - b_dot_t) / b_dot_b;
         if u < 0.0 {
-            t = if a_dot_a != 0.0 { (a_dot_t / a_dot_a).clamp(0.0, 1.0) } else { 0.0 };
+            t = if a_dot_a != 0.0 {
+                (a_dot_t / a_dot_a).clamp(0.0, 1.0)
+            } else {
+                0.0
+            };
             0.0
         } else if u > 1.0 {
             t = if a_dot_a != 0.0 {
@@ -463,7 +467,11 @@ pub fn edge_edge_dist(p: Vec3, a: Vec3, q: Vec3, b: Vec3) -> (Vec3, Vec3) {
             u
         }
     } else {
-        t = if a_dot_a != 0.0 { (a_dot_t / a_dot_a).clamp(0.0, 1.0) } else { 0.0 };
+        t = if a_dot_a != 0.0 {
+            (a_dot_t / a_dot_a).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         0.0
     };
 
@@ -487,12 +495,16 @@ pub fn distance_triangle_triangle_squared(p: [Vec3; 3], q: [Vec3; 3]) -> f64 {
                 mindd = dd;
 
                 let mut id = i + 2;
-                if id >= 3 { id -= 3; }
+                if id >= 3 {
+                    id -= 3;
+                }
                 let z = p[id] - cp;
                 let mut a = dot(z, v);
 
                 id = j + 2;
-                if id >= 3 { id -= 3; }
+                if id >= 3 {
+                    id -= 3;
+                }
                 let z = q[id] - cq;
                 let mut b = dot(z, v);
 
@@ -500,7 +512,11 @@ pub fn distance_triangle_triangle_squared(p: [Vec3; 3], q: [Vec3; 3]) -> f64 {
                     return dot(v, v);
                 }
 
-                if a <= 0.0 { a = 0.0; } else if b > 0.0 { b = 0.0; }
+                if a <= 0.0 {
+                    a = 0.0;
+                } else if b > 0.0 {
+                    b = 0.0;
+                }
 
                 if mindd - a + b > 0.0 {
                     shown_disjoint = true;
@@ -512,15 +528,23 @@ pub fn distance_triangle_triangle_squared(p: [Vec3; 3], q: [Vec3; 3]) -> f64 {
     let sn = cross(sv[0], sv[1]);
     let snl = dot(sn, sn);
     if snl > 1e-15 {
-        let tp = Vec3::new(dot(p[0] - q[0], sn), dot(p[0] - q[1], sn), dot(p[0] - q[2], sn));
+        let tp = Vec3::new(
+            dot(p[0] - q[0], sn),
+            dot(p[0] - q[1], sn),
+            dot(p[0] - q[2], sn),
+        );
         let mut index = None;
         if tp.x > 0.0 && tp.y > 0.0 && tp.z > 0.0 {
             let mut idx = if tp.x < tp.y { 0 } else { 1 };
-            if tp.z < tp[idx] { idx = 2; }
+            if tp.z < tp[idx] {
+                idx = 2;
+            }
             index = Some(idx);
         } else if tp.x < 0.0 && tp.y < 0.0 && tp.z < 0.0 {
             let mut idx = if tp.x > tp.y { 0 } else { 1 };
-            if tp.z > tp[idx] { idx = 2; }
+            if tp.z > tp[idx] {
+                idx = 2;
+            }
             index = Some(idx);
         }
 
@@ -548,15 +572,23 @@ pub fn distance_triangle_triangle_squared(p: [Vec3; 3], q: [Vec3; 3]) -> f64 {
     let tn = cross(tv[0], tv[1]);
     let tnl = dot(tn, tn);
     if tnl > 1e-15 {
-        let sp = Vec3::new(dot(q[0] - p[0], tn), dot(q[0] - p[1], tn), dot(q[0] - p[2], tn));
+        let sp = Vec3::new(
+            dot(q[0] - p[0], tn),
+            dot(q[0] - p[1], tn),
+            dot(q[0] - p[2], tn),
+        );
         let mut index = None;
         if sp.x > 0.0 && sp.y > 0.0 && sp.z > 0.0 {
             let mut idx = if sp.x < sp.y { 0 } else { 1 };
-            if sp.z < sp[idx] { idx = 2; }
+            if sp.z < sp[idx] {
+                idx = 2;
+            }
             index = Some(idx);
         } else if sp.x < 0.0 && sp.y < 0.0 && sp.z < 0.0 {
             let mut idx = if sp.x > sp.y { 0 } else { 1 };
-            if sp.z > sp[idx] { idx = 2; }
+            if sp.z > sp[idx] {
+                idx = 2;
+            }
             index = Some(idx);
         }
 
@@ -581,14 +613,14 @@ pub fn distance_triangle_triangle_squared(p: [Vec3; 3], q: [Vec3; 3]) -> f64 {
         }
     }
 
-    if shown_disjoint { mindd } else { 0.0 }
+    if shown_disjoint {
+        mindd
+    } else {
+        0.0
+    }
 }
 
-pub fn ray_triangle_intersection(
-    origin: Vec3,
-    direction: Vec3,
-    tri: [Vec3; 3],
-) -> Option<f64> {
+pub fn ray_triangle_intersection(origin: Vec3, direction: Vec3, tri: [Vec3; 3]) -> Option<f64> {
     let eps = 1e-9;
     let edge1 = tri[1] - tri[0];
     let edge2 = tri[2] - tri[0];
@@ -609,7 +641,11 @@ pub fn ray_triangle_intersection(
         return None;
     }
     let t = f * dot(edge2, q);
-    if t > eps { Some(t) } else { None }
+    if t > eps {
+        Some(t)
+    } else {
+        None
+    }
 }
 
 impl ManifoldImpl {
@@ -715,7 +751,10 @@ mod tests {
         collider.collisions_with_boxes(&boxes, true, |a, b| hits.push((a, b)));
         assert!(hits.is_empty());
 
-        let queries = vec![BBox::from_points(Vec3::new(0.5, 0.5, 0.5), Vec3::new(2.5, 2.5, 2.5))];
+        let queries = vec![BBox::from_points(
+            Vec3::new(0.5, 0.5, 0.5),
+            Vec3::new(2.5, 2.5, 2.5),
+        )];
         collider.collisions_with_boxes(&queries, false, |a, b| hits.push((a, b)));
         assert_eq!(hits, vec![(0, 0), (0, 1)]);
     }
@@ -727,7 +766,8 @@ mod tests {
             Vec3::new(1.0, 0.0, 0.0),
             Vec3::new(0.0, 1.0, 0.0),
         ];
-        let hit = ray_triangle_intersection(Vec3::new(0.25, 0.25, -1.0), Vec3::new(0.0, 0.0, 1.0), tri);
+        let hit =
+            ray_triangle_intersection(Vec3::new(0.25, 0.25, -1.0), Vec3::new(0.0, 0.0, 1.0), tri);
         assert!(hit.is_some());
     }
 
@@ -755,7 +795,9 @@ mod tests {
     #[test]
     fn test_min_gap_between_cubes() {
         let a = ManifoldImpl::cube(&Mat3x4::identity());
-        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(2.0, 0.0, 0.0))));
+        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
+            2.0, 0.0, 0.0,
+        ))));
         let gap = a.min_gap(&b, 5.0);
         assert!((gap - 1.0).abs() < 1e-8, "gap = {}", gap);
     }

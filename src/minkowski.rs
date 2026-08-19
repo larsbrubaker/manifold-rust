@@ -86,20 +86,17 @@ pub fn minkowski(a: &ManifoldImpl, b: &ManifoldImpl, inset: bool) -> ManifoldImp
         let mut offset = 0;
         while offset < num_tri {
             let num_iter = (num_tri - offset).min(BATCH_SIZE);
-            let new_hulls: Vec<ManifoldImpl> =
-                crate::par::maybe_par_map(num_iter, 8, |iter| {
-                    let tri = offset + iter;
-                    let mut simple_hull: Vec<Vec3> =
-                        Vec::with_capacity(3 * b_impl.vert_pos.len());
-                    for i in 0..3 {
-                        let a_vert =
-                            a_impl.vert_pos[a_impl.halfedge[tri * 3 + i].start_vert as usize];
-                        for &b_vert in &b_impl.vert_pos {
-                            simple_hull.push(a_vert + b_vert);
-                        }
+            let new_hulls: Vec<ManifoldImpl> = crate::par::maybe_par_map(num_iter, 8, |iter| {
+                let tri = offset + iter;
+                let mut simple_hull: Vec<Vec3> = Vec::with_capacity(3 * b_impl.vert_pos.len());
+                for i in 0..3 {
+                    let a_vert = a_impl.vert_pos[a_impl.halfedge[tri * 3 + i].start_vert as usize];
+                    for &b_vert in &b_impl.vert_pos {
+                        simple_hull.push(a_vert + b_vert);
                     }
-                    quickhull::convex_hull(&simple_hull)
-                });
+                }
+                quickhull::convex_hull(&simple_hull)
+            });
 
             composed_hulls.push(batch_boolean_impls(&new_hulls, OpType::Add));
             offset += BATCH_SIZE;
@@ -133,15 +130,19 @@ pub fn minkowski(a: &ManifoldImpl, b: &ManifoldImpl, inset: bool) -> ManifoldImp
                     }
 
                     let b1 = b_impl.vert_pos[b_impl.halfedge[b_face * 3].start_vert as usize];
-                    let b2 =
-                        b_impl.vert_pos[b_impl.halfedge[b_face * 3 + 1].start_vert as usize];
-                    let b3 =
-                        b_impl.vert_pos[b_impl.halfedge[b_face * 3 + 2].start_vert as usize];
+                    let b2 = b_impl.vert_pos[b_impl.halfedge[b_face * 3 + 1].start_vert as usize];
+                    let b3 = b_impl.vert_pos[b_impl.halfedge[b_face * 3 + 2].start_vert as usize];
 
                     Some(quickhull::convex_hull(&[
-                        a1 + b1, a1 + b2, a1 + b3,
-                        a2 + b1, a2 + b2, a2 + b3,
-                        a3 + b1, a3 + b2, a3 + b3,
+                        a1 + b1,
+                        a1 + b2,
+                        a1 + b3,
+                        a2 + b1,
+                        a2 + b2,
+                        a2 + b3,
+                        a3 + b1,
+                        a3 + b2,
+                        a3 + b3,
                     ]))
                 });
             let mut face_hulls: Vec<ManifoldImpl> = Vec::new();
@@ -214,7 +215,10 @@ mod tests {
         let a = ManifoldImpl::cube(&Mat3x4::identity());
         let b = ManifoldImpl::cube(&Mat3x4::identity());
         let sum = minkowski_sum(&a, &b);
-        assert!(sum.num_tri() > 0, "Minkowski sum should produce non-empty mesh");
+        assert!(
+            sum.num_tri() > 0,
+            "Minkowski sum should produce non-empty mesh"
+        );
         // Two unit cubes: Minkowski sum should be a 2×2×2 cube
         let vol = sum.get_property(crate::properties::Property::Volume).abs();
         assert!(

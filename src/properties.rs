@@ -56,9 +56,7 @@ impl ManifoldImpl {
                     let cross_p = cross(v1 - v0, v2 - v0);
                     dot(cross_p, v0) / 6.0
                 }
-                Property::SurfaceArea => {
-                    length(cross(v1 - v0, v2 - v0)) / 2.0
-                }
+                Property::SurfaceArea => length(cross(v1 - v0, v2 - v0)) / 2.0,
             };
 
             let t = value + value1;
@@ -126,9 +124,8 @@ impl ManifoldImpl {
             let projection = get_axis_aligned_projection(self.face_normal[face]);
             let mut v = [crate::linalg::Vec2::new(0.0, 0.0); 3];
             for i in 0..3 {
-                v[i] = projection.apply(
-                    self.vert_pos[self.halfedge[3 * face + i].start_vert as usize],
-                );
+                v[i] = projection
+                    .apply(self.vert_pos[self.halfedge[3 * face + i].start_vert as usize]);
             }
 
             // Per #1671: degeneracy is judged within tolerance_, not epsilon_.
@@ -216,8 +213,8 @@ impl ManifoldImpl {
             let phi0 = math::acos(-dot(edge_dirs[2], edge_dirs[0]));
             let phi1 = math::acos(-dot(edge_dirs[0], edge_dirs[1]));
             let phi2 = std::f64::consts::PI - phi0 - phi1;
-            let area3 = edge_length[0] * edge_length[1] * length(cross(edge_dirs[0], edge_dirs[1]))
-                / 6.0;
+            let area3 =
+                edge_length[0] * edge_length[1] * length(cross(edge_dirs[0], edge_dirs[1])) / 6.0;
 
             let phi = [phi0, phi1, phi2];
             for i in 0..3 {
@@ -235,8 +232,16 @@ impl ManifoldImpl {
 
         let old_num_prop = self.num_prop;
         let num_prop = old_num_prop
-            .max(if gaussian_idx >= 0 { gaussian_idx as usize + 1 } else { 0 })
-            .max(if mean_idx >= 0 { mean_idx as usize + 1 } else { 0 });
+            .max(if gaussian_idx >= 0 {
+                gaussian_idx as usize + 1
+            } else {
+                0
+            })
+            .max(if mean_idx >= 0 {
+                mean_idx as usize + 1
+            } else {
+                0
+            });
 
         let old_properties = self.properties.clone();
         let num_prop_vert = self.num_prop_vert();

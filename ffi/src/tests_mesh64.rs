@@ -16,7 +16,7 @@
 // way a C caller does: raw pointers, manual destroy.
 
 use crate::meshgl64::*;
-use crate::tests::{cube_mesh, ffi_cube, export, read_array};
+use crate::tests::{cube_mesh, export, ffi_cube, read_array};
 use crate::*;
 
 /// The f32 cube fixture widened to the f64/u64 element types the 64-bit entry
@@ -95,15 +95,24 @@ fn f64_and_f32_paths_describe_the_same_solid() {
     assert_eq!(m64.num_prop, m32.num_prop);
     assert_eq!(
         m64.tri_verts,
-        m32.tri_verts.iter().map(|&v| u64::from(v)).collect::<Vec<u64>>()
+        m32.tri_verts
+            .iter()
+            .map(|&v| u64::from(v))
+            .collect::<Vec<u64>>()
     );
     assert_eq!(
         m64.face_id,
-        m32.face_id.iter().map(|&v| u64::from(v)).collect::<Vec<u64>>()
+        m32.face_id
+            .iter()
+            .map(|&v| u64::from(v))
+            .collect::<Vec<u64>>()
     );
     assert_eq!(
         m64.vert_properties,
-        m32.vert_properties.iter().map(|&v| f64::from(v)).collect::<Vec<f64>>()
+        m32.vert_properties
+            .iter()
+            .map(|&v| f64::from(v))
+            .collect::<Vec<f64>>()
     );
 
     unsafe {
@@ -118,7 +127,10 @@ fn f64_coordinates_survive_the_ffi_boundary_losslessly() {
     // bit-identical through from_mesh64 → export. This is the FFI-level
     // tripwire for any regression back to the old narrow-through-f32 import.
     let third = 1.0_f64 / 3.0;
-    assert_ne!(third as f32 as f64, third, "premise: 1/3 is not f32-representable");
+    assert_ne!(
+        third as f32 as f64, third,
+        "premise: 1/3 is not f32-representable"
+    );
 
     let (mut verts, tris) = cube_mesh64([0.0, 0.0, 0.0], 1.0);
     for v in verts.iter_mut() {
@@ -170,7 +182,11 @@ fn error_status_manifold_exports_as_an_empty_f64_mesh() {
         manifold_rs_from_mesh64(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3)
     };
     assert!(!bad.is_null(), "a validation failure still yields a handle");
-    assert_eq!(unsafe { manifold_rs_status(bad) }, 2, "expected NotManifold");
+    assert_eq!(
+        unsafe { manifold_rs_status(bad) },
+        2,
+        "expected NotManifold"
+    );
 
     let mesh = export64(bad);
     assert!(mesh.tri_verts.is_empty());
@@ -189,20 +205,32 @@ fn invalid_from_mesh64_arguments_return_null() {
                 .is_null()
         );
         // vert_properties not a whole number of vertices.
-        assert!(
-            manifold_rs_from_mesh64(verts.as_ptr(), verts.len() - 1, tris.as_ptr(), tris.len(), 3)
-                .is_null()
-        );
+        assert!(manifold_rs_from_mesh64(
+            verts.as_ptr(),
+            verts.len() - 1,
+            tris.as_ptr(),
+            tris.len(),
+            3
+        )
+        .is_null());
         // tri_verts not a whole number of triangles.
-        assert!(
-            manifold_rs_from_mesh64(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len() - 1, 3)
-                .is_null()
-        );
+        assert!(manifold_rs_from_mesh64(
+            verts.as_ptr(),
+            verts.len(),
+            tris.as_ptr(),
+            tris.len() - 1,
+            3
+        )
+        .is_null());
         // Null array with a non-zero length.
-        assert!(
-            manifold_rs_from_mesh64(std::ptr::null(), verts.len(), tris.as_ptr(), tris.len(), 3)
-                .is_null()
-        );
+        assert!(manifold_rs_from_mesh64(
+            std::ptr::null(),
+            verts.len(),
+            tris.as_ptr(),
+            tris.len(),
+            3
+        )
+        .is_null());
         // A length no allocation could ever have — a negative int widened to
         // size_t. usize::MAX divides by both 3 and num_prop, so it reaches the
         // isize::MAX guard rather than the earlier checks.
@@ -228,7 +256,10 @@ fn tri_index_beyond_u32_is_rejected_rather_than_wrapped() {
     let handle = unsafe {
         manifold_rs_from_mesh64(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3)
     };
-    assert!(handle.is_null(), "an index that wraps to 0 must be rejected");
+    assert!(
+        handle.is_null(),
+        "an index that wraps to 0 must be rejected"
+    );
 
     let mut buf = [0u8; 256];
     let len = unsafe { manifold_rs_last_error(buf.as_mut_ptr(), buf.len()) };
@@ -245,7 +276,10 @@ fn tri_index_beyond_u32_is_rejected_rather_than_wrapped() {
     let handle = unsafe {
         manifold_rs_from_mesh64(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3)
     };
-    assert!(!handle.is_null(), "u32::MAX is representable, so not a NULL case");
+    assert!(
+        !handle.is_null(),
+        "u32::MAX is representable, so not a NULL case"
+    );
     assert_ne!(
         unsafe { manifold_rs_status(handle) },
         0,

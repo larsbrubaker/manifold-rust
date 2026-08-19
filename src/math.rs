@@ -124,8 +124,7 @@ fn tan_kernel(mut x: f64, mut y: f64, odd: i32) -> f64 {
     let z = x * x;
     let w = z * z;
     let r = T[1] + w * (T[3] + w * (T[5] + w * (T[7] + w * (T[9] + w * T[11]))));
-    let v =
-        z * (T[2] + w * (T[4] + w * (T[6] + w * (T[8] + w * (T[10] + w * T[12])))));
+    let v = z * (T[2] + w * (T[4] + w * (T[6] + w * (T[8] + w * (T[10] + w * T[12])))));
     let s = z * x;
     let rr = y + z * (s * (r + v) + y) + s * T[0];
     let ww = x + rr;
@@ -527,8 +526,7 @@ pub fn atan(x: f64) -> f64 {
     if id < 0 {
         return x - x * (s1 + s2);
     }
-    let zz =
-        ATANHI[id as usize] - (x * (s1 + s2) - ATANLO[id as usize] - x);
+    let zz = ATANHI[id as usize] - (x * (s1 + s2) - ATANLO[id as usize] - x);
     if sign != 0 {
         -zz
     } else {
@@ -673,9 +671,7 @@ mod tests {
     /// They should agree to within a few ULP for normal inputs.
     #[test]
     fn test_agreement_with_std() {
-        let test_values: Vec<f64> = (-100..=100)
-            .map(|i| i as f64 * 0.1)
-            .collect();
+        let test_values: Vec<f64> = (-100..=100).map(|i| i as f64 * 0.1).collect();
 
         for &v in &test_values {
             let our_sin = sin(v);
@@ -719,9 +715,7 @@ mod tests {
 
     #[test]
     fn test_atan_agreement_with_std() {
-        let test_values: Vec<f64> = (-100..=100)
-            .map(|i| i as f64 * 0.1)
-            .collect();
+        let test_values: Vec<f64> = (-100..=100).map(|i| i as f64 * 0.1).collect();
         for &v in &test_values {
             let our = atan(v);
             let std_val = v.atan();

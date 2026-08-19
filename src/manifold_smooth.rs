@@ -8,17 +8,21 @@
 // methods of C++ Manifold (smoothing.cpp, subdivision.cpp via
 // Impl::Subdivide, interp_tri for tangent interpolation).
 
+use super::Manifold;
 use crate::linalg::Vec3;
 use crate::types::MeshGL;
-use super::Manifold;
 
 impl Manifold {
     /// Port of C++ Manifold::CalculateNormals()
     /// Fills in vertex properties for normals. Edges sharper than
     /// min_sharp_angle (degrees) get separate normals on each side.
     pub fn calculate_normals(&self, normal_idx: usize, min_sharp_angle: f64) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
-        if self.is_empty() { return self.clone(); }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
+        if self.is_empty() {
+            return self.clone();
+        }
         let mut out = self.imp.clone();
         out.set_normals(normal_idx as i32, min_sharp_angle);
         // Per #1718: record per-meshID hasNormals so get_mesh_gl(-1) can
@@ -62,8 +66,10 @@ impl Manifold {
         for i in 0..num_tri_impl {
             if i < m.imp.mesh_relation.tri_ref.len() {
                 let face_id = m.imp.mesh_relation.tri_ref[i].face_id;
-                if mesh_gl.face_id.len() == num_tri && face_id >= 0 && (face_id as usize) < num_tri {
-                    m.imp.mesh_relation.tri_ref[i].face_id = mesh_gl.face_id[face_id as usize] as i32;
+                if mesh_gl.face_id.len() == num_tri && face_id >= 0 && (face_id as usize) < num_tri
+                {
+                    m.imp.mesh_relation.tri_ref[i].face_id =
+                        mesh_gl.face_id[face_id as usize] as i32;
                 } else {
                     m.imp.mesh_relation.tri_ref[i].face_id = -1;
                 }
@@ -74,8 +80,12 @@ impl Manifold {
     }
 
     pub fn smooth_out(&self, min_sharp_angle: f64, min_smoothness: f64) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
-        if self.is_empty() { return self.clone(); }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
+        if self.is_empty() {
+            return self.clone();
+        }
         let mut out = self.imp.clone();
         // Per C++ #1724 (Fix CalculateNormals): SmoothOut is now self-consistent —
         // it always derives tangents from SharpenEdges, regardless of
@@ -87,8 +97,12 @@ impl Manifold {
     }
 
     pub fn smooth_by_normals(&self, normal_idx: usize) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
-        if self.is_empty() { return self.clone(); }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
+        if self.is_empty() {
+            return self.clone();
+        }
         let mut out = self.imp.clone();
         out.create_tangents_from_normals(normal_idx);
         Self::from_impl(out)
@@ -97,7 +111,9 @@ impl Manifold {
     /// Port of C++ Manifold::Refine(int n)
     /// Splits every edge into n pieces, sub-triangulating each face.
     pub fn refine(&self, n: i32) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
         if n <= 1 || self.imp.is_empty() {
             return self.clone();
         }
@@ -127,7 +143,9 @@ impl Manifold {
 
     /// Port of C++ Manifold::RefineToLength(double length)
     pub fn refine_to_length(&self, length: f64) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
         let length = length.abs();
         if length == 0.0 || self.imp.is_empty() {
             return self.clone();
@@ -141,9 +159,9 @@ impl Manifold {
         let had_tangents = out.halfedge_tangent.len() == out.halfedge.len();
         let vert_bary = out.subdivide(
             &|edge_vec, _t0, _t1| {
-                let edge_len = (edge_vec.x * edge_vec.x + edge_vec.y * edge_vec.y
-                    + edge_vec.z * edge_vec.z)
-                    .sqrt();
+                let edge_len =
+                    (edge_vec.x * edge_vec.x + edge_vec.y * edge_vec.y + edge_vec.z * edge_vec.z)
+                        .sqrt();
                 // C++: static_cast<int>(la::length(edge) / length) — truncation
                 (edge_len / length) as i32
             },
@@ -167,7 +185,9 @@ impl Manifold {
 
     /// Port of C++ Manifold::RefineToTolerance(double tolerance)
     pub fn refine_to_tolerance(&self, tolerance: f64) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
         let tolerance = tolerance.abs();
         if tolerance == 0.0 || self.imp.is_empty() {
             return self.clone();
@@ -185,9 +205,9 @@ impl Manifold {
         let old = out.clone();
         let vert_bary = out.subdivide(
             &|edge_vec, tangent0, tangent1| {
-                let edge_len = (edge_vec.x * edge_vec.x + edge_vec.y * edge_vec.y
-                    + edge_vec.z * edge_vec.z)
-                    .sqrt();
+                let edge_len =
+                    (edge_vec.x * edge_vec.x + edge_vec.y * edge_vec.y + edge_vec.z * edge_vec.z)
+                        .sqrt();
                 if edge_len == 0.0 {
                     return 0;
                 }
@@ -199,34 +219,24 @@ impl Manifold {
                 let t_start = Vec3::new(tangent0.x, tangent0.y, tangent0.z);
                 let t_end = Vec3::new(tangent1.x, tangent1.y, tangent1.z);
                 // Perpendicular to edge
-                let dot_s = edge_norm.x * t_start.x + edge_norm.y * t_start.y
-                    + edge_norm.z * t_start.z;
+                let dot_s =
+                    edge_norm.x * t_start.x + edge_norm.y * t_start.y + edge_norm.z * t_start.z;
                 let start = Vec3::new(
                     t_start.x - edge_norm.x * dot_s,
                     t_start.y - edge_norm.y * dot_s,
                     t_start.z - edge_norm.z * dot_s,
                 );
-                let dot_e = edge_norm.x * t_end.x + edge_norm.y * t_end.y
-                    + edge_norm.z * t_end.z;
+                let dot_e = edge_norm.x * t_end.x + edge_norm.y * t_end.y + edge_norm.z * t_end.z;
                 let end = Vec3::new(
                     t_end.x - edge_norm.x * dot_e,
                     t_end.y - edge_norm.y * dot_e,
                     t_end.z - edge_norm.z * dot_e,
                 );
                 // Circular arc result plus heuristic term for non-circular curves
-                let len_start = (start.x * start.x + start.y * start.y
-                    + start.z * start.z)
-                    .sqrt();
-                let len_end =
-                    (end.x * end.x + end.y * end.y + end.z * end.z).sqrt();
-                let diff = Vec3::new(
-                    start.x - end.x,
-                    start.y - end.y,
-                    start.z - end.z,
-                );
-                let len_diff =
-                    (diff.x * diff.x + diff.y * diff.y + diff.z * diff.z)
-                        .sqrt();
+                let len_start = (start.x * start.x + start.y * start.y + start.z * start.z).sqrt();
+                let len_end = (end.x * end.x + end.y * end.y + end.z * end.z).sqrt();
+                let diff = Vec3::new(start.x - end.x, start.y - end.y, start.z - end.z);
+                let len_diff = (diff.x * diff.x + diff.y * diff.y + diff.z * diff.z).sqrt();
                 let d = 0.5 * (len_start + len_end) + len_diff;
                 (3.0 * d / (4.0 * tolerance)).sqrt() as i32
             },

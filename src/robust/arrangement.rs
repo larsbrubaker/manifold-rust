@@ -24,8 +24,10 @@ use crate::linalg::Vec3;
 
 use super::cdt;
 use super::exact::approx::orient2d_a;
-use super::exact::predicates::{homog2_of, line_line_intersect_2d, orient2d_h, point_in_tri_2d, tri_normal_r, Homog2, TriLoc};
-use super::exact::rational::{int_ratio_to_f64, R2, R2Key, R3};
+use super::exact::predicates::{
+    homog2_of, line_line_intersect_2d, orient2d_h, point_in_tri_2d, tri_normal_r, Homog2, TriLoc,
+};
+use super::exact::rational::{int_ratio_to_f64, R2Key, R2, R3};
 use super::exact::Sign;
 use super::tri_tri::{dominant_axis, lift_to_plane};
 
@@ -60,7 +62,6 @@ pub struct Arrangement {
     /// indices of each sub-triangle to recover outward orientation.
     pub flipped: bool,
 }
-
 
 /// Aggregate phase timers for build(), printed under MANIFOLD_TIMING by the
 /// pipeline after the arrangements stage. Relaxed atomics, nanoseconds.
@@ -422,11 +423,7 @@ pub fn build(
         let a = add_point(a3.clone(), &mut points3, &mut points2);
         let b = add_point(b3.clone(), &mut points3, &mut points2);
         debug_assert_ne!(a, b);
-        segs.push(Seg {
-            a,
-            b,
-            prov: *prov,
-        });
+        segs.push(Seg { a, b, prov: *prov });
     }
     for (p3, _prov) in &input.points {
         add_point(p3.clone(), &mut points3, &mut points2);
@@ -522,8 +519,12 @@ pub fn build(
         let sb = o2(&apts, &homogs, ic, id, ib);
         // Strict crossing only — endpoint contacts and collinear overlap
         // are handled by the point-on-segment sweep below.
-        if sc != Sign::Zero && sd != Sign::Zero && sc != sd
-            && sa != Sign::Zero && sb != Sign::Zero && sa != sb
+        if sc != Sign::Zero
+            && sd != Sign::Zero
+            && sc != sd
+            && sa != Sign::Zero
+            && sb != Sign::Zero
+            && sa != sb
         {
             let x2 = line_line_intersect_2d(
                 &points2[segs[i].a],
@@ -549,9 +550,12 @@ pub fn build(
         apts_exact.push(e);
     }
 
-    debug_assert!(points2.iter().all(|p| {
-        point_in_tri_2d(p, &points2[0], &points2[1], &points2[2]) != TriLoc::Outside
-    }), "arrangement primitive escapes its triangle");
+    debug_assert!(
+        points2.iter().all(|p| {
+            point_in_tri_2d(p, &points2[0], &points2[1], &points2[2]) != TriLoc::Outside
+        }),
+        "arrangement primitive escapes its triangle"
+    );
 
     stats::CROSS_NS.fetch_add(t0.elapsed_ns(), Relaxed);
     let t0 = crate::timing::Stopwatch::start();
@@ -623,8 +627,7 @@ pub fn build(
     // what `apts`/`apts_exact` already hold — hand them over rather than let it
     // redo one exact subtraction per point. The token rides along on the same
     // call: a monster triangulation must stay interruptible.
-    let tris =
-        cdt::triangulate_with_apts(&points2, &constraint_pairs, apts, apts_exact, token)?;
+    let tris = cdt::triangulate_with_apts(&points2, &constraint_pairs, apts, apts_exact, token)?;
     stats::CDT_NS.fetch_add(t0.elapsed_ns(), Relaxed);
 
     let axis_comp = match axis {
@@ -716,10 +719,7 @@ pub fn candidate_points(
     let o2 = |a: ([f64; 2], &Homog2), b: ([f64; 2], &Homog2), c: ([f64; 2], &Homog2)| -> Sign {
         orient2d_a(a.0, b.0, c.0).unwrap_or_else(|| orient2d_h(a.1, b.1, c.1))
     };
-    let seg_boxes: Vec<[f64; 4]> = apts
-        .iter()
-        .map(|(a, b)| approx_box(&[*a, *b]))
-        .collect();
+    let seg_boxes: Vec<[f64; 4]> = apts.iter().map(|(a, b)| approx_box(&[*a, *b])).collect();
     // Same order-restoring sweep as build(): pairs come back in (i, ascending
     // j) order, so `out` receives the same crossings in the same sequence.
     let pairs = overlapping_box_pairs(&seg_boxes, token)?;
@@ -727,20 +727,18 @@ pub fn candidate_points(
         if k % 1024 == 0 && crate::cancel::is_cancelled(token) {
             return None;
         }
-        let (a, b) = (
-            (apts[i].0, &homogs[i].0),
-            (apts[i].1, &homogs[i].1),
-        );
-        let (c, d) = (
-            (apts[j].0, &homogs[j].0),
-            (apts[j].1, &homogs[j].1),
-        );
+        let (a, b) = ((apts[i].0, &homogs[i].0), (apts[i].1, &homogs[i].1));
+        let (c, d) = ((apts[j].0, &homogs[j].0), (apts[j].1, &homogs[j].1));
         let sc = o2(a, b, c);
         let sd = o2(a, b, d);
         let sa = o2(c, d, a);
         let sb = o2(c, d, b);
-        if sc != Sign::Zero && sd != Sign::Zero && sc != sd
-            && sa != Sign::Zero && sb != Sign::Zero && sa != sb
+        if sc != Sign::Zero
+            && sd != Sign::Zero
+            && sc != sd
+            && sa != Sign::Zero
+            && sb != Sign::Zero
+            && sa != sb
         {
             let x2 = line_line_intersect_2d(&segs2[i].0, &segs2[i].1, &segs2[j].0, &segs2[j].1)
                 .expect("properly crossing segments are not parallel");

@@ -8,9 +8,8 @@
 
 use std::hash::{Hash, Hasher};
 use std::ops::{
-    Add, AddAssign, BitAnd, BitOr, Div, DivAssign,
-    Index, IndexMut, Mul, MulAssign, Neg, Not,
-    Sub, SubAssign,
+    Add, AddAssign, BitAnd, BitOr, Div, DivAssign, Index, IndexMut, Mul, MulAssign, Neg, Not, Sub,
+    SubAssign,
 };
 
 use crate::math;
@@ -719,7 +718,10 @@ impl PartialOrd for IVec3 {
 }
 impl Ord for IVec3 {
     fn cmp(&self, o: &Self) -> std::cmp::Ordering {
-        self.x.cmp(&o.x).then(self.y.cmp(&o.y)).then(self.z.cmp(&o.z))
+        self.x
+            .cmp(&o.x)
+            .then(self.y.cmp(&o.y))
+            .then(self.z.cmp(&o.z))
     }
 }
 
@@ -1244,30 +1246,22 @@ impl Mat4 {
     pub fn determinant(&self) -> f64 {
         let a = self;
         a.x.x
-            * (a.y.y * a.z.z * a.w.w
-                + a.w.y * a.y.z * a.z.w
-                + a.z.y * a.w.z * a.y.w
+            * (a.y.y * a.z.z * a.w.w + a.w.y * a.y.z * a.z.w + a.z.y * a.w.z * a.y.w
                 - a.y.y * a.w.z * a.z.w
                 - a.z.y * a.y.z * a.w.w
                 - a.w.y * a.z.z * a.y.w)
             + a.x.y
-                * (a.y.z * a.w.w * a.z.x
-                    + a.z.z * a.y.w * a.w.x
-                    + a.w.z * a.z.w * a.y.x
+                * (a.y.z * a.w.w * a.z.x + a.z.z * a.y.w * a.w.x + a.w.z * a.z.w * a.y.x
                     - a.y.z * a.z.w * a.w.x
                     - a.w.z * a.y.w * a.z.x
                     - a.z.z * a.w.w * a.y.x)
             + a.x.z
-                * (a.y.w * a.z.x * a.w.y
-                    + a.w.w * a.y.x * a.z.y
-                    + a.z.w * a.w.x * a.y.y
+                * (a.y.w * a.z.x * a.w.y + a.w.w * a.y.x * a.z.y + a.z.w * a.w.x * a.y.y
                     - a.y.w * a.w.x * a.z.y
                     - a.z.w * a.y.x * a.w.y
                     - a.w.w * a.z.x * a.y.y)
             + a.x.w
-                * (a.y.x * a.w.y * a.z.z
-                    + a.z.x * a.y.y * a.w.z
-                    + a.w.x * a.z.y * a.y.z
+                * (a.y.x * a.w.y * a.z.z + a.z.x * a.y.y * a.w.z + a.w.x * a.z.y * a.y.z
                     - a.y.x * a.z.y * a.w.z
                     - a.w.x * a.y.y * a.z.z
                     - a.z.x * a.w.y * a.y.z)
@@ -1276,105 +1270,73 @@ impl Mat4 {
         let a = self;
         Self {
             x: Vec4::new(
-                a.y.y * a.z.z * a.w.w
-                    + a.w.y * a.y.z * a.z.w
-                    + a.z.y * a.w.z * a.y.w
+                a.y.y * a.z.z * a.w.w + a.w.y * a.y.z * a.z.w + a.z.y * a.w.z * a.y.w
                     - a.y.y * a.w.z * a.z.w
                     - a.z.y * a.y.z * a.w.w
                     - a.w.y * a.z.z * a.y.w,
-                a.x.y * a.w.z * a.z.w
-                    + a.z.y * a.x.z * a.w.w
-                    + a.w.y * a.z.z * a.x.w
+                a.x.y * a.w.z * a.z.w + a.z.y * a.x.z * a.w.w + a.w.y * a.z.z * a.x.w
                     - a.w.y * a.x.z * a.z.w
                     - a.z.y * a.w.z * a.x.w
                     - a.x.y * a.z.z * a.w.w,
-                a.x.y * a.y.z * a.w.w
-                    + a.w.y * a.x.z * a.y.w
-                    + a.y.y * a.w.z * a.x.w
+                a.x.y * a.y.z * a.w.w + a.w.y * a.x.z * a.y.w + a.y.y * a.w.z * a.x.w
                     - a.x.y * a.w.z * a.y.w
                     - a.y.y * a.x.z * a.w.w
                     - a.w.y * a.y.z * a.x.w,
-                a.x.y * a.z.z * a.y.w
-                    + a.y.y * a.x.z * a.z.w
-                    + a.z.y * a.y.z * a.x.w
+                a.x.y * a.z.z * a.y.w + a.y.y * a.x.z * a.z.w + a.z.y * a.y.z * a.x.w
                     - a.x.y * a.y.z * a.z.w
                     - a.z.y * a.x.z * a.y.w
                     - a.y.y * a.z.z * a.x.w,
             ),
             y: Vec4::new(
-                a.y.z * a.w.w * a.z.x
-                    + a.z.z * a.y.w * a.w.x
-                    + a.w.z * a.z.w * a.y.x
+                a.y.z * a.w.w * a.z.x + a.z.z * a.y.w * a.w.x + a.w.z * a.z.w * a.y.x
                     - a.y.z * a.z.w * a.w.x
                     - a.w.z * a.y.w * a.z.x
                     - a.z.z * a.w.w * a.y.x,
-                a.x.z * a.z.w * a.w.x
-                    + a.w.z * a.x.w * a.z.x
-                    + a.z.z * a.w.w * a.x.x
+                a.x.z * a.z.w * a.w.x + a.w.z * a.x.w * a.z.x + a.z.z * a.w.w * a.x.x
                     - a.x.z * a.w.w * a.z.x
                     - a.z.z * a.x.w * a.w.x
                     - a.w.z * a.z.w * a.x.x,
-                a.x.z * a.w.w * a.y.x
-                    + a.y.z * a.x.w * a.w.x
-                    + a.w.z * a.y.w * a.x.x
+                a.x.z * a.w.w * a.y.x + a.y.z * a.x.w * a.w.x + a.w.z * a.y.w * a.x.x
                     - a.x.z * a.y.w * a.w.x
                     - a.w.z * a.x.w * a.y.x
                     - a.y.z * a.w.w * a.x.x,
-                a.x.z * a.y.w * a.z.x
-                    + a.z.z * a.x.w * a.y.x
-                    + a.y.z * a.z.w * a.x.x
+                a.x.z * a.y.w * a.z.x + a.z.z * a.x.w * a.y.x + a.y.z * a.z.w * a.x.x
                     - a.x.z * a.z.w * a.y.x
                     - a.y.z * a.x.w * a.z.x
                     - a.z.z * a.y.w * a.x.x,
             ),
             z: Vec4::new(
-                a.y.w * a.z.x * a.w.y
-                    + a.w.w * a.y.x * a.z.y
-                    + a.z.w * a.w.x * a.y.y
+                a.y.w * a.z.x * a.w.y + a.w.w * a.y.x * a.z.y + a.z.w * a.w.x * a.y.y
                     - a.y.w * a.w.x * a.z.y
                     - a.z.w * a.y.x * a.w.y
                     - a.w.w * a.z.x * a.y.y,
-                a.x.w * a.w.x * a.z.y
-                    + a.z.w * a.x.x * a.w.y
-                    + a.w.w * a.z.x * a.x.y
+                a.x.w * a.w.x * a.z.y + a.z.w * a.x.x * a.w.y + a.w.w * a.z.x * a.x.y
                     - a.x.w * a.z.x * a.w.y
                     - a.w.w * a.x.x * a.z.y
                     - a.z.w * a.w.x * a.x.y,
-                a.x.w * a.y.x * a.w.y
-                    + a.w.w * a.x.x * a.y.y
-                    + a.y.w * a.w.x * a.x.y
+                a.x.w * a.y.x * a.w.y + a.w.w * a.x.x * a.y.y + a.y.w * a.w.x * a.x.y
                     - a.x.w * a.w.x * a.y.y
                     - a.y.w * a.x.x * a.w.y
                     - a.w.w * a.y.x * a.x.y,
-                a.x.w * a.z.x * a.y.y
-                    + a.y.w * a.x.x * a.z.y
-                    + a.z.w * a.y.x * a.x.y
+                a.x.w * a.z.x * a.y.y + a.y.w * a.x.x * a.z.y + a.z.w * a.y.x * a.x.y
                     - a.x.w * a.y.x * a.z.y
                     - a.z.w * a.x.x * a.y.y
                     - a.y.w * a.z.x * a.x.y,
             ),
             w: Vec4::new(
-                a.y.x * a.w.y * a.z.z
-                    + a.z.x * a.y.y * a.w.z
-                    + a.w.x * a.z.y * a.y.z
+                a.y.x * a.w.y * a.z.z + a.z.x * a.y.y * a.w.z + a.w.x * a.z.y * a.y.z
                     - a.y.x * a.z.y * a.w.z
                     - a.w.x * a.y.y * a.z.z
                     - a.z.x * a.w.y * a.y.z,
-                a.x.x * a.z.y * a.w.z
-                    + a.w.x * a.x.y * a.z.z
-                    + a.z.x * a.w.y * a.x.z
+                a.x.x * a.z.y * a.w.z + a.w.x * a.x.y * a.z.z + a.z.x * a.w.y * a.x.z
                     - a.x.x * a.w.y * a.z.z
                     - a.z.x * a.x.y * a.w.z
                     - a.w.x * a.z.y * a.x.z,
-                a.x.x * a.w.y * a.y.z
-                    + a.y.x * a.x.y * a.w.z
-                    + a.w.x * a.y.y * a.x.z
+                a.x.x * a.w.y * a.y.z + a.y.x * a.x.y * a.w.z + a.w.x * a.y.y * a.x.z
                     - a.x.x * a.y.y * a.w.z
                     - a.w.x * a.x.y * a.y.z
                     - a.y.x * a.w.y * a.x.z,
-                a.x.x * a.y.y * a.z.z
-                    + a.z.x * a.x.y * a.y.z
-                    + a.y.x * a.z.y * a.x.z
+                a.x.x * a.y.y * a.z.z + a.z.x * a.x.y * a.y.z + a.y.x * a.z.y * a.x.z
                     - a.x.x * a.z.y * a.y.z
                     - a.y.x * a.x.y * a.z.z
                     - a.z.x * a.y.y * a.x.z,
@@ -2235,7 +2197,11 @@ impl Hash for Vec2 {
         // XOR with shift — mirrors C++ std::hash specialization
         let mut h2 = std::collections::hash_map::DefaultHasher::new();
         hash_f64(self.y, &mut h2);
-        state.write_u64(std::hash::BuildHasher::build_hasher(&std::collections::hash_map::RandomState::new()).finish() ^ (std::hash::Hasher::finish(&h2) << 1));
+        state.write_u64(
+            std::hash::BuildHasher::build_hasher(&std::collections::hash_map::RandomState::new())
+                .finish()
+                ^ (std::hash::Hasher::finish(&h2) << 1),
+        );
     }
 }
 
@@ -2258,7 +2224,6 @@ impl Hash for Vec4 {
 }
 
 // ─── Tests ────────────────────────────────────────────────────────────────────
-
 
 #[cfg(test)]
 #[path = "linalg_tests.rs"]

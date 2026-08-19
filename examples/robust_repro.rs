@@ -53,7 +53,11 @@ fn import_stl(path: &str) -> Manifold {
             max[k] = max[k].max(v);
         }
     }
-    let c = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0, (min[2] + max[2]) / 2.0];
+    let c = [
+        (min[0] + max[0]) / 2.0,
+        (min[1] + max[1]) / 2.0,
+        (min[2] + max[2]) / 2.0,
+    ];
     let side = (max[0] - min[0]).max(max[1] - min[1]).max(max[2] - min[2]);
     let s = if side > 0.0 { 2.0 / side } else { 1.0 };
     for i in 0..nv {
@@ -85,7 +89,11 @@ fn main() {
         "auto" => BooleanEngine::Auto,
         _ => BooleanEngine::Robust,
     };
-    let num = |i: usize| args.get(i).and_then(|a| a.parse::<f64>().ok()).unwrap_or(0.0);
+    let num = |i: usize| {
+        args.get(i)
+            .and_then(|a| a.parse::<f64>().ok())
+            .unwrap_or(0.0)
+    };
     let (rx, ry, rz) = (num(4), num(5), num(6));
     let (ox, oy, oz) = (num(7), num(8), num(9));
 
@@ -119,7 +127,10 @@ fn main() {
     }
     let both_solid = !a0.as_impl().is_soup && !b0.as_impl().is_soup;
     let (a, b) = if both_solid {
-        (colorize(a0, 0.27, 0.53, 0.80, 1.0), colorize(b0, 0.85, 0.25, 0.25, 0.6))
+        (
+            colorize(a0, 0.27, 0.53, 0.80, 1.0),
+            colorize(b0, 0.85, 0.25, 0.25, 0.6),
+        )
     } else {
         (a0, b0)
     };
@@ -132,7 +143,11 @@ fn main() {
     let out = a.boolean_with_engine_and_rule(&b, op, engine, rule);
     println!(
         "result: {} tris / {} verts, volume {:.7}, area {:.7}, status {:?}, {:.0} ms",
-        out.num_tri(), out.num_vert(), out.volume(), out.surface_area(), out.status(),
+        out.num_tri(),
+        out.num_vert(),
+        out.volume(),
+        out.surface_area(),
+        out.status(),
         t0.elapsed().as_secs_f64() * 1e3,
     );
 

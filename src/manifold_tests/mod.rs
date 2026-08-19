@@ -48,9 +48,21 @@ pub(super) fn with_position_colors(m: &Manifold) -> Manifold {
     let bb = m.bounding_box();
     let size = bb.size();
     m.set_properties(3, move |props, pos, _old| {
-        props[0] = if size.x > 0.0 { (pos.x - bb.min.x) / size.x } else { 0.0 };
-        props[1] = if size.y > 0.0 { (pos.y - bb.min.y) / size.y } else { 0.0 };
-        props[2] = if size.z > 0.0 { (pos.z - bb.min.z) / size.z } else { 0.0 };
+        props[0] = if size.x > 0.0 {
+            (pos.x - bb.min.x) / size.x
+        } else {
+            0.0
+        };
+        props[1] = if size.y > 0.0 {
+            (pos.y - bb.min.y) / size.y
+        } else {
+            0.0
+        };
+        props[2] = if size.z > 0.0 {
+            (pos.z - bb.min.z) / size.z
+        } else {
+            0.0
+        };
     })
 }
 
@@ -72,7 +84,12 @@ fn related_gl_check_normals(out: &Manifold, originals: &[&MeshGL]) {
     related_gl_impl(out, originals, true, true);
 }
 
-fn related_gl_impl(out: &Manifold, originals: &[&MeshGL], check_normals: bool, update_normals: bool) {
+fn related_gl_impl(
+    out: &Manifold,
+    originals: &[&MeshGL],
+    check_normals: bool,
+    update_normals: bool,
+) {
     assert!(!out.is_empty(), "RelatedGL: output should not be empty");
     // Match C++ RelatedGL: GetMeshGL() (= -1) auto-substitutes slot 0 only when
     // every meshID recorded normals; mixed outputs keep raw slots for the
@@ -83,16 +100,18 @@ fn related_gl_impl(out: &Manifold, originals: &[&MeshGL], check_normals: bool, u
     let base_tolerance = 3.0 * out.get_tolerance().max(output.tolerance as f64);
 
     // Save transforms before update_normals clears them
-    let run_transforms: Vec<Option<[f32; 12]>> = (0..num_run).map(|run| {
-        let offset = 12 * run;
-        if offset + 12 <= output.run_transform.len() {
-            let mut arr = [0f32; 12];
-            arr.copy_from_slice(&output.run_transform[offset..offset + 12]);
-            Some(arr)
-        } else {
-            None
-        }
-    }).collect();
+    let run_transforms: Vec<Option<[f32; 12]>> = (0..num_run)
+        .map(|run| {
+            let offset = 12 * run;
+            if offset + 12 <= output.run_transform.len() {
+                let mut arr = [0f32; 12];
+                arr.copy_from_slice(&output.run_transform[offset..offset + 12]);
+                Some(arr)
+            } else {
+                None
+            }
+        })
+        .collect();
 
     if update_normals {
         // Per C++ #1718 RelatedGL: bring slot 3..5 into world frame and
@@ -109,15 +128,22 @@ fn related_gl_impl(out: &Manifold, originals: &[&MeshGL], check_normals: bool, u
             } else {
                 let sign = if output.backside(run) { -1.0 } else { 1.0 };
                 run_transforms[run].map(|t| {
-                    let col = |j: usize| Vec3::new(t[3 * j] as f64, t[3 * j + 1] as f64, t[3 * j + 2] as f64);
-                    Mat3::from_cols(col(0), col(1), col(2)).transpose().inverse() * sign
+                    let col = |j: usize| {
+                        Vec3::new(t[3 * j] as f64, t[3 * j + 1] as f64, t[3 * j + 2] as f64)
+                    };
+                    Mat3::from_cols(col(0), col(1), col(2))
+                        .transpose()
+                        .inverse()
+                        * sign
                 })
             };
             let start = output.run_index[run] as usize;
             let end = output.run_index[run + 1] as usize;
             for k in start..end {
                 let v = output.tri_verts[k] as usize;
-                if vert_updated[v] { continue; }
+                if vert_updated[v] {
+                    continue;
+                }
                 vert_updated[v] = true;
                 let base = v * out_np + 3;
                 let mut n = Vec3::new(
@@ -125,9 +151,13 @@ fn related_gl_impl(out: &Manifold, originals: &[&MeshGL], check_normals: bool, u
                     output.vert_properties[base + 1] as f64,
                     output.vert_properties[base + 2] as f64,
                 );
-                if let Some(m) = nt { n = m * n; }
+                if let Some(m) = nt {
+                    n = m * n;
+                }
                 let len = (n.x * n.x + n.y * n.y + n.z * n.z).sqrt();
-                if len > 0.0 { n = n / len; }
+                if len > 0.0 {
+                    n = n / len;
+                }
                 output.vert_properties[base] = n.x as f32;
                 output.vert_properties[base + 1] = n.y as f32;
                 output.vert_properties[base + 2] = n.z as f32;
@@ -137,7 +167,8 @@ fn related_gl_impl(out: &Manifold, originals: &[&MeshGL], check_normals: bool, u
 
     for run in 0..num_run {
         let out_id = output.run_original_id[run];
-        let in_mesh = originals.iter()
+        let in_mesh = originals
+            .iter()
             .find(|m| m.run_original_id.len() == 1 && m.run_original_id[0] == out_id)
             .unwrap_or_else(|| panic!("RelatedGL: no original with runOriginalID={}", out_id));
 
@@ -155,10 +186,18 @@ fn related_gl_impl(out: &Manifold, originals: &[&MeshGL], check_normals: bool, u
         let out_np = output.num_prop as usize;
 
         for tri in start_tri..end_tri {
-            let in_tri_idx = if output.face_id.is_empty() { tri as u32 } else { output.face_id[tri] } as usize;
+            let in_tri_idx = if output.face_id.is_empty() {
+                tri as u32
+            } else {
+                output.face_id[tri]
+            } as usize;
             let in_tri_count = in_mesh.tri_verts.len() / 3;
-            assert!(in_tri_idx < in_tri_count,
-                "RelatedGL: faceID {} out of range (original has {} tris)", in_tri_idx, in_tri_count);
+            assert!(
+                in_tri_idx < in_tri_count,
+                "RelatedGL: faceID {} out of range (original has {} tris)",
+                in_tri_idx,
+                in_tri_count
+            );
 
             // Get original triangle vertices and apply transform
             let mut in_tri_pos = [[0.0f64; 3]; 3];
@@ -180,12 +219,28 @@ fn related_gl_impl(out: &Manifold, originals: &[&MeshGL], check_normals: bool, u
             }
 
             // Compute triangle normal and area
-            let e0 = [in_tri_pos[1][0]-in_tri_pos[0][0], in_tri_pos[1][1]-in_tri_pos[0][1], in_tri_pos[1][2]-in_tri_pos[0][2]];
-            let e1 = [in_tri_pos[2][0]-in_tri_pos[0][0], in_tri_pos[2][1]-in_tri_pos[0][1], in_tri_pos[2][2]-in_tri_pos[0][2]];
-            let in_cross = [e0[1]*e1[2]-e0[2]*e1[1], e0[2]*e1[0]-e0[0]*e1[2], e0[0]*e1[1]-e0[1]*e1[0]];
-            let area = (in_cross[0]*in_cross[0]+in_cross[1]*in_cross[1]+in_cross[2]*in_cross[2]).sqrt();
-            if area == 0.0 { continue; }
-            let in_normal = [in_cross[0]/area, in_cross[1]/area, in_cross[2]/area];
+            let e0 = [
+                in_tri_pos[1][0] - in_tri_pos[0][0],
+                in_tri_pos[1][1] - in_tri_pos[0][1],
+                in_tri_pos[1][2] - in_tri_pos[0][2],
+            ];
+            let e1 = [
+                in_tri_pos[2][0] - in_tri_pos[0][0],
+                in_tri_pos[2][1] - in_tri_pos[0][1],
+                in_tri_pos[2][2] - in_tri_pos[0][2],
+            ];
+            let in_cross = [
+                e0[1] * e1[2] - e0[2] * e1[1],
+                e0[2] * e1[0] - e0[0] * e1[2],
+                e0[0] * e1[1] - e0[1] * e1[0],
+            ];
+            let area =
+                (in_cross[0] * in_cross[0] + in_cross[1] * in_cross[1] + in_cross[2] * in_cross[2])
+                    .sqrt();
+            if area == 0.0 {
+                continue;
+            }
+            let in_normal = [in_cross[0] / area, in_cross[1] / area, in_cross[2] / area];
 
             // Compute output triangle positions for normal check
             let mut out_tri_pos = [[0.0f64; 3]; 3];
@@ -197,42 +252,77 @@ fn related_gl_impl(out: &Manifold, originals: &[&MeshGL], check_normals: bool, u
                     output.vert_properties[vert * out_np + 2] as f64,
                 ];
             }
-            let oe0 = [out_tri_pos[1][0]-out_tri_pos[0][0], out_tri_pos[1][1]-out_tri_pos[0][1], out_tri_pos[1][2]-out_tri_pos[0][2]];
-            let oe1 = [out_tri_pos[2][0]-out_tri_pos[0][0], out_tri_pos[2][1]-out_tri_pos[0][1], out_tri_pos[2][2]-out_tri_pos[0][2]];
-            let out_normal_unnorm = [oe0[1]*oe1[2]-oe0[2]*oe1[1], oe0[2]*oe1[0]-oe0[0]*oe1[2], oe0[0]*oe1[1]-oe0[1]*oe1[0]];
+            let oe0 = [
+                out_tri_pos[1][0] - out_tri_pos[0][0],
+                out_tri_pos[1][1] - out_tri_pos[0][1],
+                out_tri_pos[1][2] - out_tri_pos[0][2],
+            ];
+            let oe1 = [
+                out_tri_pos[2][0] - out_tri_pos[0][0],
+                out_tri_pos[2][1] - out_tri_pos[0][1],
+                out_tri_pos[2][2] - out_tri_pos[0][2],
+            ];
+            let out_normal_unnorm = [
+                oe0[1] * oe1[2] - oe0[2] * oe1[1],
+                oe0[2] * oe1[0] - oe0[0] * oe1[2],
+                oe0[0] * oe1[1] - oe0[1] * oe1[0],
+            ];
 
             // For each output vertex, check it's within the input triangle
             for j in 0..3 {
                 let vert = output.tri_verts[3 * tri + j] as usize;
                 let out_pos = out_tri_pos[j];
                 // edges[k] = in_tri_pos[k] - out_pos
-                let edges: [[f64; 3]; 3] = std::array::from_fn(|k| [
-                    in_tri_pos[k][0] - out_pos[0],
-                    in_tri_pos[k][1] - out_pos[1],
-                    in_tri_pos[k][2] - out_pos[2],
-                ]);
+                let edges: [[f64; 3]; 3] = std::array::from_fn(|k| {
+                    [
+                        in_tri_pos[k][0] - out_pos[0],
+                        in_tri_pos[k][1] - out_pos[1],
+                        in_tri_pos[k][2] - out_pos[2],
+                    ]
+                });
                 // Triple product = dot(edges[0], cross(edges[1], edges[2]))
                 let c = [
-                    edges[1][1]*edges[2][2]-edges[1][2]*edges[2][1],
-                    edges[1][2]*edges[2][0]-edges[1][0]*edges[2][2],
-                    edges[1][0]*edges[2][1]-edges[1][1]*edges[2][0],
+                    edges[1][1] * edges[2][2] - edges[1][2] * edges[2][1],
+                    edges[1][2] * edges[2][0] - edges[1][0] * edges[2][2],
+                    edges[1][0] * edges[2][1] - edges[1][1] * edges[2][0],
                 ];
-                let volume = edges[0][0]*c[0] + edges[0][1]*c[1] + edges[0][2]*c[2];
-                assert!(volume <= area * tolerance,
+                let volume = edges[0][0] * c[0] + edges[0][1] * c[1] + edges[0][2] * c[2];
+                assert!(
+                    volume <= area * tolerance,
                     "RelatedGL: run={} tri={} vert={}: volume={:.6} > area*tol={:.6} (in_tri={})",
-                    run, tri, j, volume, area * tolerance, in_tri_idx);
+                    run,
+                    tri,
+                    j,
+                    volume,
+                    area * tolerance,
+                    in_tri_idx
+                );
 
                 if check_normals && out_np >= 6 {
                     let nx = output.vert_properties[vert * out_np + 3] as f64;
                     let ny = output.vert_properties[vert * out_np + 4] as f64;
                     let nz = output.vert_properties[vert * out_np + 5] as f64;
-                    let len = (nx*nx + ny*ny + nz*nz).sqrt();
-                    assert!((len - 1.0).abs() < 0.0001,
-                        "RelatedGL: run={} tri={} vert={}: normal length={:.6} != 1", run, tri, j, len);
+                    let len = (nx * nx + ny * ny + nz * nz).sqrt();
+                    assert!(
+                        (len - 1.0).abs() < 0.0001,
+                        "RelatedGL: run={} tri={} vert={}: normal length={:.6} != 1",
+                        run,
+                        tri,
+                        j,
+                        len
+                    );
                     // Normal must point in same half-space as output face normal
-                    let dot = nx*out_normal_unnorm[0] + ny*out_normal_unnorm[1] + nz*out_normal_unnorm[2];
-                        assert!(dot > 0.0,
-                        "RelatedGL: run={} tri={} vert={}: normal dot face_normal={:.6} <= 0", run, tri, j, dot);
+                    let dot = nx * out_normal_unnorm[0]
+                        + ny * out_normal_unnorm[1]
+                        + nz * out_normal_unnorm[2];
+                    assert!(
+                        dot > 0.0,
+                        "RelatedGL: run={} tri={} vert={}: normal dot face_normal={:.6} <= 0",
+                        run,
+                        tri,
+                        j,
+                        dot
+                    );
                     let _ = in_normal; // used for reference but normals validated against output face
                 }
             }
@@ -265,15 +355,35 @@ fn cube_stl() -> MeshGL {
             }
         }
         // Compute flat face normal
-        let e0 = [tri_pos[1][0]-tri_pos[0][0], tri_pos[1][1]-tri_pos[0][1], tri_pos[1][2]-tri_pos[0][2]];
-        let e1 = [tri_pos[2][0]-tri_pos[0][0], tri_pos[2][1]-tri_pos[0][1], tri_pos[2][2]-tri_pos[0][2]];
-        let cross = [e0[1]*e1[2]-e0[2]*e1[1], e0[2]*e1[0]-e0[0]*e1[2], e0[0]*e1[1]-e0[1]*e1[0]];
-        let len = (cross[0]*cross[0]+cross[1]*cross[1]+cross[2]*cross[2]).sqrt();
-        let normal = if len > 0.0 { [cross[0]/len, cross[1]/len, cross[2]/len] } else { [0.0, 0.0, 1.0] };
+        let e0 = [
+            tri_pos[1][0] - tri_pos[0][0],
+            tri_pos[1][1] - tri_pos[0][1],
+            tri_pos[1][2] - tri_pos[0][2],
+        ];
+        let e1 = [
+            tri_pos[2][0] - tri_pos[0][0],
+            tri_pos[2][1] - tri_pos[0][1],
+            tri_pos[2][2] - tri_pos[0][2],
+        ];
+        let cross = [
+            e0[1] * e1[2] - e0[2] * e1[1],
+            e0[2] * e1[0] - e0[0] * e1[2],
+            e0[0] * e1[1] - e0[1] * e1[0],
+        ];
+        let len = (cross[0] * cross[0] + cross[1] * cross[1] + cross[2] * cross[2]).sqrt();
+        let normal = if len > 0.0 {
+            [cross[0] / len, cross[1] / len, cross[2] / len]
+        } else {
+            [0.0, 0.0, 1.0]
+        };
 
         for i in 0..3 {
-            for j in 0..3 { cube.vert_properties.push(tri_pos[i][j] as f32); }
-            for j in 0..3 { cube.vert_properties.push(normal[j] as f32); }
+            for j in 0..3 {
+                cube.vert_properties.push(tri_pos[i][j] as f32);
+            }
+            for j in 0..3 {
+                cube.vert_properties.push(normal[j] as f32);
+            }
         }
     }
 
@@ -378,18 +488,18 @@ fn read_test_obj(filename: &str) -> Manifold {
     Manifold::from_mesh_gl(&mesh)
 }
 
+mod advanced;
+mod api;
 mod basic;
 mod boolean;
 mod complex;
-mod advanced;
-mod hull;
-mod api;
-mod sdf;
-mod validation;
-mod smooth;
 mod cross_section2;
-mod mesh_ops;
-mod raycast;
 mod error_propagation;
-mod properties;
+mod hull;
+mod mesh_ops;
 mod normals;
+mod properties;
+mod raycast;
+mod sdf;
+mod smooth;
+mod validation;

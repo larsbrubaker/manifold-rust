@@ -19,8 +19,7 @@ use crate::linalg::Vec3;
 use super::exact::approx::orient2d_a;
 use super::exact::filtered::orient3d;
 use super::exact::predicates::{
-    homog2_of, line_line_intersect_2d, line_plane_intersect, orient2d_h, tri_normal_r,
-    Homog2,
+    homog2_of, line_line_intersect_2d, line_plane_intersect, orient2d_h, tri_normal_r, Homog2,
 };
 use super::exact::rational::{r2_eq, rat_to_f64, R2, R3};
 use super::exact::Sign;
@@ -195,9 +194,7 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
     // dominant configuration on touching sheets (vertex-to-vertex contacts).
     let degenerate_at = |s: &[Sign; 3]| -> Option<usize> {
         (0..3).find(|&i| {
-            s[i] == Sign::Zero
-                && s[(i + 1) % 3] != Sign::Zero
-                && s[(i + 1) % 3] == s[(i + 2) % 3]
+            s[i] == Sign::Zero && s[(i + 1) % 3] != Sign::Zero && s[(i + 1) % 3] == s[(i + 2) % 3]
         })
     };
     if let (Some(i), Some(j)) = (degenerate_at(s1), degenerate_at(s2)) {
@@ -211,15 +208,12 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
 
     // Scaled integer coordinates; one common scale per axis across BOTH
     // triangles so cross-triangle parameter comparisons share a basis.
-    let sx = super::exact::intpred::scaled_big([
-        t1[0].x, t1[1].x, t1[2].x, t2[0].x, t2[1].x, t2[2].x,
-    ]);
-    let sy = super::exact::intpred::scaled_big([
-        t1[0].y, t1[1].y, t1[2].y, t2[0].y, t2[1].y, t2[2].y,
-    ]);
-    let sz = super::exact::intpred::scaled_big([
-        t1[0].z, t1[1].z, t1[2].z, t2[0].z, t2[1].z, t2[2].z,
-    ]);
+    let sx =
+        super::exact::intpred::scaled_big([t1[0].x, t1[1].x, t1[2].x, t2[0].x, t2[1].x, t2[2].x]);
+    let sy =
+        super::exact::intpred::scaled_big([t1[0].y, t1[1].y, t1[2].y, t2[0].y, t2[1].y, t2[2].y]);
+    let sz =
+        super::exact::intpred::scaled_big([t1[0].z, t1[1].z, t1[2].z, t2[0].z, t2[1].z, t2[2].z]);
     let v = |k: usize| [&sx[k], &sy[k], &sz[k]];
     let sub = |a: [&Int; 3], b: [&Int; 3]| [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
     let cross = |a: &[Int; 3], b: &[Int; 3]| {
@@ -247,8 +241,16 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
     let h = |k: usize, n: &[Int; 3], origin: usize| dot(n, v(k)) - dot(n, v(origin));
     #[cfg(debug_assertions)]
     for i in 0..3 {
-        debug_assert_eq!(int_sign(&h(i, &n2, 3)), s1[i], "scaled height disagrees with s1");
-        debug_assert_eq!(int_sign(&h(3 + i, &n1, 0)), s2[i], "scaled height disagrees with s2");
+        debug_assert_eq!(
+            int_sign(&h(i, &n2, 3)),
+            s1[i],
+            "scaled height disagrees with s1"
+        );
+        debug_assert_eq!(
+            int_sign(&h(3 + i, &n1, 0)),
+            s2[i],
+            "scaled height disagrees with s2"
+        );
     }
 
     // The ≤2 endpoints of one triangle's crossing with the other's plane, as
@@ -261,10 +263,7 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
         let mut pts = Vec::with_capacity(2);
         for i in 0..3 {
             if s[i] == Sign::Zero {
-                pts.push((
-                    (du(base + i), Int::from(1)),
-                    EndPt::Vert(which, i as u8),
-                ));
+                pts.push(((du(base + i), Int::from(1)), EndPt::Vert(which, i as u8)));
             }
         }
         for i in 0..3 {
@@ -308,8 +307,16 @@ fn interval_overlap(t1: [Vec3; 3], t2: [Vec3; 3], s1: &[Sign; 3], s2: &[Sign; 3]
     };
     let i1 = minmax(pts1);
     let i2 = minmax(pts2);
-    let (lo, lo_pt) = if cmp_frac(&i1.0 .0, &i2.0 .0) != std::cmp::Ordering::Less { i1.0 } else { i2.0 };
-    let (hi, hi_pt) = if cmp_frac(&i1.1 .0, &i2.1 .0) != std::cmp::Ordering::Greater { i1.1 } else { i2.1 };
+    let (lo, lo_pt) = if cmp_frac(&i1.0 .0, &i2.0 .0) != std::cmp::Ordering::Less {
+        i1.0
+    } else {
+        i2.0
+    };
+    let (hi, hi_pt) = if cmp_frac(&i1.1 .0, &i2.1 .0) != std::cmp::Ordering::Greater {
+        i1.1
+    } else {
+        i2.1
+    };
 
     match cmp_frac(&lo, &hi) {
         std::cmp::Ordering::Greater => TriTriIsect::None,
@@ -406,7 +413,13 @@ fn coplanar_overlap(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
     {
         let n = crate::linalg::cross(t1[1] - t1[0], t1[2] - t1[0]);
         let (ax, ay, az) = (n.x.abs(), n.y.abs(), n.z.abs());
-        let axis = if az >= ax && az >= ay { 2 } else if ay >= ax { 1 } else { 0 };
+        let axis = if az >= ax && az >= ay {
+            2
+        } else if ay >= ax {
+            1
+        } else {
+            0
+        };
         if coplanar_separated_2d(t1, t2, axis) {
             stats::COPLANAR_SAT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return TriTriIsect::None;

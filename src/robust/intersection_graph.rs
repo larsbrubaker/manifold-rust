@@ -198,11 +198,7 @@ pub fn build_graph_with_progress(
         (p.len() + q.len()) as u64,
     );
     for m in 0..2 {
-        let (tris, boxes) = if m == 0 {
-            (p, &p_boxes)
-        } else {
-            (q, &q_boxes)
-        };
+        let (tris, boxes) = if m == 0 { (p, &p_boxes) } else { (q, &q_boxes) };
         let self_scene = boxes
             .iter()
             .enumerate()
@@ -259,9 +255,9 @@ pub fn build_graph_with_progress(
                 }
             }
         }
-        crate::timing::print_count(
-            &format!("robust: self-cut mesh {m}: {n_pairs} box pairs, {n_cut} cutting"),
-        );
+        crate::timing::print_count(&format!(
+            "robust: self-cut mesh {m}: {n_pairs} box pairs, {n_cut} cutting"
+        ));
         crate::timing::print_count(&format!(
             "robust: self-cut mesh {m} tri_tri exits: {}",
             super::tri_tri::stats::snapshot_and_reset()
@@ -295,11 +291,9 @@ pub fn build_graph_with_progress(
         let copy = |src: &TriPrims, dst: &mut TriPrims| {
             for (a, b, prov) in &src.segments {
                 if let Some((ca, cb)) = clip_segment_to_polygon(a, b, poly) {
-                    if !dst
-                        .segments
-                        .iter()
-                        .any(|(x, y, pv)| pv == prov && ((x, y) == (&ca, &cb) || (x, y) == (&cb, &ca)))
-                    {
+                    if !dst.segments.iter().any(|(x, y, pv)| {
+                        pv == prov && ((x, y) == (&ca, &cb) || (x, y) == (&cb, &ca))
+                    }) {
                         dst.segments.push((ca, cb, *prov));
                     }
                 }

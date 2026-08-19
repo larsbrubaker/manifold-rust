@@ -1,12 +1,14 @@
 // EarClip triangulator — extracted from polygon.rs
 // Port of C++ ear-clipping algorithm with 2D KD-tree acceleration
 
-use std::collections::HashMap;
 use crate::linalg::Vec2;
 use crate::types::{PolyVert, PolygonsIdx, Rect, K_PRECISION};
+use std::collections::HashMap;
 
-use super::{ccw, determinant2x2, safe_normalize_2d, dot2d,
-            build_two_d_tree, query_two_d_tree, INVALID, K_BEST, IVec3Out};
+use super::{
+    build_two_d_tree, ccw, determinant2x2, dot2d, query_two_d_tree, safe_normalize_2d, IVec3Out,
+    INVALID, K_BEST,
+};
 
 // ---------------------------------------------------------------------------
 // Supporting types
@@ -215,7 +217,11 @@ impl EarClip {
         let mut center = tail;
         let mut last = center;
 
-        let v_stop = if to_left { self.polygon[v].right } else { self.polygon[v].left };
+        let v_stop = if to_left {
+            self.polygon[v].right
+        } else {
+            self.polygon[v].left
+        };
 
         loop {
             if next_l == next_r || tail == next_r || next_l == v_stop {
@@ -225,7 +231,11 @@ impl EarClip {
             let edge_l = self.polygon[next_l].pos - self.polygon[center].pos;
             let l2 = dot2d(edge_l, edge_l);
             if l2 <= p2 {
-                next_l = if to_left { self.polygon[next_l].left } else { self.polygon[next_l].right };
+                next_l = if to_left {
+                    self.polygon[next_l].left
+                } else {
+                    self.polygon[next_l].right
+                };
                 continue;
             }
 
@@ -241,7 +251,11 @@ impl EarClip {
             if lr2 <= p2 {
                 last = center;
                 center = next_l;
-                next_l = if to_left { self.polygon[next_l].left } else { self.polygon[next_l].right };
+                next_l = if to_left {
+                    self.polygon[next_l].left
+                } else {
+                    self.polygon[next_l].right
+                };
                 if next_l == next_r {
                     break;
                 }
@@ -256,8 +270,17 @@ impl EarClip {
                 self.epsilon,
             );
             if center != last {
-                convexity += ccw(self.polygon[last].pos, self.polygon[center].pos, self.polygon[next_l].pos, self.epsilon)
-                    + ccw(self.polygon[next_r].pos, self.polygon[center].pos, self.polygon[last].pos, self.epsilon);
+                convexity += ccw(
+                    self.polygon[last].pos,
+                    self.polygon[center].pos,
+                    self.polygon[next_l].pos,
+                    self.epsilon,
+                ) + ccw(
+                    self.polygon[next_r].pos,
+                    self.polygon[center].pos,
+                    self.polygon[last].pos,
+                    self.epsilon,
+                );
             }
             if convexity != 0 {
                 return convexity > 0;
@@ -265,7 +288,11 @@ impl EarClip {
 
             if l2 < r2 {
                 center = next_l;
-                next_l = if to_left { self.polygon[next_l].left } else { self.polygon[next_l].right };
+                next_l = if to_left {
+                    self.polygon[next_l].left
+                } else {
+                    self.polygon[next_l].right
+                };
             } else {
                 center = next_r;
                 next_r = self.polygon[next_r].right;
@@ -278,7 +305,12 @@ impl EarClip {
     fn vert_is_convex(&self, v: usize, epsilon: f64) -> bool {
         let left = self.polygon[v].left;
         let right = self.polygon[v].right;
-        ccw(self.polygon[left].pos, self.polygon[v].pos, self.polygon[right].pos, epsilon) >= 0
+        ccw(
+            self.polygon[left].pos,
+            self.polygon[v].pos,
+            self.polygon[right].pos,
+            epsilon,
+        ) >= 0
     }
 
     fn vert_is_reflex(&self, v: usize) -> bool {
@@ -315,11 +347,17 @@ impl EarClip {
         let eps = self.epsilon;
         let d = determinant2x2(unit, self.polygon[other].pos - self.polygon[v].pos);
         if d.abs() < eps {
-            let d_r = determinant2x2(unit, self.polygon[self.polygon[other].right].pos - self.polygon[v].pos);
+            let d_r = determinant2x2(
+                unit,
+                self.polygon[self.polygon[other].right].pos - self.polygon[v].pos,
+            );
             if d_r.abs() > eps {
                 return d_r;
             }
-            let d_l = determinant2x2(unit, self.polygon[self.polygon[other].left].pos - self.polygon[v].pos);
+            let d_l = determinant2x2(
+                unit,
+                self.polygon[self.polygon[other].left].pos - self.polygon[v].pos,
+            );
             if d_l.abs() > eps {
                 return d_l;
             }
@@ -331,9 +369,11 @@ impl EarClip {
     fn vert_cost(&self, v: usize, other: usize, open_side: Vec2) -> f64 {
         let left = self.polygon[v].left;
         let right = self.polygon[v].right;
-        let cost = self.vert_signed_dist(v, other, self.polygon[v].right_dir)
+        let cost = self
+            .vert_signed_dist(v, other, self.polygon[v].right_dir)
             .min(self.vert_signed_dist(left, other, self.polygon[left].right_dir));
-        let open_cost = determinant2x2(open_side, self.polygon[other].pos - self.polygon[right].pos);
+        let open_cost =
+            determinant2x2(open_side, self.polygon[other].pos - self.polygon[right].pos);
         cost.min(open_cost)
     }
 
@@ -351,10 +391,17 @@ impl EarClip {
         let radius = denom.sqrt() * 0.5;
         let open_side = safe_normalize_2d(open_side_vec);
 
-        let total_cost = dot2d(self.polygon[left].right_dir, self.polygon[v].right_dir) - 1.0 - self.epsilon;
+        let total_cost =
+            dot2d(self.polygon[left].right_dir, self.polygon[v].right_dir) - 1.0 - self.epsilon;
 
         // Folded ears: clip first
-        if ccw(self.polygon[v].pos, self.polygon[left].pos, self.polygon[right].pos, self.epsilon) == 0 {
+        if ccw(
+            self.polygon[v].pos,
+            self.polygon[left].pos,
+            self.polygon[right].pos,
+            self.epsilon,
+        ) == 0
+        {
             return total_cost;
         }
 
@@ -383,7 +430,8 @@ impl EarClip {
             {
                 let mut cost = self.vert_cost(v, test, open_side);
                 if cost < -self.epsilon {
-                    cost = Self::delaunay_cost(self.polygon[test].pos - center, scale, self.epsilon);
+                    cost =
+                        Self::delaunay_cost(self.polygon[test].pos - center, scale, self.epsilon);
                 }
                 if cost > tc {
                     tc = cost;
@@ -600,7 +648,9 @@ impl EarClip {
             edge_right
         } else if self.polygon[edge_right].pos.x < start_pos.x {
             edge
-        } else if self.polygon[edge_right].pos.y - start_pos.y > start_pos.y - self.polygon[edge].pos.y {
+        } else if self.polygon[edge_right].pos.y - start_pos.y
+            > start_pos.y - self.polygon[edge].pos.y
+        {
             edge
         } else {
             edge_right
@@ -623,7 +673,12 @@ impl EarClip {
             };
             for &vert in &verts {
                 let inside = above
-                    * ccw(start_pos, self.polygon[vert].pos, self.polygon[connector].pos, self.epsilon) as f64;
+                    * ccw(
+                        start_pos,
+                        self.polygon[vert].pos,
+                        self.polygon[connector].pos,
+                        self.epsilon,
+                    ) as f64;
                 let vp = self.polygon[vert].pos;
                 let cp = self.polygon[connector].pos;
                 if vp.x > start_pos.x - self.epsilon
@@ -672,14 +727,24 @@ impl EarClip {
             let version = self.polygon[v].ear_version;
             let seq = self.ear_seq;
             self.ear_seq += 1;
-            self.ears_queue.push(EarEntry { cost: K_BEST, idx: v, version, seq });
+            self.ears_queue.push(EarEntry {
+                cost: K_BEST,
+                idx: v,
+                version,
+                seq,
+            });
         } else if self.vert_is_convex(v, 2.0 * self.epsilon) {
             let cost = self.vert_ear_cost(v, collider);
             self.polygon[v].cost = cost;
             let version = self.polygon[v].ear_version;
             let seq = self.ear_seq;
             self.ear_seq += 1;
-            self.ears_queue.push(EarEntry { cost, idx: v, version, seq });
+            self.ears_queue.push(EarEntry {
+                cost,
+                idx: v,
+                version,
+                seq,
+            });
         } else {
             self.polygon[v].cost = 1.0; // reflex, not an ear
         }
@@ -688,14 +753,22 @@ impl EarClip {
     /// Build a 2D KD-tree collider of all polygon verts for ear cost queries.
     fn vert_collider(&self, start: usize) -> IdxCollider {
         let verts = match self.loop_verts(start) {
-            None => return IdxCollider { points: Vec::new(), itr: Vec::new() },
+            None => {
+                return IdxCollider {
+                    points: Vec::new(),
+                    itr: Vec::new(),
+                }
+            }
             Some(v) => v,
         };
 
         let mut itr = Vec::with_capacity(verts.len());
         let mut points = Vec::with_capacity(verts.len());
         for (k, &v) in verts.iter().enumerate() {
-            points.push(PolyVert { pos: self.polygon[v].pos, idx: k as i32 });
+            points.push(PolyVert {
+                pos: self.polygon[v].pos,
+                idx: k as i32,
+            });
             itr.push(v);
         }
 

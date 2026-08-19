@@ -22,9 +22,21 @@ fn r3(x: f64, y: f64, z: f64) -> R3 {
 }
 
 const TRI: [Vec3; 3] = [
-    Vec3 { x: 0.0, y: 0.0, z: 0.0 },
-    Vec3 { x: 8.0, y: 0.0, z: 0.0 },
-    Vec3 { x: 0.0, y: 8.0, z: 0.0 },
+    Vec3 {
+        x: 0.0,
+        y: 0.0,
+        z: 0.0,
+    },
+    Vec3 {
+        x: 8.0,
+        y: 0.0,
+        z: 0.0,
+    },
+    Vec3 {
+        x: 0.0,
+        y: 8.0,
+        z: 0.0,
+    },
 ];
 
 fn area2(a: &R2, b: &R2, c: &R2) -> Rational {
@@ -36,11 +48,7 @@ fn area2(a: &R2, b: &R2, c: &R2) -> Rational {
 fn validate(arr: &Arrangement) {
     let mut total = rat_zero();
     for t in &arr.tris {
-        let a2 = area2(
-            &arr.points2[t[0]],
-            &arr.points2[t[1]],
-            &arr.points2[t[2]],
-        );
+        let a2 = area2(&arr.points2[t[0]], &arr.points2[t[1]], &arr.points2[t[2]]);
         assert_eq!(Sign::of_rat(&a2), Sign::Pos, "sub-triangle not CCW");
         total = total + a2;
     }
@@ -50,13 +58,18 @@ fn validate(arr: &Arrangement) {
     let edges: BTreeSet<(usize, usize)> = arr
         .tris
         .iter()
-        .flat_map(|t| (0..3).map(|e| {
-            let (u, w) = (t[e], t[(e + 1) % 3]);
-            (u.min(w), u.max(w))
-        }))
+        .flat_map(|t| {
+            (0..3).map(|e| {
+                let (u, w) = (t[e], t[(e + 1) % 3]);
+                (u.min(w), u.max(w))
+            })
+        })
         .collect();
     for edge in arr.constraints.keys() {
-        assert!(edges.contains(edge), "constraint edge {edge:?} not realized");
+        assert!(
+            edges.contains(edge),
+            "constraint edge {edge:?} not realized"
+        );
     }
 }
 
@@ -172,10 +185,14 @@ fn polygon_boundary_ring() {
     let segments = (0..6)
         .map(|i| (hex[i].clone(), hex[(i + 1) % 6].clone(), 11))
         .collect();
-    let arr = build(TRI, &ArrangementInput {
-        points: vec![],
-        segments,
-    }, None)
+    let arr = build(
+        TRI,
+        &ArrangementInput {
+            points: vec![],
+            segments,
+        },
+        None,
+    )
     .unwrap();
     assert_eq!(arr.constraints.len(), 6);
     validate(&arr);
@@ -196,7 +213,11 @@ fn skew_plane_arrangement_lifts_exactly() {
     let mca = c.add(&a).scale(&half);
     let input = ArrangementInput {
         points: vec![],
-        segments: vec![(mab.clone(), mbc.clone(), 0), (mbc.clone(), mca.clone(), 1), (mca, mab, 2)],
+        segments: vec![
+            (mab.clone(), mbc.clone(), 0),
+            (mbc.clone(), mca.clone(), 1),
+            (mca, mab, 2),
+        ],
     };
     let arr = build(tri, &input, None).unwrap();
     use crate::robust::exact::predicates::orient3d_r;
@@ -285,7 +306,10 @@ fn box_pair_sweep_matches_the_naive_scan_exactly() {
                 }
             }
         }
-        let got: Vec<(usize, usize)> = overlapping_box_pairs(&boxes, None).unwrap().iter().collect();
+        let got: Vec<(usize, usize)> = overlapping_box_pairs(&boxes, None)
+            .unwrap()
+            .iter()
+            .collect();
         assert_eq!(got, want, "n={n} scale={scale}");
     }
 }

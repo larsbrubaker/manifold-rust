@@ -275,7 +275,8 @@ pub fn sat_edge_axes_disjoint(t1: &[[f64; 3]; 3], t2: &[[f64; 3]; 3]) -> bool {
             // Projection error bound: dot of a degree-2 axis with degree-1
             // coordinates; 64ε·Σ|axis_k|·(2·m_k) is conservative for every
             // rounding along the way.
-            let bound = 64.0 * EPS * (ma[0] * (2.0 * m[0]) + ma[1] * (2.0 * m[1]) + ma[2] * (2.0 * m[2]));
+            let bound =
+                64.0 * EPS * (ma[0] * (2.0 * m[0]) + ma[1] * (2.0 * m[1]) + ma[2] * (2.0 * m[2]));
             if !bound.is_finite() {
                 continue;
             }
@@ -301,11 +302,11 @@ pub fn sat_edge_axes_disjoint(t1: &[[f64; 3]; 3], t2: &[[f64; 3]; 3]) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::super::backend::{rat_from_f64, rat_new, Int};
     use super::super::predicates::{incircle_r, orient2d_r, orient3d_r, point_on_segment_r};
     use super::super::rational::{rat_to_f64, R2, R3};
     use super::*;
     use crate::linalg::{Vec2, Vec3};
-    use super::super::backend::{rat_from_f64, rat_new, Int};
 
     struct Lcg(u64);
     impl Lcg {
@@ -405,9 +406,7 @@ mod tests {
         for (ri, &(base, ulp, spread)) in regimes.iter().enumerate() {
             for _ in 0..n {
                 let mut kk = || (rng.next_f64(1.0) * spread as f64) as i64;
-                let p: Vec<[f64; 2]> = (0..4)
-                    .map(|_| clustered(base, ulp, [kk(), kk()]))
-                    .collect();
+                let p: Vec<[f64; 2]> = (0..4).map(|_| clustered(base, ulp, [kk(), kk()])).collect();
                 let r: Vec<R2> = p.iter().map(|q| ex2(*q)).collect();
                 // Coincident points make the predicates degenerate; skip.
                 if (0..4).any(|i| (i + 1..4).any(|j| p[i] == p[j])) {
@@ -440,7 +439,14 @@ mod tests {
     /// lattice points per quadrant-pair. Every coordinate is a small integer,
     /// so all four inputs are exact and the true incircle sign is Zero.
     const CIRCLE65: [[i64; 2]; 8] = [
-        [65, 0], [63, 16], [60, 25], [52, 39], [39, 52], [25, 60], [16, 63], [0, 65],
+        [65, 0],
+        [63, 16],
+        [60, 25],
+        [52, 39],
+        [39, 52],
+        [25, 60],
+        [16, 63],
+        [0, 65],
     ];
 
     /// A filter must NEVER certify a nonzero sign for exactly cocircular
@@ -526,8 +532,12 @@ mod tests {
                 let i = ((rng.next_f64(1.0).abs() * 8.0) as usize).min(7);
                 CIRCLE65[i]
             };
-            let (mut p, mut q, mut r, mut s) =
-                (pick(&mut rng), pick(&mut rng), pick(&mut rng), pick(&mut rng));
+            let (mut p, mut q, mut r, mut s) = (
+                pick(&mut rng),
+                pick(&mut rng),
+                pick(&mut rng),
+                pick(&mut rng),
+            );
             // Distinct picks only.
             if p == q || p == r || p == s || q == r || q == s || r == s {
                 continue;
@@ -613,24 +623,26 @@ mod tests {
             let exact = point_on_segment_r(&p, &a, &b);
             match not_on_segment_a(approx3(&p), aa, ab) {
                 Some(false) => {
-                    assert!(!exact, "prefilter wrongly rejected an on-segment point #{i}");
+                    assert!(
+                        !exact,
+                        "prefilter wrongly rejected an on-segment point #{i}"
+                    );
                     rejected += 1;
                 }
                 Some(true) => unreachable!(),
                 None => {}
             }
         }
-        assert!(rejected > 3900, "prefilter should reject generic points ({rejected}/4000)");
+        assert!(
+            rejected > 3900,
+            "prefilter should reject generic points ({rejected}/4000)"
+        );
         // And points genuinely on the segment always defer or agree.
         for k in 1..20 {
             let t = rat_new(k.into(), 21.into());
             let on = a.add(&b.sub(&a).scale(&t));
             assert!(point_on_segment_r(&on, &a, &b));
-            assert_ne!(
-                not_on_segment_a(approx3(&on), aa, ab),
-                Some(false),
-                "k={k}"
-            );
+            assert_ne!(not_on_segment_a(approx3(&on), aa, ab), Some(false), "k={k}");
         }
     }
 }

@@ -36,11 +36,14 @@ fn cube_soup(origin: [f32; 3], size: f32) -> (Vec<f32>, Vec<u32>) {
 #[test]
 fn robust_import_accepts_soup_strict_rejects() {
     let (verts, tris) = cube_soup([0.0; 3], 2.0);
-    let strict = unsafe {
-        manifold_rs_from_mesh(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3)
-    };
+    let strict =
+        unsafe { manifold_rs_from_mesh(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3) };
     assert!(!strict.is_null());
-    assert_eq!(unsafe { manifold_rs_status(strict) }, 2, "strict: NotManifold");
+    assert_eq!(
+        unsafe { manifold_rs_status(strict) },
+        2,
+        "strict: NotManifold"
+    );
     unsafe { manifold_rs_destroy(strict) };
 
     let robust = unsafe {
@@ -106,7 +109,10 @@ fn auto_engine_boolean_on_soup_through_batch() {
     assert!(!mesh.is_null());
     let mut len = 0usize;
     let tri_ptr = unsafe { manifold_rs_meshgl_tri_verts(mesh, &mut len) };
-    assert!(!tri_ptr.is_null() && len > 0, "difference produced no triangles");
+    assert!(
+        !tri_ptr.is_null() && len > 0,
+        "difference produced no triangles"
+    );
     unsafe {
         manifold_rs_meshgl_destroy(mesh);
         manifold_rs_destroy(diff);
@@ -133,8 +139,7 @@ unsafe fn exported_signed_volume(m: *const ManifoldRs) -> f64 {
     let mut vol = 0.0;
     for t in tris.chunks_exact(3) {
         let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
-        vol += (a[0] * (b[1] * c[2] - b[2] * c[1])
-            - a[1] * (b[0] * c[2] - b[2] * c[0])
+        vol += (a[0] * (b[1] * c[2] - b[2] * c[1]) - a[1] * (b[0] * c[2] - b[2] * c[0])
             + a[2] * (b[0] * c[1] - b[1] * c[0]))
             / 6.0;
     }
@@ -152,7 +157,13 @@ fn repair_orientation_rewinds_inverted_cube() {
         .flat_map(|t| [t[0], t[2], t[1]])
         .collect();
     let broken = unsafe {
-        manifold_rs_from_mesh(verts.as_ptr(), verts.len(), inverted.as_ptr(), inverted.len(), 3)
+        manifold_rs_from_mesh(
+            verts.as_ptr(),
+            verts.len(),
+            inverted.as_ptr(),
+            inverted.len(),
+            3,
+        )
     };
     assert_eq!(unsafe { manifold_rs_status(broken) }, 0);
     assert!(unsafe { exported_signed_volume(broken) } < 0.0);
@@ -175,9 +186,8 @@ fn repair_orientation_rewinds_inverted_cube() {
 fn has_self_intersections_flags_doubled_surface() {
     // A clean cube: only shared-edge/vertex contacts.
     let (verts, tris) = cube_mesh([0.0; 3], 2.0);
-    let clean = unsafe {
-        manifold_rs_from_mesh(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3)
-    };
+    let clean =
+        unsafe { manifold_rs_from_mesh(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3) };
     assert_eq!(unsafe { manifold_rs_status(clean) }, 0);
     assert_eq!(unsafe { manifold_rs_has_self_intersections(clean) }, 0);
 
@@ -231,7 +241,13 @@ fn boolean_progress_rule_keeps_inside_out_geometry() {
         .flat_map(|t| [t[0], t[2], t[1]])
         .collect();
     let a = unsafe {
-        manifold_rs_from_mesh(verts.as_ptr(), verts.len(), inverted.as_ptr(), inverted.len(), 3)
+        manifold_rs_from_mesh(
+            verts.as_ptr(),
+            verts.len(),
+            inverted.as_ptr(),
+            inverted.len(),
+            3,
+        )
     };
     let b = super::tests::ffi_cube([1.0, 1.0, 1.0], 2.0);
     assert_eq!(unsafe { manifold_rs_status(a) }, 0);

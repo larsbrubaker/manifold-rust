@@ -19,7 +19,7 @@ use std::collections::HashMap;
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{cross, dot, length, Mat3, Vec3, Vec4};
 use crate::math;
-use crate::types::{K_PI, K_TWO_PI, Smoothness, TriRef};
+use crate::types::{Smoothness, TriRef, K_PI, K_TWO_PI};
 
 /// Minimum sharp angle in degrees, below which edges are considered coplanar.
 /// Floating point noise in the dihedral angle computation can reach ~1e-6
@@ -127,7 +127,8 @@ impl ManifoldImpl {
 
     pub fn tangent_from_normal(&self, normal: Vec3, halfedge: usize) -> Vec4 {
         let edge = self.halfedge[halfedge];
-        let edge_vec = self.vert_pos[edge.end_vert as usize] - self.vert_pos[edge.start_vert as usize];
+        let edge_vec =
+            self.vert_pos[edge.end_vert as usize] - self.vert_pos[edge.start_vert as usize];
         let edge_normal =
             self.face_normal[halfedge / 3] + self.face_normal[edge.paired_halfedge as usize / 3];
         // Per C++ #1671 (More smoothing fixes): pick the bi-tangent from the
@@ -239,7 +240,11 @@ impl ManifoldImpl {
                         continue;
                     }
                     vert_ref[vert] = self.mesh_relation.tri_ref[tri];
-                    vert_flat_face[vert] = if vert_flat_face[vert] == -1 { tri as i32 } else { -2 };
+                    vert_flat_face[vert] = if vert_flat_face[vert] == -1 {
+                        tri as i32
+                    } else {
+                        -2
+                    };
                 }
             }
         }
@@ -354,9 +359,8 @@ impl ManifoldImpl {
                         new_properties[prop as usize * num_prop + normal_idx + 1] = normal.y;
                         new_properties[prop as usize * num_prop + normal_idx + 2] = normal.z;
                     }
-                    current = crate::types::next_halfedge(
-                        self.halfedge[current].paired_halfedge,
-                    ) as usize;
+                    current = crate::types::next_halfedge(self.halfedge[current].paired_halfedge)
+                        as usize;
                     if current == start_edge {
                         break;
                     }
@@ -371,9 +375,8 @@ impl ManifoldImpl {
                 let mut current = start_edge;
                 let mut prev_face = current / 3;
                 loop {
-                    let next = crate::types::next_halfedge(
-                        self.halfedge[current].paired_halfedge,
-                    ) as usize;
+                    let next = crate::types::next_halfedge(self.halfedge[current].paired_halfedge)
+                        as usize;
                     let face = next / 3;
                     let dihedral =
                         angle_between(self.face_normal[face], self.face_normal[prev_face])
@@ -409,9 +412,9 @@ impl ManifoldImpl {
                 let mut here_ev = get_edge_vec(end_edge);
                 current = end_edge;
                 loop {
-                    let next_he = crate::types::next_halfedge(
-                        self.halfedge[current].paired_halfedge,
-                    ) as usize;
+                    let next_he =
+                        crate::types::next_halfedge(self.halfedge[current].paired_halfedge)
+                            as usize;
                     let next_face = next_he / 3;
                     let mut next_ev = get_edge_vec(next_he);
 
@@ -461,9 +464,8 @@ impl ManifoldImpl {
                 let mut last_prop: i32 = -1;
                 let mut new_prop: i32 = -1;
                 let mut idx = 0usize;
-                current = crate::types::next_halfedge(
-                    self.halfedge[end_edge].paired_halfedge,
-                ) as usize;
+                current =
+                    crate::types::next_halfedge(self.halfedge[end_edge].paired_halfedge) as usize;
                 loop {
                     let prop = old_halfedge_prop[current];
                     let g = if idx < group.len() { group[idx] } else { 0 };
@@ -476,13 +478,17 @@ impl ManifoldImpl {
                         let src_start = (prop as usize) * old_num_prop;
                         for p in 0..old_num_prop.min(num_prop) {
                             if src_start + p < orig_props.len() {
-                                new_properties[new_prop as usize * num_prop + p] = orig_props[src_start + p];
+                                new_properties[new_prop as usize * num_prop + p] =
+                                    orig_props[src_start + p];
                             }
                         }
                         if g < normals.len() {
-                            new_properties[new_prop as usize * num_prop + normal_idx] = normals[g].x;
-                            new_properties[new_prop as usize * num_prop + normal_idx + 1] = normals[g].y;
-                            new_properties[new_prop as usize * num_prop + normal_idx + 2] = normals[g].z;
+                            new_properties[new_prop as usize * num_prop + normal_idx] =
+                                normals[g].x;
+                            new_properties[new_prop as usize * num_prop + normal_idx + 1] =
+                                normals[g].y;
+                            new_properties[new_prop as usize * num_prop + normal_idx + 2] =
+                                normals[g].z;
                         }
                     } else if prop != last_prop {
                         // Update property vertex
@@ -497,17 +503,19 @@ impl ManifoldImpl {
                         }
                         if g < normals.len() {
                             new_properties[prop as usize * num_prop + normal_idx] = normals[g].x;
-                            new_properties[prop as usize * num_prop + normal_idx + 1] = normals[g].y;
-                            new_properties[prop as usize * num_prop + normal_idx + 2] = normals[g].z;
+                            new_properties[prop as usize * num_prop + normal_idx + 1] =
+                                normals[g].y;
+                            new_properties[prop as usize * num_prop + normal_idx + 2] =
+                                normals[g].z;
                         }
                     }
 
                     self.halfedge[current].prop_vert = new_prop;
                     idx += 1;
 
-                    let next_current = crate::types::next_halfedge(
-                        self.halfedge[current].paired_halfedge,
-                    ) as usize;
+                    let next_current =
+                        crate::types::next_halfedge(self.halfedge[current].paired_halfedge)
+                            as usize;
                     // Stop after visiting end_edge (C++ stops when current == halfedge)
                     if current == end_edge {
                         break;

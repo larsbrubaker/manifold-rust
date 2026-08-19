@@ -93,7 +93,9 @@ fn locate(root: &str, ids: &[u64]) -> Vec<(u64, std::path::PathBuf)> {
     };
     for repo in repos.flatten() {
         let meshes = repo.path().join("meshes");
-        let Ok(entries) = std::fs::read_dir(&meshes) else { continue };
+        let Ok(entries) = std::fs::read_dir(&meshes) else {
+            continue;
+        };
         for f in entries.flatten() {
             let name = f.file_name().to_string_lossy().to_string();
             if let Some(stem) = name.strip_suffix(".stl.zip") {
@@ -157,7 +159,11 @@ fn import_stl_bytes(data: &[u8]) -> Manifold {
             max[k] = max[k].max(v);
         }
     }
-    let c = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0, (min[2] + max[2]) / 2.0];
+    let c = [
+        (min[0] + max[0]) / 2.0,
+        (min[1] + max[1]) / 2.0,
+        (min[2] + max[2]) / 2.0,
+    ];
     let side = (max[0] - min[0]).max(max[1] - min[1]).max(max[2] - min[2]);
     let s = if side > 0.0 { 2.0 / side } else { 1.0 };
     for i in 0..nv {
@@ -248,8 +254,7 @@ fn referee_volume(p: &[[Vec3; 3]], q: &[[Vec3; 3]], samples: usize) -> (f64, f64
     let mut total = 0usize;
     let classify = |x: f64, y: f64, z: f64| -> bool {
         let pt = R3::from_vec3(Vec3::new(x, y, z));
-        winding_number_indexed(&pt, p, &idx_p) >= 1
-            || winding_number_indexed(&pt, q, &idx_q) >= 1
+        winding_number_indexed(&pt, p, &idx_p) >= 1 || winding_number_indexed(&pt, q, &idx_q) >= 1
     };
     for ix in 0..n {
         for iy in 0..n {
@@ -345,7 +350,9 @@ fn main() {
             continue;
         }
         let is_soup = a.as_impl().is_soup;
-        let b = a.rotate(30.0, 45.0, 60.0).translate(Vec3::new(0.3, 0.0, 0.0));
+        let b = a
+            .rotate(30.0, 45.0, 60.0)
+            .translate(Vec3::new(0.3, 0.0, 0.0));
         let p_tris = soup::impl_to_tris(a.as_impl());
         let q_tris = soup::impl_to_tris(b.as_impl());
 

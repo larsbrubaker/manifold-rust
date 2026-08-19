@@ -15,7 +15,7 @@ use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use crate::linalg::Vec3;
 
-use super::exact::rational::{r3_eq, R3, R3Key};
+use super::exact::rational::{r3_eq, R3Key, R3};
 
 /// Canonical (sorted) edge between two interned vertex ids. Downstream
 /// stages (classify rings, propagate flood fill) key their maps on these

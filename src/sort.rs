@@ -3,9 +3,9 @@
 // Ports src/sort.cpp from the Manifold C++ library.
 // The Collider is stubbed (Phase 10 will implement it fully).
 
+use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::Vec3;
 use crate::types::{Box as BBox, Halfedge};
-use crate::impl_mesh::ManifoldImpl;
 
 // -----------------------------------------------------------------------
 // Morton code (30-bit, 10 bits per axis)
@@ -56,7 +56,9 @@ pub fn sort_verts(mesh: &mut ManifoldImpl) {
     let bbox = mesh.bbox;
 
     // Compute Morton code for each vertex
-    let vert_morton: Vec<u32> = mesh.vert_pos.iter()
+    let vert_morton: Vec<u32> = mesh
+        .vert_pos
+        .iter()
         .map(|&p| morton_code(p, &bbox))
         .collect();
 
@@ -80,7 +82,8 @@ pub fn sort_verts(mesh: &mut ManifoldImpl) {
     // Permute vert normals if present
     if mesh.vert_normal.len() == num_vert {
         let old_n = mesh.vert_normal.clone();
-        mesh.vert_normal.resize(new_num_vert, Vec3::new(0.0, 0.0, 0.0));
+        mesh.vert_normal
+            .resize(new_num_vert, Vec3::new(0.0, 0.0, 0.0));
         for (new_idx, &old_idx) in vert_new2old_trimmed.iter().enumerate() {
             mesh.vert_normal[new_idx] = old_n[old_idx as usize];
         }
@@ -175,7 +178,9 @@ pub fn gather_faces(mesh: &mut ManifoldImpl, face_new2old: &[usize]) {
     // Permute tri_ref if present
     if mesh.mesh_relation.tri_ref.len() == old_num_tri {
         let old_tri_ref = mesh.mesh_relation.tri_ref.clone();
-        mesh.mesh_relation.tri_ref.resize(num_tri, Default::default());
+        mesh.mesh_relation
+            .tri_ref
+            .resize(num_tri, Default::default());
         for (new_f, &old_f) in face_new2old.iter().enumerate() {
             mesh.mesh_relation.tri_ref[new_f] = old_tri_ref[old_f];
         }
@@ -203,7 +208,8 @@ pub fn gather_faces(mesh: &mut ManifoldImpl, face_new2old: &[usize]) {
 
     mesh.halfedge.resize(3 * num_tri, Halfedge::default());
     if has_tangent {
-        mesh.halfedge_tangent.resize(3 * num_tri, Default::default());
+        mesh.halfedge_tangent
+            .resize(3 * num_tri, Default::default());
     }
 
     for new_face in 0..num_tri {
@@ -314,8 +320,8 @@ pub fn sort_geometry(mesh: &mut ManifoldImpl) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::linalg::Mat3x4;
     use crate::impl_mesh::ManifoldImpl;
+    use crate::linalg::Mat3x4;
 
     #[test]
     fn test_spread_bits3() {
@@ -386,11 +392,18 @@ mod tests {
         assert_eq!(m.halfedge.len(), halfedge_count);
         // After sort, paired halfedges should still be valid
         for (i, edge) in m.halfedge.iter().enumerate() {
-            assert!(edge.paired_halfedge >= 0,
-                "halfedge {} has invalid paired_halfedge {}", i, edge.paired_halfedge);
+            assert!(
+                edge.paired_halfedge >= 0,
+                "halfedge {} has invalid paired_halfedge {}",
+                i,
+                edge.paired_halfedge
+            );
             let paired = &m.halfedge[edge.paired_halfedge as usize];
-            assert_eq!(paired.paired_halfedge, i as i32,
-                "halfedge {} paired -> {} but paired doesn't point back", i, edge.paired_halfedge);
+            assert_eq!(
+                paired.paired_halfedge, i as i32,
+                "halfedge {} paired -> {} but paired doesn't point back",
+                i, edge.paired_halfedge
+            );
         }
     }
 
@@ -400,9 +413,17 @@ mod tests {
         let n = m.vert_pos.len();
         // Identity permutation should not change anything
         let identity: Vec<i32> = (0..n as i32).collect();
-        let before: Vec<_> = m.halfedge.iter().map(|e| (e.start_vert, e.end_vert)).collect();
+        let before: Vec<_> = m
+            .halfedge
+            .iter()
+            .map(|e| (e.start_vert, e.end_vert))
+            .collect();
         reindex_verts(&mut m, &identity, n);
-        let after: Vec<_> = m.halfedge.iter().map(|e| (e.start_vert, e.end_vert)).collect();
+        let after: Vec<_> = m
+            .halfedge
+            .iter()
+            .map(|e| (e.start_vert, e.end_vert))
+            .collect();
         assert_eq!(before, after);
     }
 

@@ -343,7 +343,10 @@ fn thingi_68730_repair_orientation_restores_material() {
     assert_eq!(repaired.status(), Error::NoError, "repair status");
     assert_eq!(repaired.num_tri(), broken.num_tri());
     assert!(!repaired.as_impl().is_soup, "68730 imports as a manifold");
-    assert!(repaired.as_impl().is_manifold(), "pairing must survive repair");
+    assert!(
+        repaired.as_impl().is_manifold(),
+        "pairing must survive repair"
+    );
 
     // Repaired, the divergence volume and the sampled {w >= 1} material must
     // agree: every body now bounds solid material exactly once.
@@ -400,7 +403,10 @@ fn thingi_61459_repair_preserves_nested_solid() {
 
     // Plan level: nothing here is inside-out, so no shell may be rewound.
     let plan = crate::robust::repair::plan_repair(&crate::robust::soup::impl_to_tris(m.as_impl()));
-    assert_eq!(plan.num_shells, 2, "156-tri body plus a 20-tri nested shell");
+    assert_eq!(
+        plan.num_shells, 2,
+        "156-tri body plus a 20-tri nested shell"
+    );
     assert_eq!(plan.flipped_shells, 0, "repair must be a no-op on 61459");
 
     let repaired = m.repair_orientation();
@@ -444,7 +450,9 @@ fn thingi_301921_union_rotated_self_matches_exact() {
     let a = import_stl_like_demo(MODEL_301921);
     assert_eq!(a.status(), Error::NoError, "operand A import");
     assert!(!a.as_impl().is_soup, "operand A should weld to a manifold");
-    let b = a.rotate(30.0, 45.0, 60.0).translate(Vec3::new(0.3, 0.0, 0.0));
+    let b = a
+        .rotate(30.0, 45.0, 60.0)
+        .translate(Vec3::new(0.3, 0.0, 0.0));
     let robust = a.union_with_engine(&b, BooleanEngine::Robust);
     let exact = a.union_with_engine(&b, BooleanEngine::Exact);
     assert_eq!(robust.status(), Error::NoError, "robust union status");
@@ -465,7 +473,9 @@ const MODEL_36374: &[u8] = include_bytes!("testdata/36374.stl");
 fn thingi_36374_union_rotated_self_is_closed() {
     let a = import_stl_like_demo(MODEL_36374);
     assert_eq!(a.status(), Error::NoError, "operand A import");
-    let b = a.rotate(30.0, 45.0, 60.0).translate(Vec3::new(0.3, 0.0, 0.0));
+    let b = a
+        .rotate(30.0, 45.0, 60.0)
+        .translate(Vec3::new(0.3, 0.0, 0.0));
     let result = a.union_with_engine(&b, BooleanEngine::Robust);
     assert_eq!(result.status(), Error::NoError, "robust union status");
     assert!(result.volume() > 0.0, "union volume must be positive");
@@ -481,7 +491,9 @@ fn thingi_36374_union_rotated_self_is_closed() {
 fn thingi_36088_arrangement_is_consistent() {
     let a = import_stl_like_demo(MODEL_36088);
     assert_eq!(a.status(), Error::NoError, "operand A import");
-    let b = a.rotate(30.0, 45.0, 60.0).translate(Vec3::new(0.3, 0.0, 0.0));
+    let b = a
+        .rotate(30.0, 45.0, 60.0)
+        .translate(Vec3::new(0.3, 0.0, 0.0));
     assert_arrangement_consistent(&a, &b, "36088 ∪ rotated self");
 }
 
@@ -509,11 +521,19 @@ fn thingi_51360_nonzero_rule_keeps_the_inverted_half() {
         .translate(Vec3::new(0.7, -0.2, 0.4));
     assert_eq!(b.status(), Error::NoError, "operand B import");
 
-    let positive =
-        a.boolean_with_engine_and_rule(&b, OpType::Add, BooleanEngine::Robust, WindingRule::Positive);
+    let positive = a.boolean_with_engine_and_rule(
+        &b,
+        OpType::Add,
+        BooleanEngine::Robust,
+        WindingRule::Positive,
+    );
     assert_eq!(positive.status(), Error::NoError, "positive-rule status");
-    let nonzero =
-        a.boolean_with_engine_and_rule(&b, OpType::Add, BooleanEngine::Robust, WindingRule::Nonzero);
+    let nonzero = a.boolean_with_engine_and_rule(
+        &b,
+        OpType::Add,
+        BooleanEngine::Robust,
+        WindingRule::Nonzero,
+    );
     assert_eq!(nonzero.status(), Error::NoError, "nonzero-rule status");
 
     // The default rule must be untouched by the feature.

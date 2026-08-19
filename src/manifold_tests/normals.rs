@@ -140,5 +140,8 @@ fn test_cpp_normals_non_standard_slot_not_recorded() {
         .calculate_normals(3, DEFAULT_ANGLE)
         .get_mesh_gl(-1);
     assert!(!mesh.run_original_id.is_empty(), "no runs");
-    assert!(!mesh.has_normals(0), "non-standard slot must not record hasNormals");
+    assert!(
+        !mesh.has_normals(0),
+        "non-standard slot must not record hasNormals"
+    );
 }

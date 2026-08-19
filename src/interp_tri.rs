@@ -19,14 +19,16 @@
 //! producing smooth curved surfaces instead of flat linear interpolation.
 
 use crate::impl_mesh::ManifoldImpl;
-use crate::linalg::{
-    cross, dot, qconj, qrot, qxdir, rotation_quat_mat, Mat3, Vec3, Vec4,
-};
+use crate::linalg::{cross, dot, qconj, qrot, qxdir, rotation_quat_mat, Mat3, Vec3, Vec4};
 use crate::types::Barycentric;
 
 /// Next index in a triangle (0→1→2→0)
 fn next3(i: i32) -> i32 {
-    if i == 2 { 0 } else { i + 1 }
+    if i == 2 {
+        0
+    } else {
+        i + 1
+    }
 }
 
 const K_PRECISION: f64 = 1e-12;
@@ -196,7 +198,11 @@ fn bezier2bezier(
 
     let n_tangents_x = [
         safe_normalize(Vec3::new(tangents_x[0].x, tangents_x[0].y, tangents_x[0].z)),
-        safe_normalize(Vec3::new(-tangents_x[1].x, -tangents_x[1].y, -tangents_x[1].z)),
+        safe_normalize(Vec3::new(
+            -tangents_x[1].x,
+            -tangents_x[1].y,
+            -tangents_x[1].z,
+        )),
     ];
     let bi_tangents = [
         orthogonal_to(
@@ -246,7 +252,10 @@ fn bezier2bezier(
     };
     let delta_w = tangents_y[0].w + (tangents_y[1].w - tangents_y[0].w) * x;
 
-    [homogeneous_3(end), Vec4::new(delta.x, delta.y, delta.z, delta_w)]
+    [
+        homogeneous_3(end),
+        Vec4::new(delta.x, delta.y, delta.z, delta_w),
+    ]
 }
 
 /// Full 2D Bezier surface evaluation
@@ -288,11 +297,7 @@ fn bezier_2d(
 /// Port of C++ `InterpTri::operator()(int vert)`.
 /// This repositions each vertex based on its barycentric coordinates and the
 /// halfedge tangent vectors from the original mesh, producing a smooth surface.
-pub fn interp_tri(
-    vert_pos: &mut [Vec3],
-    vert_bary: &[Barycentric],
-    old: &ManifoldImpl,
-) {
+pub fn interp_tri(vert_pos: &mut [Vec3], vert_bary: &[Barycentric], old: &ManifoldImpl) {
     let num_vert = vert_pos.len().min(vert_bary.len());
     for vert in 0..num_vert {
         let tri = vert_bary[vert].tri;
@@ -302,7 +307,12 @@ pub fn interp_tri(
         let uvw = vert_bary[vert].uvw;
 
         let halfedges_ivec = old.get_halfedges_quad(tri);
-        let halfedges = [halfedges_ivec[0], halfedges_ivec[1], halfedges_ivec[2], halfedges_ivec[3]];
+        let halfedges = [
+            halfedges_ivec[0],
+            halfedges_ivec[1],
+            halfedges_ivec[2],
+            halfedges_ivec[3],
+        ];
         let corners = [
             old.vert_pos[old.halfedge[halfedges[0] as usize].start_vert as usize],
             old.vert_pos[old.halfedge[halfedges[1] as usize].start_vert as usize],
@@ -337,12 +347,9 @@ pub fn interp_tri(
                 old.halfedge_tangent[halfedges[2] as usize],
             ];
             let tangent_l = [
-                old.halfedge_tangent
-                    [old.halfedge[halfedges[2] as usize].paired_halfedge as usize],
-                old.halfedge_tangent
-                    [old.halfedge[halfedges[0] as usize].paired_halfedge as usize],
-                old.halfedge_tangent
-                    [old.halfedge[halfedges[1] as usize].paired_halfedge as usize],
+                old.halfedge_tangent[old.halfedge[halfedges[2] as usize].paired_halfedge as usize],
+                old.halfedge_tangent[old.halfedge[halfedges[0] as usize].paired_halfedge as usize],
+                old.halfedge_tangent[old.halfedge[halfedges[1] as usize].paired_halfedge as usize],
             ];
             let centroid = Vec3::new(
                 (corners[0].x + corners[1].x + corners[2].x) / 3.0,
@@ -378,18 +385,14 @@ pub fn interp_tri(
             // Quad case
             let tangents_x = [
                 old.halfedge_tangent[halfedges[0] as usize],
-                old.halfedge_tangent
-                    [old.halfedge[halfedges[0] as usize].paired_halfedge as usize],
+                old.halfedge_tangent[old.halfedge[halfedges[0] as usize].paired_halfedge as usize],
                 old.halfedge_tangent[halfedges[2] as usize],
-                old.halfedge_tangent
-                    [old.halfedge[halfedges[2] as usize].paired_halfedge as usize],
+                old.halfedge_tangent[old.halfedge[halfedges[2] as usize].paired_halfedge as usize],
             ];
             let tangents_y = [
-                old.halfedge_tangent
-                    [old.halfedge[halfedges[3] as usize].paired_halfedge as usize],
+                old.halfedge_tangent[old.halfedge[halfedges[3] as usize].paired_halfedge as usize],
                 old.halfedge_tangent[halfedges[1] as usize],
-                old.halfedge_tangent
-                    [old.halfedge[halfedges[1] as usize].paired_halfedge as usize],
+                old.halfedge_tangent[old.halfedge[halfedges[1] as usize].paired_halfedge as usize],
                 old.halfedge_tangent[halfedges[3] as usize],
             ];
             let centroid = Vec3::new(

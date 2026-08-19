@@ -51,7 +51,11 @@ pub fn soupify(
     tri_prop: &[IVec3],
     tri_vert: &[IVec3],
 ) -> Result<(), Error> {
-    let position_tris: &[IVec3] = if tri_vert.is_empty() { tri_prop } else { tri_vert };
+    let position_tris: &[IVec3] = if tri_vert.is_empty() {
+        tri_prop
+    } else {
+        tri_vert
+    };
     debug_assert_eq!(position_tris.len(), tri_prop.len());
 
     // Weld vertex ids by exact position for the closedness bookkeeping only
@@ -69,7 +73,9 @@ pub fn soupify(
     for (t, tv) in position_tris.iter().enumerate() {
         let (a, b, c) = (tv.x as usize, tv.y as usize, tv.z as usize);
         let (wa, wb, wc) = (welded_id[a], welded_id[b], welded_id[c]);
-        if wa == wb || wb == wc || wc == wa
+        if wa == wb
+            || wb == wc
+            || wc == wa
             || is_degenerate(imp.vert_pos[a], imp.vert_pos[b], imp.vert_pos[c])
         {
             continue; // paper §5: degenerate triangles are safe to drop
@@ -112,7 +118,10 @@ pub fn soupify(
     }
     let mut open: BTreeMap<(i32, i32), Vec<usize>> = BTreeMap::new();
     for (idx, he) in halfedges.iter().enumerate() {
-        let (u, v) = (welded_id[he.start_vert as usize], welded_id[he.end_vert as usize]);
+        let (u, v) = (
+            welded_id[he.start_vert as usize],
+            welded_id[he.end_vert as usize],
+        );
         open.entry((u.min(v), u.max(v))).or_default().push(idx);
     }
     for (_key, mut idxs) in open {
@@ -147,7 +156,11 @@ pub fn soupify(
             let c = imp.vert_pos[imp.halfedge[3 * t + 2].start_vert as usize];
             let n = crate::linalg::cross(b - a, c - a);
             let len = crate::linalg::length(n);
-            if len > 0.0 { n / len } else { Vec3::new(0.0, 0.0, 0.0) }
+            if len > 0.0 {
+                n / len
+            } else {
+                Vec3::new(0.0, 0.0, 0.0)
+            }
         })
         .collect();
     imp.vert_normal.clear();

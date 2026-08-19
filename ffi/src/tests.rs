@@ -25,14 +25,30 @@ pub(crate) fn cube_mesh(origin: [f32; 3], size: f32) -> (Vec<f32>, Vec<u32>) {
     let [x, y, z] = origin;
     let s = size;
     let verts = vec![
-        x, y, z,
-        x + s, y, z,
-        x + s, y + s, z,
-        x, y + s, z,
-        x, y, z + s,
-        x + s, y, z + s,
-        x + s, y + s, z + s,
-        x, y + s, z + s,
+        x,
+        y,
+        z,
+        x + s,
+        y,
+        z,
+        x + s,
+        y + s,
+        z,
+        x,
+        y + s,
+        z,
+        x,
+        y,
+        z + s,
+        x + s,
+        y,
+        z + s,
+        x + s,
+        y + s,
+        z + s,
+        x,
+        y + s,
+        z + s,
     ];
     let tris = vec![
         0, 2, 1, 0, 3, 2, // -Z
@@ -49,9 +65,8 @@ pub(crate) fn cube_mesh(origin: [f32; 3], size: f32) -> (Vec<f32>, Vec<u32>) {
 /// import shows up as a test failure at the point of construction.
 pub(crate) fn ffi_cube(origin: [f32; 3], size: f32) -> *mut ManifoldRs {
     let (verts, tris) = cube_mesh(origin, size);
-    let handle = unsafe {
-        manifold_rs_from_mesh(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3)
-    };
+    let handle =
+        unsafe { manifold_rs_from_mesh(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3) };
     assert!(!handle.is_null(), "cube import returned NULL");
     handle
 }
@@ -113,8 +128,14 @@ fn version_string_is_nul_terminated() {
     let ptr = manifold_rs_version();
     assert!(!ptr.is_null());
     let text = unsafe { std::ffi::CStr::from_ptr(ptr) }.to_str().unwrap();
-    assert!(text.starts_with("manifold-ffi "), "unexpected version: {text}");
-    assert!(text.contains("manifold-rust "), "unexpected version: {text}");
+    assert!(
+        text.starts_with("manifold-ffi "),
+        "unexpected version: {text}"
+    );
+    assert!(
+        text.contains("manifold-rust "),
+        "unexpected version: {text}"
+    );
 }
 
 #[test]
@@ -183,7 +204,11 @@ fn three_operand_subtract_removes_both_cutters() {
     let b = unsafe { manifold_rs_as_original(ffi_cube([-0.1, -0.1, -0.1], 0.3)) };
     let c = unsafe { manifold_rs_as_original(ffi_cube([0.8, 0.8, 0.8], 0.3)) };
 
-    let inputs = [a as *const ManifoldRs, b as *const ManifoldRs, c as *const ManifoldRs];
+    let inputs = [
+        a as *const ManifoldRs,
+        b as *const ManifoldRs,
+        c as *const ManifoldRs,
+    ];
     let result = unsafe { manifold_rs_batch_boolean(inputs.as_ptr(), inputs.len(), 1) };
     assert!(!result.is_null());
     assert_eq!(unsafe { manifold_rs_status(result) }, 0);
@@ -191,9 +216,7 @@ fn three_operand_subtract_removes_both_cutters() {
 
     // Same operation via the core crate's CSG tree: bit-exact equality pins
     // that the FFI hands the operands to the tree in the documented order.
-    let leaf = |m: *const ManifoldRs| {
-        CsgNode::leaf(unsafe { &*m }.inner.as_impl().clone())
-    };
+    let leaf = |m: *const ManifoldRs| CsgNode::leaf(unsafe { &*m }.inner.as_impl().clone());
     let expected_impl = CsgNode::op_n(OpType::Subtract, vec![leaf(a), leaf(b), leaf(c)]).evaluate();
     let expected = Manifold::from_impl(expected_impl);
     let expected_mesh = expected.get_mesh_gl(-1);
@@ -237,7 +260,10 @@ fn intersect_of_overlapping_cubes_is_non_empty() {
     assert_eq!(unsafe { manifold_rs_status(result) }, 0);
 
     let mesh = export(result);
-    assert!(!mesh.tri_verts.is_empty(), "intersection should not be empty");
+    assert!(
+        !mesh.tri_verts.is_empty(),
+        "intersection should not be empty"
+    );
 
     unsafe {
         manifold_rs_destroy(result);
@@ -270,17 +296,11 @@ fn non_manifold_input_reports_status_without_panicking() {
     // A tetrahedron with one face wound the wrong way: four verts and four
     // tris, so it clears the size checks, but two half-edges then run in the
     // same direction and the topology check rejects it.
-    let verts: Vec<f32> = vec![
-        0.0, 0.0, 0.0,
-        1.0, 0.0, 0.0,
-        0.0, 1.0, 0.0,
-        0.0, 0.0, 1.0,
-    ];
+    let verts: Vec<f32> = vec![0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0];
     let tris: Vec<u32> = vec![0, 1, 2, 0, 1, 3, 0, 3, 2, 1, 2, 3];
 
-    let bad = unsafe {
-        manifold_rs_from_mesh(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3)
-    };
+    let bad =
+        unsafe { manifold_rs_from_mesh(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 3) };
     assert!(!bad.is_null(), "a validation failure still yields a handle");
     assert_eq!(
         unsafe { manifold_rs_status(bad) },
@@ -302,36 +322,44 @@ fn invalid_from_mesh_arguments_return_null() {
     let (verts, tris) = cube_mesh([0.0, 0.0, 0.0], 1.0);
     unsafe {
         // num_prop below the three position slots.
-        assert!(manifold_rs_from_mesh(
-            verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 2
-        )
-        .is_null());
+        assert!(
+            manifold_rs_from_mesh(verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len(), 2)
+                .is_null()
+        );
         // vert_properties not a whole number of vertices.
         assert!(manifold_rs_from_mesh(
-            verts.as_ptr(), verts.len() - 1, tris.as_ptr(), tris.len(), 3
+            verts.as_ptr(),
+            verts.len() - 1,
+            tris.as_ptr(),
+            tris.len(),
+            3
         )
         .is_null());
         // tri_verts not a whole number of triangles.
         assert!(manifold_rs_from_mesh(
-            verts.as_ptr(), verts.len(), tris.as_ptr(), tris.len() - 1, 3
+            verts.as_ptr(),
+            verts.len(),
+            tris.as_ptr(),
+            tris.len() - 1,
+            3
         )
         .is_null());
         // Null array with a non-zero length.
-        assert!(manifold_rs_from_mesh(
-            std::ptr::null(), verts.len(), tris.as_ptr(), tris.len(), 3
-        )
-        .is_null());
+        assert!(
+            manifold_rs_from_mesh(std::ptr::null(), verts.len(), tris.as_ptr(), tris.len(), 3)
+                .is_null()
+        );
         // A length no allocation could ever have — what a negative int widened
         // to size_t looks like. usize::MAX happens to divide by both 3 and
         // num_prop, so it reaches the size check rather than the earlier ones.
-        assert!(manifold_rs_from_mesh(
-            verts.as_ptr(), usize::MAX, tris.as_ptr(), tris.len(), 3
-        )
-        .is_null());
-        assert!(manifold_rs_from_mesh(
-            verts.as_ptr(), verts.len(), tris.as_ptr(), usize::MAX, 3
-        )
-        .is_null());
+        assert!(
+            manifold_rs_from_mesh(verts.as_ptr(), usize::MAX, tris.as_ptr(), tris.len(), 3)
+                .is_null()
+        );
+        assert!(
+            manifold_rs_from_mesh(verts.as_ptr(), verts.len(), tris.as_ptr(), usize::MAX, 3)
+                .is_null()
+        );
 
         // Same guard on the operand count.
         let a = ffi_cube([0.0, 0.0, 0.0], 1.0);
@@ -380,7 +408,9 @@ fn null_handles_return_sentinels() {
         len = usize::MAX;
         assert!(manifold_rs_meshgl_face_id(std::ptr::null(), &mut len).is_null());
         assert_eq!(len, 0);
-        assert!(manifold_rs_meshgl_vert_properties(std::ptr::null(), std::ptr::null_mut()).is_null());
+        assert!(
+            manifold_rs_meshgl_vert_properties(std::ptr::null(), std::ptr::null_mut()).is_null()
+        );
     }
 }
 
@@ -420,8 +450,14 @@ fn last_error_is_empty_on_a_thread_that_has_not_failed() {
     // so this thread may already carry a message from an earlier test.
     std::thread::spawn(|| {
         let mut buf = [0u8; 64];
-        assert_eq!(unsafe { manifold_rs_last_error(buf.as_mut_ptr(), buf.len()) }, 0);
-        assert_eq!(unsafe { manifold_rs_last_error(std::ptr::null_mut(), 0) }, 0);
+        assert_eq!(
+            unsafe { manifold_rs_last_error(buf.as_mut_ptr(), buf.len()) },
+            0
+        );
+        assert_eq!(
+            unsafe { manifold_rs_last_error(std::ptr::null_mut(), 0) },
+            0
+        );
     })
     .join()
     .unwrap();
@@ -439,23 +475,40 @@ fn last_error_reports_the_most_recent_failure() {
     let len = unsafe { manifold_rs_last_error(buf.as_mut_ptr(), buf.len()) };
     assert!(len > 0, "unknown op should record a message");
     let message = std::str::from_utf8(&buf[..len]).unwrap().to_string();
-    assert!(message.contains("unknown op 99"), "unexpected message: {message}");
+    assert!(
+        message.contains("unknown op 99"),
+        "unexpected message: {message}"
+    );
 
     // Passing NULL asks only for the length, and never writes.
-    assert_eq!(unsafe { manifold_rs_last_error(std::ptr::null_mut(), 0) }, len);
+    assert_eq!(
+        unsafe { manifold_rs_last_error(std::ptr::null_mut(), 0) },
+        len
+    );
 
     // A short buffer truncates but still reports the full length.
     let mut small = [0u8; 4];
-    assert_eq!(unsafe { manifold_rs_last_error(small.as_mut_ptr(), small.len()) }, len);
+    assert_eq!(
+        unsafe { manifold_rs_last_error(small.as_mut_ptr(), small.len()) },
+        len
+    );
     assert_eq!(&small, &message.as_bytes()[..4]);
 
     // The next failure replaces the message rather than appending to it, so a
     // caller always reads the failure it just saw.
-    assert!(unsafe { manifold_rs_from_mesh(std::ptr::null(), 0, std::ptr::null(), 0, 1) }.is_null());
+    assert!(
+        unsafe { manifold_rs_from_mesh(std::ptr::null(), 0, std::ptr::null(), 0, 1) }.is_null()
+    );
     let len = unsafe { manifold_rs_last_error(buf.as_mut_ptr(), buf.len()) };
     let second = std::str::from_utf8(&buf[..len]).unwrap();
-    assert!(second.contains("num_prop 1 < 3"), "unexpected message: {second}");
-    assert!(!second.contains("unknown op 99"), "message was appended, not replaced");
+    assert!(
+        second.contains("num_prop 1 < 3"),
+        "unexpected message: {second}"
+    );
+    assert!(
+        !second.contains("unknown op 99"),
+        "message was appended, not replaced"
+    );
 
     unsafe { manifold_rs_destroy(a) };
 }

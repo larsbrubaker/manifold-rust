@@ -35,7 +35,12 @@ use crate::types::Box as BBox;
 
 const K_CROSSING: i32 = -2;
 const K_NONE: i32 = -1;
-const K_VOXEL_OFFSET: IVec4 = IVec4 { x: 1, y: 1, z: 1, w: 0 };
+const K_VOXEL_OFFSET: IVec4 = IVec4 {
+    x: 1,
+    y: 1,
+    z: 1,
+    w: 0,
+};
 /// Maximum fraction of spacing that a vert can move.
 const K_S: f64 = 0.25;
 /// Corresponding approximate distance ratio bound.
@@ -49,7 +54,11 @@ const K_MAX_OPPOSED: i32 = 3;
 
 fn tet_tri0(i: usize) -> IVec3 {
     const TABLE: [IVec3; 16] = [
-        IVec3 { x: -1, y: -1, z: -1 },
+        IVec3 {
+            x: -1,
+            y: -1,
+            z: -1,
+        },
         IVec3 { x: 0, y: 3, z: 4 },
         IVec3 { x: 0, y: 1, z: 5 },
         IVec3 { x: 1, y: 5, z: 3 },
@@ -64,29 +73,73 @@ fn tet_tri0(i: usize) -> IVec3 {
         IVec3 { x: 3, y: 5, z: 1 },
         IVec3 { x: 5, y: 1, z: 0 },
         IVec3 { x: 4, y: 3, z: 0 },
-        IVec3 { x: -1, y: -1, z: -1 },
+        IVec3 {
+            x: -1,
+            y: -1,
+            z: -1,
+        },
     ];
     TABLE[i]
 }
 
 fn tet_tri1(i: usize) -> IVec3 {
     const TABLE: [IVec3; 16] = [
-        IVec3 { x: -1, y: -1, z: -1 },
-        IVec3 { x: -1, y: -1, z: -1 },
-        IVec3 { x: -1, y: -1, z: -1 },
+        IVec3 {
+            x: -1,
+            y: -1,
+            z: -1,
+        },
+        IVec3 {
+            x: -1,
+            y: -1,
+            z: -1,
+        },
+        IVec3 {
+            x: -1,
+            y: -1,
+            z: -1,
+        },
         IVec3 { x: 3, y: 4, z: 1 },
-        IVec3 { x: -1, y: -1, z: -1 },
+        IVec3 {
+            x: -1,
+            y: -1,
+            z: -1,
+        },
         IVec3 { x: 3, y: 2, z: 1 },
         IVec3 { x: 0, y: 4, z: 2 },
-        IVec3 { x: -1, y: -1, z: -1 },
-        IVec3 { x: -1, y: -1, z: -1 },
+        IVec3 {
+            x: -1,
+            y: -1,
+            z: -1,
+        },
+        IVec3 {
+            x: -1,
+            y: -1,
+            z: -1,
+        },
         IVec3 { x: 2, y: 4, z: 0 },
         IVec3 { x: 1, y: 2, z: 3 },
-        IVec3 { x: -1, y: -1, z: -1 },
+        IVec3 {
+            x: -1,
+            y: -1,
+            z: -1,
+        },
         IVec3 { x: 1, y: 4, z: 3 },
-        IVec3 { x: -1, y: -1, z: -1 },
-        IVec3 { x: -1, y: -1, z: -1 },
-        IVec3 { x: -1, y: -1, z: -1 },
+        IVec3 {
+            x: -1,
+            y: -1,
+            z: -1,
+        },
+        IVec3 {
+            x: -1,
+            y: -1,
+            z: -1,
+        },
+        IVec3 {
+            x: -1,
+            y: -1,
+            z: -1,
+        },
     ];
     TABLE[i]
 }
@@ -97,20 +150,90 @@ fn tet_tri1(i: usize) -> IVec3 {
 
 fn neighbor(base: IVec4, i: usize) -> IVec4 {
     const NEIGHBORS: [IVec4; 14] = [
-        IVec4 { x: 0, y: 0, z: 0, w: 1 },
-        IVec4 { x: 1, y: 0, z: 0, w: 0 },
-        IVec4 { x: 0, y: 1, z: 0, w: 0 },
-        IVec4 { x: 0, y: 0, z: 1, w: 0 },
-        IVec4 { x: -1, y: 0, z: 0, w: 1 },
-        IVec4 { x: 0, y: -1, z: 0, w: 1 },
-        IVec4 { x: 0, y: 0, z: -1, w: 1 },
-        IVec4 { x: -1, y: -1, z: -1, w: 1 },
-        IVec4 { x: -1, y: 0, z: 0, w: 0 },
-        IVec4 { x: 0, y: -1, z: 0, w: 0 },
-        IVec4 { x: 0, y: 0, z: -1, w: 0 },
-        IVec4 { x: 0, y: -1, z: -1, w: 1 },
-        IVec4 { x: -1, y: 0, z: -1, w: 1 },
-        IVec4 { x: -1, y: -1, z: 0, w: 1 },
+        IVec4 {
+            x: 0,
+            y: 0,
+            z: 0,
+            w: 1,
+        },
+        IVec4 {
+            x: 1,
+            y: 0,
+            z: 0,
+            w: 0,
+        },
+        IVec4 {
+            x: 0,
+            y: 1,
+            z: 0,
+            w: 0,
+        },
+        IVec4 {
+            x: 0,
+            y: 0,
+            z: 1,
+            w: 0,
+        },
+        IVec4 {
+            x: -1,
+            y: 0,
+            z: 0,
+            w: 1,
+        },
+        IVec4 {
+            x: 0,
+            y: -1,
+            z: 0,
+            w: 1,
+        },
+        IVec4 {
+            x: 0,
+            y: 0,
+            z: -1,
+            w: 1,
+        },
+        IVec4 {
+            x: -1,
+            y: -1,
+            z: -1,
+            w: 1,
+        },
+        IVec4 {
+            x: -1,
+            y: 0,
+            z: 0,
+            w: 0,
+        },
+        IVec4 {
+            x: 0,
+            y: -1,
+            z: 0,
+            w: 0,
+        },
+        IVec4 {
+            x: 0,
+            y: 0,
+            z: -1,
+            w: 0,
+        },
+        IVec4 {
+            x: 0,
+            y: -1,
+            z: -1,
+            w: 1,
+        },
+        IVec4 {
+            x: -1,
+            y: 0,
+            z: -1,
+            w: 1,
+        },
+        IVec4 {
+            x: -1,
+            y: -1,
+            z: 0,
+            w: 1,
+        },
     ];
     let mut neighbor_index = ivec4_add(base, NEIGHBORS[i]);
     if neighbor_index.w == 2 {
@@ -146,11 +269,12 @@ fn decode_index(mut idx: u64, grid_pow: IVec3) -> IVec4 {
 
 fn position(grid_index: IVec4, origin: Vec3, spacing: Vec3) -> Vec3 {
     let offset = if grid_index.w == 1 { 0.0 } else { -0.5 };
-    origin + Vec3::new(
-        spacing.x * (grid_index.x as f64 + offset),
-        spacing.y * (grid_index.y as f64 + offset),
-        spacing.z * (grid_index.z as f64 + offset),
-    )
+    origin
+        + Vec3::new(
+            spacing.x * (grid_index.x as f64 + offset),
+            spacing.y * (grid_index.y as f64 + offset),
+            spacing.z * (grid_index.z as f64 + offset),
+        )
 }
 
 fn bound(pos: Vec3, origin: Vec3, spacing: Vec3, grid_size: IVec3) -> Vec3 {
@@ -176,14 +300,20 @@ fn bounded_sdf(
 ) -> f64 {
     let xyz = IVec3::new(grid_index.x, grid_index.y, grid_index.z);
     let lower_bound_dist = xyz.x.min(xyz.y).min(xyz.z);
-    let upper_bound_dist = (grid_size.x - xyz.x).min(grid_size.y - xyz.y).min(grid_size.z - xyz.z);
+    let upper_bound_dist = (grid_size.x - xyz.x)
+        .min(grid_size.y - xyz.y)
+        .min(grid_size.z - xyz.z);
     let bound_dist = lower_bound_dist.min(upper_bound_dist - grid_index.w);
 
     if bound_dist < 0 {
         return 0.0;
     }
     let d = sdf(position(grid_index, origin, spacing)) - level;
-    if bound_dist == 0 { d.min(0.0) } else { d }
+    if bound_dist == 0 {
+        d.min(0.0)
+    } else {
+        d
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +400,11 @@ impl GridVert {
     }
 
     fn inside(&self) -> i32 {
-        if self.distance > 0.0 { 1 } else { -1 }
+        if self.distance > 0.0 {
+            1
+        } else {
+            -1
+        }
     }
 
     fn neighbor_inside(&self, i: usize) -> i32 {
@@ -301,12 +435,20 @@ fn lerp_vec3(a: Vec3, b: Vec3, t: f64) -> Vec3 {
 
 #[inline]
 fn next3(i: i32) -> i32 {
-    if i == 2 { 0 } else { i + 1 }
+    if i == 2 {
+        0
+    } else {
+        i + 1
+    }
 }
 
 #[inline]
 fn prev3(i: i32) -> i32 {
-    if i == 0 { 2 } else { i - 1 }
+    if i == 0 {
+        2
+    } else {
+        i - 1
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -325,7 +467,11 @@ fn hash64bit(mut x: u64) -> u64 {
 
 #[inline]
 fn ceil_log2_usize(v: usize) -> u32 {
-    if v <= 1 { 0 } else { usize::BITS - (v - 1).leading_zeros() }
+    if v <= 1 {
+        0
+    } else {
+        usize::BITS - (v - 1).leading_zeros()
+    }
 }
 
 /// Open-addressing hash table matching C++ `HashTable<GridVert>`: capacity is
@@ -341,7 +487,11 @@ struct GridHashTable {
 
 impl GridHashTable {
     fn new(size: usize) -> Self {
-        let n = if size == 0 { 0 } else { 1usize << ceil_log2_usize(size) };
+        let n = if size == 0 {
+            0
+        } else {
+            1usize << ceil_log2_usize(size)
+        };
         GridHashTable {
             keys: vec![K_OPEN; n],
             values: vec![GridVert::default(); n],
@@ -425,7 +575,11 @@ pub fn level_set<F: Fn(Vec3) -> f64 + Sync>(
         return ManifoldImpl::new();
     }
 
-    let tol = if tolerance <= 0.0 { f64::INFINITY } else { tolerance };
+    let tol = if tolerance <= 0.0 {
+        f64::INFINITY
+    } else {
+        tolerance
+    };
 
     let dim = bounds.size();
     let grid_size = IVec3::new(
@@ -467,7 +621,12 @@ pub fn level_set<F: Fn(Vec3) -> f64 + Sync>(
         let gi = decode_index(idx as u64, grid_pow);
         let gi_shifted = ivec4_add(
             gi,
-            IVec4::new(-K_VOXEL_OFFSET.x, -K_VOXEL_OFFSET.y, -K_VOXEL_OFFSET.z, -K_VOXEL_OFFSET.w),
+            IVec4::new(
+                -K_VOXEL_OFFSET.x,
+                -K_VOXEL_OFFSET.y,
+                -K_VOXEL_OFFSET.z,
+                -K_VOXEL_OFFSET.w,
+            ),
         );
         bounded_sdf(gi_shifted, origin, spacing, grid_size, level, &sdf)
     });
@@ -486,13 +645,15 @@ pub fn level_set<F: Fn(Vec3) -> f64 + Sync>(
     } else {
         2 * max_index
     };
-    let sparse_table_size =
-        table_size_cap.min((10.0 * (max_index as f64).sqrt()) as u64);
+    let sparse_table_size = table_size_cap.min((10.0 * (max_index as f64).sqrt()) as u64);
     let mut table_size = dense_table_size.min(sparse_table_size).max(1) as usize;
     let mut grid_verts = GridHashTable::new(table_size);
     let mut vert_pos: Vec<Vec3> = Vec::new();
 
-    let surface_max = encode_index(IVec4::new(grid_size.x, grid_size.y, grid_size.z, 1), grid_pow);
+    let surface_max = encode_index(
+        IVec4::new(grid_size.x, grid_size.y, grid_size.z, 1),
+        grid_pow,
+    );
     loop {
         // Phase 1: NearSurface — identify grid verts near the surface
         for index in 0..surface_max {
@@ -800,8 +961,7 @@ mod tests {
 
     #[test]
     fn test_level_set_sphere() {
-        let bounds =
-            BBox::from_points(Vec3::new(-2.0, -2.0, -2.0), Vec3::new(2.0, 2.0, 2.0));
+        let bounds = BBox::from_points(Vec3::new(-2.0, -2.0, -2.0), Vec3::new(2.0, 2.0, 2.0));
         let mesh = level_set(
             |p| 1.0 - (p.x * p.x + p.y * p.y + p.z * p.z).sqrt(),
             bounds,
@@ -815,14 +975,15 @@ mod tests {
 
     #[test]
     fn test_level_set_cube_sdf() {
-        let bounds =
-            BBox::from_points(Vec3::new(-2.0, -2.0, -2.0), Vec3::new(2.0, 2.0, 2.0));
+        let bounds = BBox::from_points(Vec3::new(-2.0, -2.0, -2.0), Vec3::new(2.0, 2.0, 2.0));
         let mesh = level_set(
             |p| {
                 // SDF of a unit cube centered at origin
                 let d = Vec3::new(p.x.abs() - 1.0, p.y.abs() - 1.0, p.z.abs() - 1.0);
-                let outside =
-                    (d.x.max(0.0) * d.x.max(0.0) + d.y.max(0.0) * d.y.max(0.0) + d.z.max(0.0) * d.z.max(0.0)).sqrt();
+                let outside = (d.x.max(0.0) * d.x.max(0.0)
+                    + d.y.max(0.0) * d.y.max(0.0)
+                    + d.z.max(0.0) * d.z.max(0.0))
+                .sqrt();
                 let inside = d.x.max(d.y).max(d.z).min(0.0);
                 -(outside + inside) // negate: C++ convention is positive inside
             },
@@ -845,17 +1006,19 @@ mod tests {
 
     #[test]
     fn test_level_set_empty() {
-        let bounds =
-            BBox::from_points(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+        let bounds = BBox::from_points(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
         // SDF that is always negative (outside) — should produce empty mesh
         let mesh = level_set(|_| -1.0, bounds, 0.5, 0.0, -1.0);
-        assert_eq!(mesh.num_tri(), 0, "Negative SDF should produce no triangles");
+        assert_eq!(
+            mesh.num_tri(),
+            0,
+            "Negative SDF should produce no triangles"
+        );
     }
 
     #[test]
     fn test_level_set_simple_wrapper() {
-        let bounds =
-            BBox::from_points(Vec3::new(-2.0, -2.0, -2.0), Vec3::new(2.0, 2.0, 2.0));
+        let bounds = BBox::from_points(Vec3::new(-2.0, -2.0, -2.0), Vec3::new(2.0, 2.0, 2.0));
         let mesh = level_set_simple(
             |p| 1.0 - (p.x * p.x + p.y * p.y + p.z * p.z).sqrt(),
             bounds,

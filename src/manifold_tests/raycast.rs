@@ -11,14 +11,26 @@ fn test_cpp_ray_cast_hit_cube() {
     assert_eq!(hits.len(), 2, "expected 2 hits, got {}", hits.len());
     // hits are sorted by distance; first hit is closer to origin
     assert!(hits[0].distance < hits[1].distance);
-    assert!((hits[0].position.z - (-0.5)).abs() < 1e-5,
-        "hit[0].z = {}, expected -0.5", hits[0].position.z);
-    assert!((hits[1].position.z - 0.5).abs() < 1e-5,
-        "hit[1].z = {}, expected 0.5", hits[1].position.z);
-    assert!((hits[0].normal.z - (-1.0)).abs() < 1e-5,
-        "hit[0].normal.z = {}, expected -1", hits[0].normal.z);
-    assert!((hits[1].normal.z - 1.0).abs() < 1e-5,
-        "hit[1].normal.z = {}, expected 1", hits[1].normal.z);
+    assert!(
+        (hits[0].position.z - (-0.5)).abs() < 1e-5,
+        "hit[0].z = {}, expected -0.5",
+        hits[0].position.z
+    );
+    assert!(
+        (hits[1].position.z - 0.5).abs() < 1e-5,
+        "hit[1].z = {}, expected 0.5",
+        hits[1].position.z
+    );
+    assert!(
+        (hits[0].normal.z - (-1.0)).abs() < 1e-5,
+        "hit[0].normal.z = {}, expected -1",
+        hits[0].normal.z
+    );
+    assert!(
+        (hits[1].normal.z - 1.0).abs() < 1e-5,
+        "hit[1].normal.z = {}, expected 1",
+        hits[1].normal.z
+    );
 }
 
 /// C++ TEST(Manifold, RayCastMiss) — ray that misses the cube
@@ -35,8 +47,11 @@ fn test_cpp_ray_cast_diagonal() {
     let cube = Manifold::cube(Vec3::splat(1.0), true);
     let hits = cube.ray_cast(Vec3::new(-5.0, -5.0, -5.0), Vec3::new(5.0, 5.0, 5.0));
     assert_eq!(hits.len(), 2, "expected 2 hits, got {}", hits.len());
-    assert!((hits[0].position.z - (-0.5)).abs() < 1e-4,
-        "hit[0].z = {}, expected -0.5", hits[0].position.z);
+    assert!(
+        (hits[0].position.z - (-0.5)).abs() < 1e-4,
+        "hit[0].z = {}, expected -0.5",
+        hits[0].position.z
+    );
 }
 
 /// C++ TEST(Manifold, RayCastBehindOrigin) — ray pointing away from cube
@@ -53,11 +68,20 @@ fn test_cpp_ray_cast_behind_origin() {
 fn test_cpp_ray_cast_sphere() {
     let sphere = Manifold::sphere(1.0, 128);
     let hits = sphere.ray_cast(Vec3::new(0.0, 0.0, -5.0), Vec3::new(0.0, 0.0, 5.0));
-    assert_eq!(hits.len(), 2, "expected 2 hits through sphere, got {}", hits.len());
+    assert_eq!(
+        hits.len(),
+        2,
+        "expected 2 hits through sphere, got {}",
+        hits.len()
+    );
     // Hit point should be approximately on the unit sphere
     let p = hits[0].position;
     let r = (p.x * p.x + p.y * p.y + p.z * p.z).sqrt();
-    assert!((r - 1.0).abs() < 1e-3, "hit[0] radius = {}, expected ≈1.0", r);
+    assert!(
+        (r - 1.0).abs() < 1e-3,
+        "hit[0] radius = {}, expected ≈1.0",
+        r
+    );
 
     // Ray that misses
     let miss = sphere.ray_cast(Vec3::new(2.0, 2.0, -5.0), Vec3::new(2.0, 2.0, 5.0));
@@ -71,15 +95,32 @@ fn test_cpp_ray_cast_two_cubes() {
     let c2 = Manifold::cube(Vec3::splat(1.0), true).translate(Vec3::new(0.0, 0.0, 5.0));
     let both = c1 + c2;
     let hits = both.ray_cast(Vec3::new(0.0, 0.0, -5.0), Vec3::new(0.0, 0.0, 10.0));
-    assert_eq!(hits.len(), 4, "expected 4 hits through two cubes, got {}", hits.len());
-    assert!((hits[0].position.z - (-0.5)).abs() < 1e-4,
-        "hits[0].z = {}", hits[0].position.z);
-    assert!((hits[1].position.z - 0.5).abs() < 1e-4,
-        "hits[1].z = {}", hits[1].position.z);
-    assert!((hits[2].position.z - 4.5).abs() < 1e-4,
-        "hits[2].z = {}", hits[2].position.z);
-    assert!((hits[3].position.z - 5.5).abs() < 1e-4,
-        "hits[3].z = {}", hits[3].position.z);
+    assert_eq!(
+        hits.len(),
+        4,
+        "expected 4 hits through two cubes, got {}",
+        hits.len()
+    );
+    assert!(
+        (hits[0].position.z - (-0.5)).abs() < 1e-4,
+        "hits[0].z = {}",
+        hits[0].position.z
+    );
+    assert!(
+        (hits[1].position.z - 0.5).abs() < 1e-4,
+        "hits[1].z = {}",
+        hits[1].position.z
+    );
+    assert!(
+        (hits[2].position.z - 4.5).abs() < 1e-4,
+        "hits[2].z = {}",
+        hits[2].position.z
+    );
+    assert!(
+        (hits[3].position.z - 5.5).abs() < 1e-4,
+        "hits[3].z = {}",
+        hits[3].position.z
+    );
 }
 
 /// C++ TEST(Manifold, RayCastEmpty) — ray against empty manifold
@@ -87,7 +128,12 @@ fn test_cpp_ray_cast_two_cubes() {
 fn test_cpp_ray_cast_empty() {
     let empty = Manifold::default();
     let hits = empty.ray_cast(Vec3::new(0.0, 0.0, -5.0), Vec3::new(0.0, 0.0, 5.0));
-    assert_eq!(hits.len(), 0, "expected 0 hits against empty, got {}", hits.len());
+    assert_eq!(
+        hits.len(),
+        0,
+        "expected 0 hits against empty, got {}",
+        hits.len()
+    );
 }
 
 /// C++ TEST(Manifold, RayCastAlongX) — axis-aligned ray along X
@@ -96,8 +142,11 @@ fn test_cpp_ray_cast_along_x() {
     let cube = Manifold::cube(Vec3::splat(1.0), true);
     let hits = cube.ray_cast(Vec3::new(-5.0, 0.0, 0.0), Vec3::new(5.0, 0.0, 0.0));
     assert_eq!(hits.len(), 2, "expected 2 hits along X, got {}", hits.len());
-    assert!((hits[0].position.x - (-0.5)).abs() < 1e-5,
-        "hits[0].x = {}", hits[0].position.x);
+    assert!(
+        (hits[0].position.x - (-0.5)).abs() < 1e-5,
+        "hits[0].x = {}",
+        hits[0].position.x
+    );
 }
 
 /// C++ TEST(Manifold, RayCastAlongY) — axis-aligned ray along Y
@@ -106,8 +155,11 @@ fn test_cpp_ray_cast_along_y() {
     let cube = Manifold::cube(Vec3::splat(1.0), true);
     let hits = cube.ray_cast(Vec3::new(0.0, -5.0, 0.0), Vec3::new(0.0, 5.0, 0.0));
     assert_eq!(hits.len(), 2, "expected 2 hits along Y, got {}", hits.len());
-    assert!((hits[0].position.y - (-0.5)).abs() < 1e-5,
-        "hits[0].y = {}", hits[0].position.y);
+    assert!(
+        (hits[0].position.y - (-0.5)).abs() < 1e-5,
+        "hits[0].y = {}",
+        hits[0].position.y
+    );
 }
 
 /// C++ TEST(Manifold, RayCastZeroLength) — zero-length ray returns no hits
@@ -124,9 +176,17 @@ fn test_cpp_ray_cast_zero_length() {
 fn test_cpp_ray_cast_watertight_vertex() {
     let cube = Manifold::cube(Vec3::splat(1.0), true);
     let hits = cube.ray_cast(Vec3::new(0.5, 0.5, -5.0), Vec3::new(0.5, 0.5, 5.0));
-    assert_eq!(hits.len(), 2, "expected 2 hits through vertex, got {}", hits.len());
-    assert!((hits[0].position.z - (-0.5)).abs() < 1e-5,
-        "hits[0].z = {}", hits[0].position.z);
+    assert_eq!(
+        hits.len(),
+        2,
+        "expected 2 hits through vertex, got {}",
+        hits.len()
+    );
+    assert!(
+        (hits[0].position.z - (-0.5)).abs() < 1e-5,
+        "hits[0].z = {}",
+        hits[0].position.z
+    );
 }
 
 /// C++ TEST(Manifold, RayCastSilhouetteEdge) — ray at silhouette edge
@@ -135,6 +195,9 @@ fn test_cpp_ray_cast_watertight_vertex() {
 fn test_cpp_ray_cast_silhouette_edge() {
     let cube = Manifold::cube(Vec3::splat(1.0), true);
     let hits = cube.ray_cast(Vec3::new(0.5, 0.0, -5.0), Vec3::new(0.5, 0.0, 5.0));
-    assert!(hits.len() == 0 || hits.len() == 2,
-        "expected 0 or 2 hits at silhouette edge, got {}", hits.len());
+    assert!(
+        hits.len() == 0 || hits.len() == 2,
+        "expected 0 or 2 hits at silhouette edge, got {}",
+        hits.len()
+    );
 }

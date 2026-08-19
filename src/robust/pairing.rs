@@ -327,7 +327,9 @@ fn split_edge_counts(
             if a == b {
                 return None;
             }
-            let e = counts.entry(if a < b { (a, b) } else { (b, a) }).or_insert((0, 0));
+            let e = counts
+                .entry(if a < b { (a, b) } else { (b, a) })
+                .or_insert((0, 0));
             if a < b {
                 e.0 += 1;
             } else {

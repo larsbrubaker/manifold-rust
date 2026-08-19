@@ -7,7 +7,13 @@ fn test_cpp_sdf_resize() {
     let layers = Manifold::level_set(
         |p: Vec3| {
             let a = ((2.0 * p.z).round() % 4.0) as i32;
-            if a == 0 { 1.0 } else if a == 2 { -1.0 } else { 0.0 }
+            if a == 0 {
+                1.0
+            } else if a == 2 {
+                -1.0
+            } else {
+                0.0
+            }
         },
         crate::types::Box {
             min: Vec3::new(0.0, 0.0, 0.0),
@@ -17,15 +23,28 @@ fn test_cpp_sdf_resize() {
     );
 
     assert_eq!(layers.status(), crate::types::Error::NoError);
-    assert_eq!(layers.genus(), -8, "Resize: genus should be -8, got {}", layers.genus());
+    assert_eq!(
+        layers.genus(),
+        -8,
+        "Resize: genus should be -8, got {}",
+        layers.genus()
+    );
     let epsilon = layers.get_tolerance();
     let bounds = layers.bounding_box();
     assert!((bounds.min.x - 0.0).abs() < epsilon, "min.x");
     assert!((bounds.min.y - 0.0).abs() < epsilon, "min.y");
-    assert!((bounds.min.z - 1.5).abs() < epsilon, "min.z={}", bounds.min.z);
+    assert!(
+        (bounds.min.z - 1.5).abs() < epsilon,
+        "min.z={}",
+        bounds.min.z
+    );
     assert!((bounds.max.x - size).abs() < epsilon, "max.x");
     assert!((bounds.max.y - size).abs() < epsilon, "max.y");
-    assert!((bounds.max.z - (size - 1.5)).abs() < epsilon, "max.z={}", bounds.max.z);
+    assert!(
+        (bounds.max.z - (size - 1.5)).abs() < epsilon,
+        "max.z={}",
+        bounds.max.z
+    );
 }
 
 /// C++ TEST(SDF, SineSurface) — raw LevelSet of a sine surface.
@@ -37,7 +56,11 @@ fn test_cpp_sdf_sine_surface() {
     let surface = Manifold::level_set(
         move |p: Vec3| {
             let mid = p.x.sin() + p.y.sin();
-            if p.z > mid - 0.5 && p.z < mid + 0.5 { 1.0 } else { -1.0 }
+            if p.z > mid - 0.5 && p.z < mid + 0.5 {
+                1.0
+            } else {
+                -1.0
+            }
         },
         crate::types::Box {
             min: Vec3::new(-1.75 * pi, -1.75 * pi, -1.75 * pi),
@@ -47,10 +70,16 @@ fn test_cpp_sdf_sine_surface() {
     );
     assert_eq!(surface.status(), crate::types::Error::NoError);
     assert_eq!(surface.genus(), 38, "SineSurface genus={}", surface.genus());
-    assert!((surface.volume() - 102.4).abs() < 0.1,
-        "SineSurface vol={}", surface.volume());
-    assert!((surface.surface_area() - 392.4).abs() < 0.1,
-        "SineSurface sa={}", surface.surface_area());
+    assert!(
+        (surface.volume() - 102.4).abs() < 0.1,
+        "SineSurface vol={}",
+        surface.volume()
+    );
+    assert!(
+        (surface.surface_area() - 392.4).abs() < 0.1,
+        "SineSurface sa={}",
+        surface.surface_area()
+    );
 }
 
 /// C++ TEST(SDF, Blobs) — metaball SDF using smoothstep
@@ -151,7 +180,12 @@ fn test_cpp_sdf_bounds_cubevoid() {
         1.0,
     );
     assert_eq!(cube_void.status(), crate::types::Error::NoError);
-    assert_eq!(cube_void.genus(), -1, "CubeVoid genus should be -1, got {}", cube_void.genus());
+    assert_eq!(
+        cube_void.genus(),
+        -1,
+        "CubeVoid genus should be -1, got {}",
+        cube_void.genus()
+    );
     let epsilon = cube_void.get_tolerance();
     let bounds = cube_void.bounding_box();
     let outer = size / 2.0;
@@ -179,10 +213,18 @@ fn test_cpp_sdf_bounds3() {
     assert_eq!(sphere.genus(), 0, "Sphere genus={}", sphere.genus());
     let epsilon = sphere.get_tolerance();
     let bounds = sphere.bounding_box();
-    assert!((bounds.min.x - (-1.0)).abs() < epsilon, "min.x={}", bounds.min.x);
+    assert!(
+        (bounds.min.x - (-1.0)).abs() < epsilon,
+        "min.x={}",
+        bounds.min.x
+    );
     assert!((bounds.min.y - (-1.0)).abs() < epsilon, "min.y");
     assert!((bounds.min.z - (-1.0)).abs() < epsilon, "min.z");
-    assert!((bounds.max.x - 1.0).abs() < epsilon, "max.x={}", bounds.max.x);
+    assert!(
+        (bounds.max.x - 1.0).abs() < epsilon,
+        "max.x={}",
+        bounds.max.x
+    );
     assert!((bounds.max.y - 1.0).abs() < epsilon, "max.y");
     assert!((bounds.max.z - 1.0).abs() < epsilon, "max.z");
 }
@@ -203,8 +245,16 @@ fn test_cpp_sdf_void_subtract() {
     let cube = Manifold::cube(Vec3::splat(size), true);
     let result = cube - cube_void;
     assert_eq!(result.genus(), 0, "genus={}", result.genus());
-    assert!((result.volume() - 8.0).abs() < 0.001, "vol={}", result.volume());
-    assert!((result.surface_area() - 24.0).abs() < 0.001, "sa={}", result.surface_area());
+    assert!(
+        (result.volume() - 8.0).abs() < 0.001,
+        "vol={}",
+        result.volume()
+    );
+    assert!(
+        (result.surface_area() - 24.0).abs() < 0.001,
+        "sa={}",
+        result.surface_area()
+    );
     let epsilon = result.get_tolerance();
     let bounds = result.bounding_box();
     assert!((bounds.min.x - (-1.0)).abs() < epsilon);
@@ -241,6 +291,9 @@ fn test_cpp_sdf_sphere_shell() {
         0.0001,
     );
     // Genus 13396 — matches the local C++ reference build exactly.
-    assert!((sphere.genus() - 14235).abs() < 1000,
-        "SphereShell genus={}, expected ~14235", sphere.genus());
+    assert!(
+        (sphere.genus() - 14235).abs() < 1000,
+        "SphereShell genus={}, expected ~14235",
+        sphere.genus()
+    );
 }

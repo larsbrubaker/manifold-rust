@@ -110,8 +110,7 @@ fn test_cpp_transform() {
 /// C++ TEST(Manifold, MirrorUnion) — cube union with its mirror
 #[test]
 fn test_cpp_mirror_union() {
-    let cube = Manifold::cube(Vec3::new(5.0, 5.0, 5.0), false)
-        .translate(Vec3::new(0.0, 0.0, -3.0));
+    let cube = Manifold::cube(Vec3::new(5.0, 5.0, 5.0), false).translate(Vec3::new(0.0, 0.0, -3.0));
     let mirrored = cube.scale(Vec3::new(1.0, 1.0, -1.0));
     let result = cube.union(&mirrored);
     assert_eq!(result.genus(), 0);
@@ -139,19 +138,25 @@ fn test_cpp_cylinder_zero_radius_low() {
     assert!(!cone_apex_bottom.is_empty());
 
     let total_vol = cone_apex_top.volume();
-    assert!((cone_apex_bottom.volume() - total_vol).abs() < 1e-6,
-        "Cone volumes should match: {} vs {}", cone_apex_bottom.volume(), total_vol);
+    assert!(
+        (cone_apex_bottom.volume() - total_vol).abs() < 1e-6,
+        "Cone volumes should match: {} vs {}",
+        cone_apex_bottom.volume(),
+        total_vol
+    );
 
     // Intersect with bottom half (z in [0, h/2])
-    let slicer = Manifold::cube(
-        Vec3::new(2.0 * r + 1.0, 2.0 * r + 1.0, h / 2.0),
-        false,
-    ).translate(Vec3::new(-(r + 0.5), -(r + 0.5), 0.0));
+    let slicer = Manifold::cube(Vec3::new(2.0 * r + 1.0, 2.0 * r + 1.0, h / 2.0), false)
+        .translate(Vec3::new(-(r + 0.5), -(r + 0.5), 0.0));
 
-    assert!((cone_apex_bottom.intersection(&slicer).volume() - total_vol / 8.0).abs() < 0.01,
-        "Apex-bottom cone bottom-half volume should be V/8");
-    assert!((cone_apex_top.intersection(&slicer).volume() - 7.0 * total_vol / 8.0).abs() < 0.01,
-        "Apex-top cone bottom-half volume should be 7V/8");
+    assert!(
+        (cone_apex_bottom.intersection(&slicer).volume() - total_vol / 8.0).abs() < 0.01,
+        "Apex-bottom cone bottom-half volume should be V/8"
+    );
+    assert!(
+        (cone_apex_top.intersection(&slicer).volume() - 7.0 * total_vol / 8.0).abs() < 0.01,
+        "Apex-top cone bottom-half volume should be 7V/8"
+    );
 }
 
 /// C++ TEST(Manifold, Extrude) — square with hole extruded
@@ -160,8 +165,16 @@ fn test_cpp_extrude() {
     let polys = square_hole(0.0);
     let donut = Manifold::extrude(&polys, 1.0, 3, 0.0, Vec2::new(1.0, 1.0));
     assert_eq!(donut.genus(), 1);
-    assert!((donut.volume() - 12.0).abs() < 1e-5, "volume: {}", donut.volume());
-    assert!((donut.surface_area() - 48.0).abs() < 1e-5, "SA: {}", donut.surface_area());
+    assert!(
+        (donut.volume() - 12.0).abs() < 1e-5,
+        "volume: {}",
+        donut.volume()
+    );
+    assert!(
+        (donut.surface_area() - 48.0).abs() < 1e-5,
+        "SA: {}",
+        donut.surface_area()
+    );
 }
 
 /// C++ TEST(Manifold, ExtrudeCone) — square with hole extruded to point
@@ -170,7 +183,11 @@ fn test_cpp_extrude_cone() {
     let polys = square_hole(0.0);
     let donut = Manifold::extrude(&polys, 1.0, 0, 0.0, Vec2::new(0.0, 0.0));
     assert_eq!(donut.genus(), 0);
-    assert!((donut.volume() - 4.0).abs() < 1e-5, "volume: {}", donut.volume());
+    assert!(
+        (donut.volume() - 4.0).abs() < 1e-5,
+        "volume: {}",
+        donut.volume()
+    );
 }
 
 /// C++ TEST(Manifold, Revolve) — square with hole revolved
@@ -180,10 +197,18 @@ fn test_cpp_revolve() {
     let k_pi = std::f64::consts::PI;
     let vug = Manifold::revolve(&polys, 48, 360.0);
     assert_eq!(vug.genus(), -1);
-    assert!((vug.volume() - 14.0 * k_pi).abs() < 0.2,
-        "volume: {} expected: {}", vug.volume(), 14.0 * k_pi);
-    assert!((vug.surface_area() - 30.0 * k_pi).abs() < 0.2,
-        "SA: {} expected: {}", vug.surface_area(), 30.0 * k_pi);
+    assert!(
+        (vug.volume() - 14.0 * k_pi).abs() < 0.2,
+        "volume: {} expected: {}",
+        vug.volume(),
+        14.0 * k_pi
+    );
+    assert!(
+        (vug.surface_area() - 30.0 * k_pi).abs() < 0.2,
+        "SA: {} expected: {}",
+        vug.surface_area(),
+        30.0 * k_pi
+    );
 }
 
 /// C++ TEST(Manifold, Revolve2) — square with hole offset revolved (donut hole)
@@ -193,10 +218,18 @@ fn test_cpp_revolve2() {
     let k_pi = std::f64::consts::PI;
     let donut_hole = Manifold::revolve(&polys, 48, 360.0);
     assert_eq!(donut_hole.genus(), 0);
-    assert!((donut_hole.volume() - 48.0 * k_pi).abs() < 1.0,
-        "volume: {} expected: {}", donut_hole.volume(), 48.0 * k_pi);
-    assert!((donut_hole.surface_area() - 96.0 * k_pi).abs() < 1.0,
-        "SA: {} expected: {}", donut_hole.surface_area(), 96.0 * k_pi);
+    assert!(
+        (donut_hole.volume() - 48.0 * k_pi).abs() < 1.0,
+        "volume: {} expected: {}",
+        donut_hole.volume(),
+        48.0 * k_pi
+    );
+    assert!(
+        (donut_hole.surface_area() - 96.0 * k_pi).abs() < 1.0,
+        "SA: {} expected: {}",
+        donut_hole.surface_area(),
+        96.0 * k_pi
+    );
 }
 
 /// C++ TEST(Manifold, RevolveClip) — polygon clipped by y-axis should match explicitly clipped polygon
@@ -215,10 +248,18 @@ fn test_cpp_revolve_clip() {
     let first = Manifold::revolve(&polys, 48, 360.0);
     let second = Manifold::revolve(&clipped, 48, 360.0);
     assert_eq!(first.genus(), second.genus());
-    assert!((first.volume() - second.volume()).abs() < 1e-10,
-        "volumes: {} vs {}", first.volume(), second.volume());
-    assert!((first.surface_area() - second.surface_area()).abs() < 1e-10,
-        "SAs: {} vs {}", first.surface_area(), second.surface_area());
+    assert!(
+        (first.volume() - second.volume()).abs() < 1e-10,
+        "volumes: {} vs {}",
+        first.volume(),
+        second.volume()
+    );
+    assert!(
+        (first.surface_area() - second.surface_area()).abs() < 1e-10,
+        "SAs: {} vs {}",
+        first.surface_area(),
+        second.surface_area()
+    );
 }
 
 /// C++ TEST(Manifold, PartialRevolveOnYAxis) — 180-degree revolve of square with hole on y-axis
@@ -228,11 +269,19 @@ fn test_cpp_partial_revolve_on_y_axis() {
     let k_pi = std::f64::consts::PI;
     let revolute = Manifold::revolve(&polys, 48, 180.0);
     assert_eq!(revolute.genus(), 1);
-    assert!((revolute.volume() - 24.0 * k_pi).abs() < 1.0,
-        "volume: {} expected: {}", revolute.volume(), 24.0 * k_pi);
+    assert!(
+        (revolute.volume() - 24.0 * k_pi).abs() < 1.0,
+        "volume: {} expected: {}",
+        revolute.volume(),
+        24.0 * k_pi
+    );
     let expected_sa = 48.0 * k_pi + 4.0 * 4.0 * 2.0 - 2.0 * 2.0 * 2.0;
-    assert!((revolute.surface_area() - expected_sa).abs() < 1.0,
-        "SA: {} expected: {}", revolute.surface_area(), expected_sa);
+    assert!(
+        (revolute.surface_area() - expected_sa).abs() < 1.0,
+        "SA: {} expected: {}",
+        revolute.surface_area(),
+        expected_sa
+    );
 }
 
 /// C++ TEST(Manifold, PartialRevolveOffset) — 180-degree revolve of offset square with hole
@@ -241,10 +290,16 @@ fn test_cpp_partial_revolve_offset() {
     let polys = square_hole(10.0);
     let revolute = Manifold::revolve(&polys, 48, 180.0);
     assert_eq!(revolute.genus(), 1);
-    assert!((revolute.surface_area() - 777.0).abs() < 1.0,
-        "SA: {} expected: 777", revolute.surface_area());
-    assert!((revolute.volume() - 376.0).abs() < 1.0,
-        "volume: {} expected: 376", revolute.volume());
+    assert!(
+        (revolute.surface_area() - 777.0).abs() < 1.0,
+        "SA: {} expected: 777",
+        revolute.surface_area()
+    );
+    assert!(
+        (revolute.volume() - 376.0).abs() < 1.0,
+        "volume: {} expected: 376",
+        revolute.volume()
+    );
 }
 
 /// C++ TEST(Manifold, PinchedVert) — mesh with nearly-coincident verts that form a pinch
@@ -254,30 +309,12 @@ fn test_cpp_pinched_vert() {
     let mut mesh = MeshGL::default();
     mesh.num_prop = 3;
     mesh.vert_properties = vec![
-        0.0,        0.0,  0.0,
-        1.0,        1.0,  0.0,
-        1.0,        -1.0, 0.0,
-        -0.00001,   0.0,  0.0,
-        -1.0,       -1.0, 0.0,
-        -1.0,       1.0,  0.0,
-        0.0,        0.0,  2.0,
-        0.0,        0.0,  -2.0,
+        0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 1.0, -1.0, 0.0, -0.00001, 0.0, 0.0, -1.0, -1.0, 0.0, -1.0,
+        1.0, 0.0, 0.0, 0.0, 2.0, 0.0, 0.0, -2.0,
     ];
     mesh.tri_verts = vec![
-        0, 2, 6,
-        2, 1, 6,
-        1, 0, 6,
-        4, 3, 6,
-        3, 5, 6,
-        5, 4, 6,
-        2, 0, 4,
-        0, 3, 4,
-        3, 0, 1,
-        3, 1, 5,
-        7, 2, 4,
-        7, 4, 5,
-        7, 5, 1,
-        7, 1, 2,
+        0, 2, 6, 2, 1, 6, 1, 0, 6, 4, 3, 6, 3, 5, 6, 5, 4, 6, 2, 0, 4, 0, 3, 4, 3, 0, 1, 3, 1, 5,
+        7, 2, 4, 7, 4, 5, 7, 5, 1, 7, 1, 2,
     ];
     let touch = Manifold::from_mesh_gl(&mesh);
     assert!(!touch.is_empty(), "PinchedVert mesh should not be empty");
@@ -294,7 +331,10 @@ fn test_cpp_mirror_union2() {
     // Mirror via scale(-1,1,1) is equivalent to a.Mirror({1,0,0})
     let mirrored = a.scale(Vec3::new(-1.0, 1.0, 1.0));
     // In C++ this uses BatchBoolean({mirrored}, Add) which just returns mirrored
-    assert!(mirrored.matches_tri_normals(), "Mirrored cube should match tri normals");
+    assert!(
+        mirrored.matches_tri_normals(),
+        "Mirrored cube should match tri normals"
+    );
 }
 
 /// C++ TEST(Manifold, OppositeFace) — two cubes sharing a face (12 verts, volume=2)
@@ -306,49 +346,32 @@ fn test_cpp_opposite_face() {
     let mut gl = MeshGL::default();
     gl.num_prop = 3;
     gl.vert_properties = vec![
-        0.0, 0.0, 0.0,  // 0
-        1.0, 0.0, 0.0,  // 1
-        0.0, 1.0, 0.0,  // 2
-        1.0, 1.0, 0.0,  // 3
-        0.0, 0.0, 1.0,  // 4
-        1.0, 0.0, 1.0,  // 5
-        0.0, 1.0, 1.0,  // 6
-        1.0, 1.0, 1.0,  // 7
-        2.0, 0.0, 0.0,  // 8
-        2.0, 1.0, 0.0,  // 9
-        2.0, 0.0, 1.0,  // 10
-        2.0, 1.0, 1.0,  // 11
+        0.0, 0.0, 0.0, // 0
+        1.0, 0.0, 0.0, // 1
+        0.0, 1.0, 0.0, // 2
+        1.0, 1.0, 0.0, // 3
+        0.0, 0.0, 1.0, // 4
+        1.0, 0.0, 1.0, // 5
+        0.0, 1.0, 1.0, // 6
+        1.0, 1.0, 1.0, // 7
+        2.0, 0.0, 0.0, // 8
+        2.0, 1.0, 0.0, // 9
+        2.0, 0.0, 1.0, // 10
+        2.0, 1.0, 1.0, // 11
     ];
     gl.tri_verts = vec![
-        0, 1, 4,
-        0, 2, 3,
-        0, 3, 1,
-        0, 4, 2,
-        1, 3, 5,
-        1, 3, 9,
-        1, 5, 3,
-        1, 5, 4,
-        1, 8, 5,
-        1, 9, 8,
-        2, 4, 6,
-        2, 6, 7,
-        2, 7, 3,
-        3, 5, 7,
-        3, 7, 5,
-        3, 7, 11,
-        3, 11, 9,
-        4, 5, 6,
-        5, 7, 6,
-        5, 8, 10,
-        5, 10, 7,
-        7, 10, 11,
-        8, 9, 10,
-        9, 11, 10,
+        0, 1, 4, 0, 2, 3, 0, 3, 1, 0, 4, 2, 1, 3, 5, 1, 3, 9, 1, 5, 3, 1, 5, 4, 1, 8, 5, 1, 9, 8,
+        2, 4, 6, 2, 6, 7, 2, 7, 3, 3, 5, 7, 3, 7, 5, 3, 7, 11, 3, 11, 9, 4, 5, 6, 5, 7, 6, 5, 8,
+        10, 5, 10, 7, 7, 10, 11, 8, 9, 10, 9, 11, 10,
     ];
     let man = Manifold::from_mesh_gl(&gl);
     assert_eq!(man.status(), Error::NoError);
     assert_eq!(man.num_vert(), 12);
-    assert!((man.volume() - 2.0).abs() < 1e-5, "volume: {}", man.volume());
+    assert!(
+        (man.volume() - 2.0).abs() < 1e-5,
+        "volume: {}",
+        man.volume()
+    );
 }
 
 #[test]
@@ -370,7 +393,11 @@ fn test_sphere_is_round() {
     // All vertices should be approximately at radius 1.0
     let mesh = m.get_mesh_gl(0);
     let num_prop = mesh.num_prop as usize;
-    let vert_count = if num_prop > 0 { mesh.vert_properties.len() / num_prop } else { 0 };
+    let vert_count = if num_prop > 0 {
+        mesh.vert_properties.len() / num_prop
+    } else {
+        0
+    };
     for i in 0..vert_count {
         let x = mesh.vert_properties[i * num_prop] as f64;
         let y = mesh.vert_properties[i * num_prop + 1] as f64;
@@ -379,7 +406,11 @@ fn test_sphere_is_round() {
         assert!(
             (r - 1.0).abs() < 0.01,
             "Vertex {} at ({:.3},{:.3},{:.3}) has radius {:.4}, expected ~1.0",
-            i, x, y, z, r
+            i,
+            x,
+            y,
+            z,
+            r
         );
     }
 }
@@ -413,13 +444,29 @@ fn test_set_properties_roundtrip() {
 #[test]
 fn test_cpp_properties_measurements() {
     let cube = Manifold::cube(Vec3::splat(1.0), false);
-    assert!((cube.volume() - 1.0).abs() < 1e-6, "cube volume: {}", cube.volume());
-    assert!((cube.surface_area() - 6.0).abs() < 1e-6, "cube area: {}", cube.surface_area());
+    assert!(
+        (cube.volume() - 1.0).abs() < 1e-6,
+        "cube volume: {}",
+        cube.volume()
+    );
+    assert!(
+        (cube.surface_area() - 6.0).abs() < 1e-6,
+        "cube area: {}",
+        cube.surface_area()
+    );
 
     // Scale by -1 should still have same volume/area (flips orientation but absolute values same)
     let flipped = cube.scale(Vec3::splat(-1.0));
-    assert!((flipped.volume() - 1.0).abs() < 1e-6, "flipped cube volume: {}", flipped.volume());
-    assert!((flipped.surface_area() - 6.0).abs() < 1e-6, "flipped cube area: {}", flipped.surface_area());
+    assert!(
+        (flipped.volume() - 1.0).abs() < 1e-6,
+        "flipped cube volume: {}",
+        flipped.volume()
+    );
+    assert!(
+        (flipped.surface_area() - 6.0).abs() < 1e-6,
+        "flipped cube area: {}",
+        flipped.surface_area()
+    );
 }
 
 /// C++ TEST(Properties, Epsilon) — epsilon scales with geometry
@@ -427,16 +474,28 @@ fn test_cpp_properties_measurements() {
 fn test_cpp_properties_epsilon() {
     let k_precision: f64 = crate::types::K_PRECISION;
     let cube = Manifold::cube(Vec3::splat(1.0), false);
-    assert!((cube.get_tolerance() - k_precision).abs() < k_precision * 0.1,
-        "unit cube epsilon: {} expected ~{}", cube.get_tolerance(), k_precision);
+    assert!(
+        (cube.get_tolerance() - k_precision).abs() < k_precision * 0.1,
+        "unit cube epsilon: {} expected ~{}",
+        cube.get_tolerance(),
+        k_precision
+    );
 
     let scaled = cube.scale(Vec3::new(0.1, 1.0, 10.0));
-    assert!((scaled.get_tolerance() - 10.0 * k_precision).abs() < k_precision,
-        "scaled cube epsilon: {} expected ~{}", scaled.get_tolerance(), 10.0 * k_precision);
+    assert!(
+        (scaled.get_tolerance() - 10.0 * k_precision).abs() < k_precision,
+        "scaled cube epsilon: {} expected ~{}",
+        scaled.get_tolerance(),
+        10.0 * k_precision
+    );
 
     let translated = scaled.translate(Vec3::new(-100.0, -10.0, -1.0));
-    assert!((translated.get_tolerance() - 100.0 * k_precision).abs() < k_precision * 10.0,
-        "translated cube epsilon: {} expected ~{}", translated.get_tolerance(), 100.0 * k_precision);
+    assert!(
+        (translated.get_tolerance() - 100.0 * k_precision).abs() < k_precision * 10.0,
+        "translated cube epsilon: {} expected ~{}",
+        translated.get_tolerance(),
+        100.0 * k_precision
+    );
 }
 
 /// C++ TEST(Properties, Epsilon2) — epsilon after translate+scale
@@ -446,8 +505,12 @@ fn test_cpp_properties_epsilon2() {
     let cube = Manifold::cube(Vec3::splat(1.0), false)
         .translate(Vec3::new(-0.5, 0.0, 0.0))
         .scale(Vec3::new(2.0, 1.0, 1.0));
-    assert!((cube.get_tolerance() - 2.0 * k_precision).abs() < k_precision,
-        "epsilon2: {} expected ~{}", cube.get_tolerance(), 2.0 * k_precision);
+    assert!(
+        (cube.get_tolerance() - 2.0 * k_precision).abs() < k_precision,
+        "epsilon2: {} expected ~{}",
+        cube.get_tolerance(),
+        2.0 * k_precision
+    );
 }
 
 /// C++ TEST(Properties, Coplanar) — coplanar check on primitives
@@ -455,10 +518,17 @@ fn test_cpp_properties_epsilon2() {
 fn test_cpp_properties_coplanar() {
     let cube = Manifold::cube(Vec3::splat(1.0), false);
     assert!(cube.matches_tri_normals(), "Cube should match tri normals");
-    assert_eq!(cube.num_degenerate_tris(), 0, "Cube should have no degenerate tris");
+    assert_eq!(
+        cube.num_degenerate_tris(),
+        0,
+        "Cube should have no degenerate tris"
+    );
 
     let tet = Manifold::tetrahedron();
-    assert!(tet.matches_tri_normals(), "Tetrahedron should match tri normals");
+    assert!(
+        tet.matches_tri_normals(),
+        "Tetrahedron should match tri normals"
+    );
 }
 
 /// C++ TEST(Manifold, MirrorUnion) — full version with Mirror API
@@ -470,8 +540,12 @@ fn test_cpp_mirror_union_full() {
     let result = a.union(&b).union(&b_mirrored);
 
     let vol_a = a.volume();
-    assert!((result.volume() - vol_a * 2.75).abs() < 1e-5,
-        "volume: {} expected: {}", result.volume(), vol_a * 2.75);
+    assert!(
+        (result.volume() - vol_a * 2.75).abs() < 1e-5,
+        "volume: {} expected: {}",
+        result.volume(),
+        vol_a * 2.75
+    );
     // Mirror with zero normal should return empty
     assert!(a.mirror(Vec3::new(0.0, 0.0, 0.0)).is_empty());
 }
@@ -481,16 +555,40 @@ fn test_cpp_mirror_union_full() {
 fn test_cpp_invalid_constructors() {
     use crate::types::Error;
     // Zero-size constructors should return InvalidConstruction
-    assert_eq!(Manifold::sphere(0.0, 16).status(), Error::InvalidConstruction);
-    assert_eq!(Manifold::cylinder(0.0, 5.0, -1.0, 16).status(), Error::InvalidConstruction);
-    assert_eq!(Manifold::cylinder(2.0, -5.0, -1.0, 16).status(), Error::InvalidConstruction);
-    assert_eq!(Manifold::cylinder(2.0, 0.0, -1.0, 16).status(), Error::InvalidConstruction);
-    assert_eq!(Manifold::cylinder(2.0, 0.0, 0.0, 16).status(), Error::InvalidConstruction);
-    assert_eq!(Manifold::cube(Vec3::new(0.0, 0.0, 0.0), false).status(), Error::InvalidConstruction);
-    assert_eq!(Manifold::cube(Vec3::new(-1.0, 1.0, 1.0), false).status(), Error::InvalidConstruction);
+    assert_eq!(
+        Manifold::sphere(0.0, 16).status(),
+        Error::InvalidConstruction
+    );
+    assert_eq!(
+        Manifold::cylinder(0.0, 5.0, -1.0, 16).status(),
+        Error::InvalidConstruction
+    );
+    assert_eq!(
+        Manifold::cylinder(2.0, -5.0, -1.0, 16).status(),
+        Error::InvalidConstruction
+    );
+    assert_eq!(
+        Manifold::cylinder(2.0, 0.0, -1.0, 16).status(),
+        Error::InvalidConstruction
+    );
+    assert_eq!(
+        Manifold::cylinder(2.0, 0.0, 0.0, 16).status(),
+        Error::InvalidConstruction
+    );
+    assert_eq!(
+        Manifold::cube(Vec3::new(0.0, 0.0, 0.0), false).status(),
+        Error::InvalidConstruction
+    );
+    assert_eq!(
+        Manifold::cube(Vec3::new(-1.0, 1.0, 1.0), false).status(),
+        Error::InvalidConstruction
+    );
     // Empty extrude
     let empty_poly: Vec<Vec<Vec2>> = vec![];
-    assert_eq!(Manifold::extrude(&empty_poly, 0.0, 0, 0.0, Vec2::new(1.0, 1.0)).status(), Error::InvalidConstruction);
+    assert_eq!(
+        Manifold::extrude(&empty_poly, 0.0, 0, 0.0, Vec2::new(1.0, 1.0)).status(),
+        Error::InvalidConstruction
+    );
 }
 
 /// C++ TEST(Manifold, MeshDeterminism)
@@ -504,38 +602,41 @@ fn test_cpp_mesh_determinism() {
 
     // C++ expected triVerts and vertProperties — verify deterministic output
     let expected_tri_verts: Vec<u32> = vec![
-        0,  2,  7,  0,  10, 1,  0,  6,  10, 0, 1,  2,  1, 3,  2,
-        1,  5,  3,  1,  11, 5,  0,  7,  6,  6, 7,  8,  6, 8,  13,
-        10, 12, 11, 1,  10, 11, 11, 13, 5,  6, 12, 10, 6, 13, 12,
-        13, 9,  5,  13, 8,  9,  11, 12, 13, 4, 2,  3,  4, 3,  5,
-        4,  7,  2,  4,  5,  8,  4,  8,  7,  9, 8,  5,
+        0, 2, 7, 0, 10, 1, 0, 6, 10, 0, 1, 2, 1, 3, 2, 1, 5, 3, 1, 11, 5, 0, 7, 6, 6, 7, 8, 6, 8,
+        13, 10, 12, 11, 1, 10, 11, 11, 13, 5, 6, 12, 10, 6, 13, 12, 13, 9, 5, 13, 8, 9, 11, 12, 13,
+        4, 2, 3, 4, 3, 5, 4, 7, 2, 4, 5, 8, 4, 8, 7, 9, 8, 5,
     ];
     let expected_vert_props: Vec<f32> = vec![
-        -1.0,      -1.0,       -1.0,
-        -1.0,      -1.0,        1.0,
-        -1.0,      -0.11491,    0.3099,
-        -1.0,      -0.11491,    1.0,
-        -0.1091,   -0.11491,    0.3099,
-        -0.1091,   -0.11491,    1.0,
-        -1.0,       1.0,       -1.0,
-        -1.0,       1.0,        0.3099,
-        -0.1091,    1.0,        0.3099,
-        -0.1091,    1.0,        1.0,
-         1.0,      -1.0,       -1.0,
-         1.0,      -1.0,        1.0,
-         1.0,       1.0,       -1.0,
-         1.0,       1.0,        1.0,
+        -1.0, -1.0, -1.0, -1.0, -1.0, 1.0, -1.0, -0.11491, 0.3099, -1.0, -0.11491, 1.0, -0.1091,
+        -0.11491, 0.3099, -0.1091, -0.11491, 1.0, -1.0, 1.0, -1.0, -1.0, 1.0, 0.3099, -0.1091, 1.0,
+        0.3099, -0.1091, 1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0, 1.0, 1.0, 1.0, -1.0, 1.0, 1.0, 1.0,
     ];
 
-    assert_eq!(out.tri_verts, expected_tri_verts,
-        "MeshDeterminism: triVerts mismatch");
+    assert_eq!(
+        out.tri_verts, expected_tri_verts,
+        "MeshDeterminism: triVerts mismatch"
+    );
     // Check vertex properties with tolerance
-    assert_eq!(out.vert_properties.len(), expected_vert_props.len(),
+    assert_eq!(
+        out.vert_properties.len(),
+        expected_vert_props.len(),
         "MeshDeterminism: vertProperties length mismatch: {} vs {}",
-        out.vert_properties.len(), expected_vert_props.len());
-    for (i, (&actual, &expected)) in out.vert_properties.iter().zip(expected_vert_props.iter()).enumerate() {
-        assert!((actual - expected).abs() < 1e-4,
-            "MeshDeterminism: vertProperties[{}] = {} expected {}", i, actual, expected);
+        out.vert_properties.len(),
+        expected_vert_props.len()
+    );
+    for (i, (&actual, &expected)) in out
+        .vert_properties
+        .iter()
+        .zip(expected_vert_props.iter())
+        .enumerate()
+    {
+        assert!(
+            (actual - expected).abs() < 1e-4,
+            "MeshDeterminism: vertProperties[{}] = {} expected {}",
+            i,
+            actual,
+            expected
+        );
     }
 }
 
@@ -545,8 +646,18 @@ fn test_cpp_manifold_slice() {
     let cube = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false);
     let bottom = cube.slice(0.0);
     let top = cube.slice(1.0);
-    assert_eq!(bottom.area(), 1.0, "Slice at z=0 should have area 1, got {}", bottom.area());
-    assert_eq!(top.area(), 0.0, "Slice at z=1 should have area 0, got {}", top.area());
+    assert_eq!(
+        bottom.area(),
+        1.0,
+        "Slice at z=0 should have area 1, got {}",
+        bottom.area()
+    );
+    assert_eq!(
+        top.area(),
+        0.0,
+        "Slice at z=1 should have area 0, got {}",
+        top.area()
+    );
 }
 
 /// C++ TEST(Manifold, SliceEmptyObject)
@@ -565,93 +676,33 @@ fn test_cpp_manifold_project() {
     let input = MeshGL {
         num_prop: 3,
         vert_properties: vec![
-            0.0,    0.0,       0.0,
-            -2.0,   -0.7,    -0.1,
-            -2.0,   -0.7,    0.0,
-            -1.9, -0.7,    -0.1,
-            -1.9, -0.6901, -0.1,
-            -1.9, -0.7,    0.0,
-            -1.9, -0.6901, 0.0,
-            -2.0,   -1.0,      3.0,
-            -1.9, -1.0,      3.0,
-            -2.0,   -1.0,      4.0,
-            -1.9, -1.0,      4.0,
-            -1.9, -0.6901, 3.0,
-            -1.9, -0.6901, 4.0,
-            -1.7, -0.6901, 3.0,
-            -1.7, -0.6901, 3.2,
-            -2.0,   0.0,       -0.1,
-            -2.0,   0.0,       0.0,
-            -2.0,   0.0,       3.0,
-            -2.0,   0.0,       4.0,
-            -1.7, 0.0,       3.0,
-            -1.7, 0.0,       3.2,
-            -1.0, -0.6901, -0.1,
-            -1.0, -0.6901, 0.0,
-            -1.0, -0.6901, 3.2,
-            -1.0, -0.6901, 4.0,
-            -1.0, 0.0,       -0.1,
-            -1.0, 0.0,       0.0,
-            -1.0, 0.0,       3.2,
-            -1.0, 0.0,       4.0,
+            0.0, 0.0, 0.0, -2.0, -0.7, -0.1, -2.0, -0.7, 0.0, -1.9, -0.7, -0.1, -1.9, -0.6901,
+            -0.1, -1.9, -0.7, 0.0, -1.9, -0.6901, 0.0, -2.0, -1.0, 3.0, -1.9, -1.0, 3.0, -2.0,
+            -1.0, 4.0, -1.9, -1.0, 4.0, -1.9, -0.6901, 3.0, -1.9, -0.6901, 4.0, -1.7, -0.6901, 3.0,
+            -1.7, -0.6901, 3.2, -2.0, 0.0, -0.1, -2.0, 0.0, 0.0, -2.0, 0.0, 3.0, -2.0, 0.0, 4.0,
+            -1.7, 0.0, 3.0, -1.7, 0.0, 3.2, -1.0, -0.6901, -0.1, -1.0, -0.6901, 0.0, -1.0, -0.6901,
+            3.2, -1.0, -0.6901, 4.0, -1.0, 0.0, -0.1, -1.0, 0.0, 0.0, -1.0, 0.0, 3.2, -1.0, 0.0,
+            4.0,
         ],
         tri_verts: vec![
-            1,  3,  2,
-            1,  4,  3,
-            2,  3,  5,
-            5,  6,  2,
-            3,  4,  6,
-            5,  3,  6,
-            6,  4,  21,
-            26, 22, 25,
-            21, 25, 22,
-            25, 15, 26,
-            26, 6,  22,
-            21, 4,  25,
-            21, 22, 6,
-            16, 26, 15,
-            16, 6,  26,
-            4,  15, 25,
-            15, 1,  16,
-            16, 2,  6,
-            4,  1,  15,
-            1,  2,  16,
-            12, 14, 23,
-            12, 13, 14,
-            12, 11, 13,
-            18, 9,  12,
-            11, 7,  17,
-            7,  9,  18,
-            17, 7,  18,
-            13, 11, 19,
-            17, 18, 20,
-            19, 11, 17,
-            19, 17, 20,
-            14, 13, 20,
-            18, 12, 24,
-            20, 13, 19,
-            20, 18, 27,
-            12, 10, 11,
-            24, 12, 23,
-            9,  10, 12,
-            9,  8,  10,
-            8,  11, 10,
-            8,  7,  11,
-            8,  9,  7,
-            14, 20, 27,
-            24, 28, 18,
-            27, 18, 28,
-            23, 14, 27,
-            24, 23, 28,
-            28, 23, 27,
+            1, 3, 2, 1, 4, 3, 2, 3, 5, 5, 6, 2, 3, 4, 6, 5, 3, 6, 6, 4, 21, 26, 22, 25, 21, 25, 22,
+            25, 15, 26, 26, 6, 22, 21, 4, 25, 21, 22, 6, 16, 26, 15, 16, 6, 26, 4, 15, 25, 15, 1,
+            16, 16, 2, 6, 4, 1, 15, 1, 2, 16, 12, 14, 23, 12, 13, 14, 12, 11, 13, 18, 9, 12, 11, 7,
+            17, 7, 9, 18, 17, 7, 18, 13, 11, 19, 17, 18, 20, 19, 11, 17, 19, 17, 20, 14, 13, 20,
+            18, 12, 24, 20, 13, 19, 20, 18, 27, 12, 10, 11, 24, 12, 23, 9, 10, 12, 9, 8, 10, 8, 11,
+            10, 8, 7, 11, 8, 9, 7, 14, 20, 27, 24, 28, 18, 27, 18, 28, 23, 14, 27, 24, 23, 28, 28,
+            23, 27,
         ],
         ..Default::default()
     };
     let m = Manifold::from_mesh_gl(&input);
     let projected = m.project();
     let area = projected.area();
-    assert!((area - 0.72).abs() < 0.01,
-        "Project area: {} expected ~0.72", area);
+    assert!(
+        (area - 0.72).abs() < 0.01,
+        "Project area: {} expected ~0.72",
+        area
+    );
 }
 
 /// C++ TEST(Manifold, GetMeshGL) — sphere round-trip through MeshGL
@@ -665,9 +716,16 @@ fn test_cpp_manifold_get_mesh_gl() {
     // Check same number of vertices and triangles
     let nv1 = mesh1.vert_properties.len() / mesh1.num_prop as usize;
     let nv2 = mesh2.vert_properties.len() / mesh2.num_prop as usize;
-    assert_eq!(nv1, nv2, "GetMeshGL: vertex count mismatch {} vs {}", nv1, nv2);
-    assert_eq!(mesh1.tri_verts.len(), mesh2.tri_verts.len(),
-        "GetMeshGL: triVerts length mismatch");
+    assert_eq!(
+        nv1, nv2,
+        "GetMeshGL: vertex count mismatch {} vs {}",
+        nv1, nv2
+    );
+    assert_eq!(
+        mesh1.tri_verts.len(),
+        mesh2.tri_verts.len(),
+        "GetMeshGL: triVerts length mismatch"
+    );
 
     // Check vertex positions match
     for i in 0..nv1 {
@@ -697,20 +755,50 @@ fn test_cpp_manifold_warp_batch() {
     });
 
     assert!(id >= 0, "WarpBatch: original ID should be >= 0");
-    assert_eq!(shape1.original_id(), -1, "WarpBatch: warped shape1 should have ID -1");
-    assert_eq!(shape2.original_id(), -1, "WarpBatch: warped shape2 should have ID -1");
+    assert_eq!(
+        shape1.original_id(),
+        -1,
+        "WarpBatch: warped shape1 should have ID -1"
+    );
+    assert_eq!(
+        shape2.original_id(),
+        -1,
+        "WarpBatch: warped shape2 should have ID -1"
+    );
 
     // Check run_original_id
     let gl1 = shape1.get_mesh_gl(3);
-    assert_eq!(gl1.run_original_id.len(), 1, "WarpBatch: shape1 should have 1 run");
-    assert_eq!(gl1.run_original_id[0], id as u32, "WarpBatch: shape1 run ID mismatch");
+    assert_eq!(
+        gl1.run_original_id.len(),
+        1,
+        "WarpBatch: shape1 should have 1 run"
+    );
+    assert_eq!(
+        gl1.run_original_id[0], id as u32,
+        "WarpBatch: shape1 run ID mismatch"
+    );
 
     let gl2 = shape2.get_mesh_gl(3);
-    assert_eq!(gl2.run_original_id.len(), 1, "WarpBatch: shape2 should have 1 run");
-    assert_eq!(gl2.run_original_id[0], id as u32, "WarpBatch: shape2 run ID mismatch");
+    assert_eq!(
+        gl2.run_original_id.len(),
+        1,
+        "WarpBatch: shape2 should have 1 run"
+    );
+    assert_eq!(
+        gl2.run_original_id[0], id as u32,
+        "WarpBatch: shape2 run ID mismatch"
+    );
 
-    assert_eq!(shape1.volume(), shape2.volume(), "WarpBatch: volumes differ");
-    assert_eq!(shape1.surface_area(), shape2.surface_area(), "WarpBatch: areas differ");
+    assert_eq!(
+        shape1.volume(),
+        shape2.volume(),
+        "WarpBatch: volumes differ"
+    );
+    assert_eq!(
+        shape1.surface_area(),
+        shape2.surface_area(),
+        "WarpBatch: areas differ"
+    );
 }
 
 /// C++ TEST(Manifold, Warp2) — extrude circle then warp into arc
@@ -718,29 +806,40 @@ fn test_cpp_manifold_warp_batch() {
 fn test_cpp_manifold_warp2() {
     use crate::cross_section::CrossSection;
     let circle = CrossSection::circle(5.0, 20).translate(Vec2::new(10.0, 10.0));
-    let shape = Manifold::extrude(
-        &circle.to_polygons(), 2.0, 10, 0.0, Vec2::new(1.0, 1.0),
-    ).warp(|v: &mut Vec3| {
-        let n_segments = 10;
-        let angle_step = 2.0 / 3.0 * std::f64::consts::PI / n_segments as f64;
-        let z_index = n_segments - 1 - v.z.round() as i32;
-        let angle = z_index as f64 * angle_step;
-        let new_z = v.y;
-        let new_y = v.x * angle.sin();
-        let new_x = v.x * angle.cos();
-        v.x = new_x;
-        v.y = new_y;
-        v.z = new_z;
-    });
+    let shape = Manifold::extrude(&circle.to_polygons(), 2.0, 10, 0.0, Vec2::new(1.0, 1.0)).warp(
+        |v: &mut Vec3| {
+            let n_segments = 10;
+            let angle_step = 2.0 / 3.0 * std::f64::consts::PI / n_segments as f64;
+            let z_index = n_segments - 1 - v.z.round() as i32;
+            let angle = z_index as f64 * angle_step;
+            let new_z = v.y;
+            let new_y = v.x * angle.sin();
+            let new_x = v.x * angle.cos();
+            v.x = new_x;
+            v.y = new_y;
+            v.z = new_z;
+        },
+    );
 
     let simplified = Manifold::batch_boolean(&[shape.clone()], OpType::Add);
 
-    assert!((shape.volume() - simplified.volume()).abs() < 0.0001,
-        "Warp2: volume mismatch {} vs {}", shape.volume(), simplified.volume());
-    assert!((shape.surface_area() - simplified.surface_area()).abs() < 0.0001,
-        "Warp2: area mismatch {} vs {}", shape.surface_area(), simplified.surface_area());
-    assert!((shape.volume() - 321.0).abs() < 1.0,
-        "Warp2: volume {} expected ~321", shape.volume());
+    assert!(
+        (shape.volume() - simplified.volume()).abs() < 0.0001,
+        "Warp2: volume mismatch {} vs {}",
+        shape.volume(),
+        simplified.volume()
+    );
+    assert!(
+        (shape.surface_area() - simplified.surface_area()).abs() < 0.0001,
+        "Warp2: area mismatch {} vs {}",
+        shape.surface_area(),
+        simplified.surface_area()
+    );
+    assert!(
+        (shape.volume() - 321.0).abs() < 1.0,
+        "Warp2: volume {} expected ~321",
+        shape.volume()
+    );
 }
 
 /// C++ TEST(Manifold, FaceIDRoundTrip) — faceID preserved through round-trip
@@ -752,7 +851,12 @@ fn test_cpp_manifold_face_id_round_trip() {
 
     // Cube has 12 tris, 6 faces → 6 unique faceIDs
     let unique_in: std::collections::HashSet<u32> = in_gl.face_id.iter().copied().collect();
-    assert_eq!(unique_in.len(), 6, "FaceIDRoundTrip: expected 6 unique faceIDs, got {}", unique_in.len());
+    assert_eq!(
+        unique_in.len(),
+        6,
+        "FaceIDRoundTrip: expected 6 unique faceIDs, got {}",
+        unique_in.len()
+    );
 
     // Override with just 2 unique values
     in_gl.face_id = vec![3, 3, 3, 3, 3, 3, 5, 5, 5, 5, 5, 5];
@@ -760,5 +864,10 @@ fn test_cpp_manifold_face_id_round_trip() {
     let cube2 = Manifold::from_mesh_gl(&in_gl);
     let out_gl = cube2.get_mesh_gl(3);
     let unique_out: std::collections::HashSet<u32> = out_gl.face_id.iter().copied().collect();
-    assert_eq!(unique_out.len(), 2, "FaceIDRoundTrip: expected 2 unique faceIDs, got {}", unique_out.len());
+    assert_eq!(
+        unique_out.len(),
+        2,
+        "FaceIDRoundTrip: expected 2 unique faceIDs, got {}",
+        unique_out.len()
+    );
 }

@@ -90,9 +90,8 @@ pub fn incircle_h(a: &Homog2, b: &Homog2, c: &Homog2, d: &Homog2) -> Sign {
     let (ux, uy, ul) = row(a);
     let (vx, vy, vl) = row(b);
     let (wx, wy, wl) = row(c);
-    let det = ul * (&vx * &wy - &vy * &wx)
-        + vl * (&wx * &uy - &wy * &ux)
-        + wl * (&ux * &vy - &uy * &vx);
+    let det =
+        ul * (&vx * &wy - &vy * &wx) + vl * (&wx * &uy - &wy * &ux) + wl * (&ux * &vy - &uy * &vx);
     sign_of_int(&det)
 }
 
@@ -163,9 +162,8 @@ pub fn orient3d_r(a: &R3, b: &R3, c: &R3, d: &R3) -> Sign {
     let wx = &dx * &aw - &ax * &dw;
     let wy = &dy * &aw - &ay * &dw;
     let wz = &dz * &aw - &az * &dw;
-    let det = (&uy * &vz - &uz * &vy) * wx
-        + (&uz * &vx - &ux * &vz) * wy
-        + (&ux * &vy - &uy * &vx) * wz;
+    let det =
+        (&uy * &vz - &uz * &vy) * wx + (&uz * &vx - &ux * &vz) * wy + (&ux * &vy - &uy * &vx) * wz;
     sign_of_int(&det)
 }
 
@@ -189,9 +187,8 @@ pub fn incircle_r(a: &R2, b: &R2, c: &R2, d: &R2) -> Sign {
     let (ux, uy, ul) = row(a);
     let (vx, vy, vl) = row(b);
     let (wx, wy, wl) = row(c);
-    let det = ul * (&vx * &wy - &vy * &wx)
-        + vl * (&wx * &uy - &wy * &ux)
-        + wl * (&ux * &vy - &uy * &vx);
+    let det =
+        ul * (&vx * &wy - &vy * &wx) + vl * (&wx * &uy - &wy * &ux) + wl * (&ux * &vy - &uy * &vx);
     sign_of_int(&det)
 }
 
@@ -237,9 +234,8 @@ pub fn dot_diff_raw(a: &R3, o: &R3, u: &R3) -> (Int, Int) {
     let (ox, oy, oz, ow) = homog3(o);
     let (ux, uy, uz, uw) = homog3(u);
     // (a−o) scaled by the positive AwOw; dot with u adds a Uw denominator.
-    let num = (&ax * &ow - &ox * &aw) * ux
-        + (&ay * &ow - &oy * &aw) * uy
-        + (&az * &ow - &oz * &aw) * uz;
+    let num =
+        (&ax * &ow - &ox * &aw) * ux + (&ay * &ow - &oy * &aw) * uy + (&az * &ow - &oz * &aw) * uz;
     (num, aw * ow * uw)
 }
 
@@ -310,10 +306,10 @@ pub fn point_in_tri_2d(p: &R2, a: &R2, b: &R2, c: &R2) -> TriLoc {
         (true, false, false) => TriLoc::OnEdge(0),
         (false, true, false) => TriLoc::OnEdge(1),
         (false, false, true) => TriLoc::OnEdge(2),
-        (true, false, true) => TriLoc::OnVertex(0),  // a: on edges c→a and a→b
-        (true, true, false) => TriLoc::OnVertex(1),  // b
-        (false, true, true) => TriLoc::OnVertex(2),  // c
-        (true, true, true) => TriLoc::Outside,       // impossible for orient != 0
+        (true, false, true) => TriLoc::OnVertex(0), // a: on edges c→a and a→b
+        (true, true, false) => TriLoc::OnVertex(1), // b
+        (false, true, true) => TriLoc::OnVertex(2), // c
+        (true, true, true) => TriLoc::Outside,      // impossible for orient != 0
     }
 }
 
@@ -365,9 +361,8 @@ pub fn line_plane_intersect(p: &R3, q: &R3, a: &R3, b: &R3, c: &R3) -> Option<R3
     let t_n = &n_dot_e * &qw;
     let t_d = &aw * &n_dot_d;
     let den = &pw * &qw * &t_d;
-    let coord = |pi: &Int, di: &Int| -> Rational {
-        rat_new(pi * &qw * &t_d + di * &t_n, den.clone())
-    };
+    let coord =
+        |pi: &Int, di: &Int| -> Rational { rat_new(pi * &qw * &t_d + di * &t_n, den.clone()) };
     Some(R3::new(coord(&px, &dx), coord(&py, &dy), coord(&pz, &dz)))
 }
 
@@ -418,10 +413,7 @@ pub fn lift_to_plane(p: &R2, axis: usize, a: &R3, n: &R3) -> R3 {
     //   = (S·Pw − Aw·(N_i·P_i + N_j·P_j)) / (Aw·Pw·N_k).
     let s = &nx * &ax + &ny * &ay + &nz * &az;
     let rebuild = |ni: &Int, nj: &Int, nk: &Int| -> Rational {
-        rat_new(
-            &s * &pw - &aw * (ni * &px + nj * &py),
-            &aw * &pw * nk,
-        )
+        rat_new(&s * &pw - &aw * (ni * &px + nj * &py), &aw * &pw * nk)
     };
     let _ = nw; // cancels: both S and the subtracted terms carry 1/Nw
     match axis {

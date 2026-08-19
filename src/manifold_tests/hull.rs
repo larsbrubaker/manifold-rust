@@ -16,7 +16,9 @@ fn test_cpp_hull_tictac() {
 
     assert!(
         (tictac.num_vert() as i64 - (sphere.num_vert() as i64 + tictac_seg as i64)).abs() <= 1,
-        "Tictac: {} verts, expected ~{}", tictac.num_vert(), sphere.num_vert() + tictac_seg as usize
+        "Tictac: {} verts, expected ~{}",
+        tictac.num_vert(),
+        sphere.num_vert() + tictac_seg as usize
     );
 }
 
@@ -48,7 +50,10 @@ fn test_cpp_hull_failing_test1() {
     let hull = Manifold::hull(&pts);
     assert!(!hull.is_empty(), "FailingTest1 hull should not be empty");
     // Verify convexity: volume should be positive
-    assert!(hull.volume() > 0.0, "FailingTest1 hull should have positive volume");
+    assert!(
+        hull.volume() > 0.0,
+        "FailingTest1 hull should have positive volume"
+    );
 }
 
 /// C++ TEST(Hull, FailingTest2) — hull of another specific point set (1750623.stl)
@@ -79,7 +84,10 @@ fn test_cpp_hull_failing_test2() {
     ];
     let hull = Manifold::hull(&pts);
     assert!(!hull.is_empty(), "FailingTest2 hull should not be empty");
-    assert!(hull.volume() > 0.0, "FailingTest2 hull should have positive volume");
+    assert!(
+        hull.volume() > 0.0,
+        "FailingTest2 hull should have positive volume"
+    );
 }
 
 /// C++ TEST(Hull, DisabledFaceTest) — hull of specific degenerate points (101213.stl)
@@ -100,7 +108,10 @@ fn test_cpp_hull_disabled_face_test() {
         Vec3::new(101.61526489, 98.461585999, 30.909877777),
     ];
     let hull = Manifold::hull(&pts);
-    assert!(!hull.is_empty(), "DisabledFaceTest hull should not be empty");
+    assert!(
+        !hull.is_empty(),
+        "DisabledFaceTest hull should not be empty"
+    );
     assert!(hull.volume() > 0.0);
 }
 
@@ -123,7 +134,10 @@ fn test_cpp_hull_degenerate_2d() {
     assert!((bb.max.x - 0.5).abs() < 1e-6);
     assert!((bb.max.y - 0.0).abs() < 1e-6);
     assert!((bb.max.z - 1.0).abs() < 1e-6);
-    assert!((hull.volume()).abs() < 1e-10, "Degenerate2D hull volume should be 0");
+    assert!(
+        (hull.volume()).abs() < 1e-10,
+        "Degenerate2D hull volume should be 0"
+    );
 }
 
 /// C++ TEST(Hull, Degenerate1D) — hull of collinear points
@@ -138,18 +152,23 @@ fn test_cpp_hull_degenerate_1d() {
     ]);
     // C++ says !hull.IsEmpty() for degenerate cases, but our impl may differ
     // The key invariant is that volume is 0
-    assert!(hull.volume().abs() < 1e-10, "Degenerate1D hull volume should be 0, got {}", hull.volume());
+    assert!(
+        hull.volume().abs() < 1e-10,
+        "Degenerate1D hull volume should be 0, got {}",
+        hull.volume()
+    );
 }
 
 /// C++ TEST(Hull, NotEnoughPoints) — hull of 2 points
 #[test]
 fn test_cpp_hull_not_enough_points() {
-    let hull = Manifold::hull(&[
-        Vec3::new(0.0, 0.0, 0.0),
-        Vec3::new(0.5, 0.0, 0.0),
-    ]);
+    let hull = Manifold::hull(&[Vec3::new(0.0, 0.0, 0.0), Vec3::new(0.5, 0.0, 0.0)]);
     // Volume must be 0 for degenerate hull
-    assert!(hull.volume().abs() < 1e-10, "NotEnoughPoints hull volume should be 0, got {}", hull.volume());
+    assert!(
+        hull.volume().abs() < 1e-10,
+        "NotEnoughPoints hull volume should be 0, got {}",
+        hull.volume()
+    );
 }
 
 /// C++ TEST(Hull, EmptyHull) — empty point set yields empty manifold
@@ -172,13 +191,31 @@ fn menger_sponge(n: i32) -> Manifold {
     result.difference(&hole)
 }
 
-fn fractal(holes: &mut Vec<Manifold>, hole: &Manifold, w: f64, position: Vec2, depth: i32, max_depth: i32) {
+fn fractal(
+    holes: &mut Vec<Manifold>,
+    hole: &Manifold,
+    w: f64,
+    position: Vec2,
+    depth: i32,
+    max_depth: i32,
+) {
     let w = w / 3.0;
-    holes.push(hole.scale(Vec3::new(w, w, 1.0)).translate(Vec3::new(position.x, position.y, 0.0)));
-    if depth == max_depth { return; }
+    holes.push(
+        hole.scale(Vec3::new(w, w, 1.0))
+            .translate(Vec3::new(position.x, position.y, 0.0)),
+    );
+    if depth == max_depth {
+        return;
+    }
     let offsets = [
-        Vec2::new(-w, -w), Vec2::new(-w, 0.0), Vec2::new(-w, w), Vec2::new(0.0, w),
-        Vec2::new(w, w),   Vec2::new(w, 0.0),  Vec2::new(w, -w), Vec2::new(0.0, -w),
+        Vec2::new(-w, -w),
+        Vec2::new(-w, 0.0),
+        Vec2::new(-w, w),
+        Vec2::new(0.0, w),
+        Vec2::new(w, w),
+        Vec2::new(w, 0.0),
+        Vec2::new(w, -w),
+        Vec2::new(0.0, -w),
     ];
     for off in &offsets {
         fractal(holes, hole, w, position + *off, depth + 1, max_depth);
@@ -190,11 +227,22 @@ fn fractal(holes: &mut Vec<Manifold>, hole: &Manifold, w: f64, position: Vec2, d
 fn test_cpp_hull_menger_sponge_depth2() {
     let sponge = menger_sponge(2).rotate(10.0, 20.0, 30.0);
     let hull = sponge.convex_hull();
-    assert_eq!(hull.num_tri(), 12, "MengerSponge(2) hull tris={}", hull.num_tri());
-    assert!((hull.surface_area() - 6.0).abs() < 1e-4,
-        "MengerSponge(2) hull sa={}", hull.surface_area());
-    assert!((hull.volume() - 1.0).abs() < 1e-4,
-        "MengerSponge(2) hull vol={}", hull.volume());
+    assert_eq!(
+        hull.num_tri(),
+        12,
+        "MengerSponge(2) hull tris={}",
+        hull.num_tri()
+    );
+    assert!(
+        (hull.surface_area() - 6.0).abs() < 1e-4,
+        "MengerSponge(2) hull sa={}",
+        hull.surface_area()
+    );
+    assert!(
+        (hull.volume() - 1.0).abs() < 1e-4,
+        "MengerSponge(2) hull vol={}",
+        hull.volume()
+    );
 }
 
 /// C++ TEST(Hull, MengerSponge) — hull of a Menger sponge is a cube
@@ -205,11 +253,22 @@ fn test_cpp_hull_menger_sponge_depth2() {
 fn test_cpp_hull_menger_sponge() {
     let sponge = menger_sponge(4).rotate(10.0, 20.0, 30.0);
     let hull = sponge.convex_hull();
-    assert_eq!(hull.num_tri(), 12, "MengerSponge hull tris={}", hull.num_tri());
-    assert!((hull.surface_area() - 6.0).abs() < 1e-4,
-        "MengerSponge hull sa={}", hull.surface_area());
-    assert!((hull.volume() - 1.0).abs() < 1e-4,
-        "MengerSponge hull vol={}", hull.volume());
+    assert_eq!(
+        hull.num_tri(),
+        12,
+        "MengerSponge hull tris={}",
+        hull.num_tri()
+    );
+    assert!(
+        (hull.surface_area() - 6.0).abs() < 1e-4,
+        "MengerSponge hull sa={}",
+        hull.surface_area()
+    );
+    assert!(
+        (hull.volume() - 1.0).abs() < 1e-4,
+        "MengerSponge hull vol={}",
+        hull.volume()
+    );
 }
 
 /// C++ TEST(Hull, Sphere) — hull of a sphere is the sphere itself
@@ -219,6 +278,10 @@ fn test_cpp_hull_sphere() {
     let sphere = Manifold::sphere(1.0, 1500).translate(Vec3::new(0.5, 0.5, 0.5));
     let hull = Manifold::hull_manifolds(&[sphere.clone()]);
     assert_eq!(hull.num_tri(), sphere.num_tri());
-    assert!((hull.volume() - sphere.volume()).abs() < 1e-4,
-        "Hull sphere volume {} vs sphere {}", hull.volume(), sphere.volume());
+    assert!(
+        (hull.volume() - sphere.volume()).abs() < 1e-4,
+        "Hull sphere volume {} vs sphere {}",
+        hull.volume(),
+        sphere.volume()
+    );
 }

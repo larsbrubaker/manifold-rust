@@ -13,10 +13,18 @@ fn test_cpp_smooth_normals() {
         .calculate_normals(0, 60.0)
         .smooth_by_normals(0)
         .refine_to_length(0.1);
-    assert!((out.volume() - by_normals.volume()).abs() < 1e-4,
-        "Normals: vol {} vs {}", out.volume(), by_normals.volume());
-    assert!((out.surface_area() - by_normals.surface_area()).abs() < 1e-4,
-        "Normals: sa {} vs {}", out.surface_area(), by_normals.surface_area());
+    assert!(
+        (out.volume() - by_normals.volume()).abs() < 1e-4,
+        "Normals: vol {} vs {}",
+        out.volume(),
+        by_normals.volume()
+    );
+    assert!(
+        (out.surface_area() - by_normals.surface_area()).abs() < 1e-4,
+        "Normals: sa {} vs {}",
+        out.surface_area(),
+        by_normals.surface_area()
+    );
 }
 
 /// C++ TEST(Smooth, TruncatedCone) — smooth cylinder with different radii
@@ -25,12 +33,21 @@ fn test_cpp_smooth_truncated_cone() {
     let cone = Manifold::cylinder(5.0, 10.0, 5.0, 12);
     // C++ v3.5.0: SmoothOut() defaults to (52.5, 0); CalculateNormals(0)
     // defaults to (0, 52.5). Values updated for the #1724/#1671 smoothing fixes.
-    let smooth = cone.clone().smooth_out(52.5, 0.0).refine_to_length(0.5)
+    let smooth = cone
+        .clone()
+        .smooth_out(52.5, 0.0)
+        .refine_to_length(0.5)
         .calculate_normals(0, 52.5);
-    assert!((smooth.volume() - 1163.53).abs() < 0.01,
-        "TruncatedCone vol={}", smooth.volume());
-    assert!((smooth.surface_area() - 769.33).abs() < 0.01,
-        "TruncatedCone sa={}", smooth.surface_area());
+    assert!(
+        (smooth.volume() - 1163.53).abs() < 0.01,
+        "TruncatedCone vol={}",
+        smooth.volume()
+    );
+    assert!(
+        (smooth.surface_area() - 769.33).abs() < 0.01,
+        "TruncatedCone sa={}",
+        smooth.surface_area()
+    );
 
     let smooth1 = cone.clone().smooth_out(180.0, 1.0).refine_to_length(0.5);
     let smooth2 = cone.smooth_out(180.0, 0.0).refine_to_length(0.5);
@@ -41,14 +58,24 @@ fn test_cpp_smooth_truncated_cone() {
 /// C++ TEST(Smooth, Mirrored) — mirrored smooth tetrahedron
 #[test]
 fn test_cpp_smooth_mirrored() {
-    let tet_gl = Manifold::tetrahedron().scale(Vec3::new(1.0, 2.0, 3.0)).get_mesh_gl(0);
+    let tet_gl = Manifold::tetrahedron()
+        .scale(Vec3::new(1.0, 2.0, 3.0))
+        .get_mesh_gl(0);
     let smooth = Manifold::smooth(&tet_gl, &[]);
     let mirror = smooth.clone().scale(Vec3::new(-2.0, 2.0, 2.0)).refine(10);
     let scaled = smooth.refine(10).scale(Vec3::new(2.0, 2.0, 2.0));
-    assert!((scaled.volume() - mirror.volume()).abs() < 0.1,
-        "Mirrored vol: {} vs {}", scaled.volume(), mirror.volume());
-    assert!((scaled.surface_area() - mirror.surface_area()).abs() < 0.1,
-        "Mirrored sa: {} vs {}", scaled.surface_area(), mirror.surface_area());
+    assert!(
+        (scaled.volume() - mirror.volume()).abs() < 0.1,
+        "Mirrored vol: {} vs {}",
+        scaled.volume(),
+        mirror.volume()
+    );
+    assert!(
+        (scaled.surface_area() - mirror.surface_area()).abs() < 0.1,
+        "Mirrored sa: {} vs {}",
+        scaled.surface_area(),
+        mirror.surface_area()
+    );
 }
 
 /// C++ TEST(Smooth, Tetrahedron) — smooth tetrahedron with curvature check
@@ -60,8 +87,16 @@ fn test_cpp_smooth_tetrahedron() {
     let refined = smooth.refine(n);
     assert_eq!(refined.num_vert(), 2 * n as usize * n as usize + 2);
     assert_eq!(refined.num_tri(), 4 * n as usize * n as usize);
-    assert!((refined.volume() - 17.0).abs() < 0.1, "vol={}", refined.volume());
-    assert!((refined.surface_area() - 32.9).abs() < 0.1, "sa={}", refined.surface_area());
+    assert!(
+        (refined.volume() - 17.0).abs() < 0.1,
+        "vol={}",
+        refined.volume()
+    );
+    assert!(
+        (refined.surface_area() - 32.9).abs() < 0.1,
+        "sa={}",
+        refined.surface_area()
+    );
 }
 
 /// C++ TEST(Smooth, Csaszar) — smooth Csaszar polyhedron
@@ -72,8 +107,16 @@ fn test_cpp_smooth_csaszar() {
     let refined = smooth.refine(100);
     assert_eq!(refined.num_vert(), 70000);
     assert_eq!(refined.num_tri(), 140000);
-    assert!((refined.volume() - 78760.0).abs() < 10.0, "vol={}", refined.volume());
-    assert!((refined.surface_area() - 11935.0).abs() < 10.0, "sa={}", refined.surface_area());
+    assert!(
+        (refined.volume() - 78760.0).abs() < 10.0,
+        "vol={}",
+        refined.volume()
+    );
+    assert!(
+        (refined.surface_area() - 11935.0).abs() < 10.0,
+        "sa={}",
+        refined.surface_area()
+    );
 }
 
 /// C++ TEST(Smooth, Manual) — manually adjusted tangent weights
@@ -91,8 +134,16 @@ fn test_cpp_smooth_manual() {
     let interp = Manifold::from_mesh_gl(&smooth_gl).refine(100);
     assert_eq!(interp.num_vert(), 40002);
     assert_eq!(interp.num_tri(), 80000);
-    assert!((interp.volume() - 3.74).abs() < 0.01, "vol={}", interp.volume());
-    assert!((interp.surface_area() - 11.78).abs() < 0.01, "sa={}", interp.surface_area());
+    assert!(
+        (interp.volume() - 3.74).abs() < 0.01,
+        "vol={}",
+        interp.volume()
+    );
+    assert!(
+        (interp.surface_area() - 11.78).abs() < 0.01,
+        "sa={}",
+        interp.surface_area()
+    );
 }
 
 /// C++ TEST(Smooth, RefineQuads) — smooth cylinder with position-color properties
@@ -102,12 +153,23 @@ fn test_cpp_smooth_refine_quads() {
     let cylinder = with_position_colors(&Manifold::cylinder(2.0, 1.0, -1.0, 12))
         .smooth_out(60.0, 0.0)
         .refine_to_length(0.05);
-    assert_eq!(cylinder.num_tri(), 17044, "RefineQuads tris={}", cylinder.num_tri());
+    assert_eq!(
+        cylinder.num_tri(),
+        17044,
+        "RefineQuads tris={}",
+        cylinder.num_tri()
+    );
     let pi = std::f64::consts::PI;
-    assert!((cylinder.volume() - 2.0 * pi).abs() < 0.003,
-        "RefineQuads vol={}", cylinder.volume());
-    assert!((cylinder.surface_area() - 6.0 * pi).abs() < 0.004,
-        "RefineQuads sa={}", cylinder.surface_area());
+    assert!(
+        (cylinder.volume() - 2.0 * pi).abs() < 0.003,
+        "RefineQuads vol={}",
+        cylinder.volume()
+    );
+    assert!(
+        (cylinder.surface_area() - 6.0 * pi).abs() < 0.004,
+        "RefineQuads sa={}",
+        cylinder.surface_area()
+    );
 }
 
 /// C++ TEST(Smooth, Precision) — tolerance-based refinement precision
@@ -118,8 +180,15 @@ fn test_cpp_smooth_precision() {
     let height = 10.0;
     let cylinder = Manifold::cylinder(height, radius, radius, 8);
     // C++ uses SmoothOut() which defaults to (60, 0)
-    let smoothed = cylinder.smooth_out(60.0, 0.0).refine_to_tolerance(tolerance);
-    assert_eq!(smoothed.num_tri(), 7984, "Precision tris={}", smoothed.num_tri());
+    let smoothed = cylinder
+        .smooth_out(60.0, 0.0)
+        .refine_to_tolerance(tolerance);
+    assert_eq!(
+        smoothed.num_tri(),
+        7984,
+        "Precision tris={}",
+        smoothed.num_tri()
+    );
 }
 
 /// C++ TEST(Smooth, ToLength) — smooth cone with RefineToLength and curvature check
@@ -129,13 +198,25 @@ fn test_cpp_smooth_to_length() {
     let polygons = circle.to_polygons();
     let cone = Manifold::extrude(&polygons, 2.0, 0, 0.0, Vec2::new(0.0, 0.0));
     let cone = cone.union(&cone.scale(Vec3::new(1.0, 1.0, -5.0)));
-    let smooth = cone.as_original().simplify(0.0).smooth_out(180.0, 0.0).refine_to_length(0.1);
+    let smooth = cone
+        .as_original()
+        .simplify(0.0)
+        .smooth_out(180.0, 0.0)
+        .refine_to_length(0.1);
 
     let (num_tri, num_vert) = (smooth.num_tri(), smooth.num_vert());
     assert_eq!(num_tri, 170496, "ToLength tris={}", num_tri);
     assert_eq!(num_vert, 85250, "ToLength verts={}", num_vert);
-    assert!((smooth.volume() - 4570.0).abs() < 1.0, "ToLength vol={}", smooth.volume());
-    assert!((smooth.surface_area() - 1348.0).abs() < 1.0, "ToLength sa={}", smooth.surface_area());
+    assert!(
+        (smooth.volume() - 4570.0).abs() < 1.0,
+        "ToLength vol={}",
+        smooth.volume()
+    );
+    assert!(
+        (smooth.surface_area() - 1348.0).abs() < 1.0,
+        "ToLength sa={}",
+        smooth.surface_area()
+    );
 
     let out = smooth.calculate_curvature(-1, 0).get_mesh_gl(0);
     let num_prop = out.num_prop as usize;
@@ -145,8 +226,11 @@ fn test_cpp_smooth_to_length() {
         max_mean_curvature = max_mean_curvature.max(out.vert_properties[i].abs());
         i += num_prop;
     }
-    assert!((max_mean_curvature - 1.63).abs() < 0.01,
-        "ToLength maxMeanCurvature={}", max_mean_curvature);
+    assert!(
+        (max_mean_curvature - 1.63).abs() < 0.01,
+        "ToLength maxMeanCurvature={}",
+        max_mean_curvature
+    );
 }
 
 /// C++ TEST(Smooth, Torus) — manually-smoothed torus with CircularTangent
@@ -172,7 +256,9 @@ fn test_cpp_smooth_torus() {
             let tangent = if edge.z == 0.0 {
                 // Horizontal edge — tangent is circumferential
                 let mut tan = Vec3::new(v.y, -v.x, 0.0);
-                if dot(tan, edge) < 0.0 { tan = -tan; }
+                if dot(tan, edge) < 0.0 {
+                    tan = -tan;
+                }
                 circular_tangent(tan, edge)
             } else {
                 let det = v.x * edge.y - v.y * edge.x; // 2D determinant of xy parts
@@ -182,9 +268,15 @@ fn test_cpp_smooth_torus() {
                     let xy = Vec2::new(v.x, v.y);
                     let r = (xy.x * xy.x + xy.y * xy.y).sqrt();
                     let scale = v.z * if r > 2.0 { -1.0 } else { 1.0 };
-                    let xy_tan = if r > 0.0 { Vec2::new(xy.x / r * scale, xy.y / r * scale) } else { Vec2::new(0.0, 0.0) };
+                    let xy_tan = if r > 0.0 {
+                        Vec2::new(xy.x / r * scale, xy.y / r * scale)
+                    } else {
+                        Vec2::new(0.0, 0.0)
+                    };
                     let mut tan = Vec3::new(xy_tan.x, xy_tan.y, theta.cos());
-                    if dot(tan, edge) < 0.0 { tan = -tan; }
+                    if dot(tan, edge) < 0.0 {
+                        tan = -tan;
+                    }
                     circular_tangent(tan, edge)
                 } else {
                     // Diagonal edge — no smooth tangent
@@ -223,12 +315,19 @@ fn test_cpp_smooth_torus() {
             p = p * (2.0 / plen);
         }
         let r = length(v - p);
-        assert!((r - 1.0).abs() < 0.006, "Torus vertex r={} (expected 1.0)", r);
+        assert!(
+            (r - 1.0).abs() < 0.006,
+            "Torus vertex r={} (expected 1.0)",
+            r
+        );
         max_mean_curvature = max_mean_curvature.max(out.vert_properties[i + 3].abs());
         i += num_prop;
     }
-    assert!((max_mean_curvature - 1.63).abs() < 0.01,
-        "Torus maxMeanCurvature={}", max_mean_curvature);
+    assert!(
+        (max_mean_curvature - 1.63).abs() < 0.01,
+        "Torus maxMeanCurvature={}",
+        max_mean_curvature
+    );
 }
 
 // C++ TEST(Smooth, SineSurface) was removed in v3.5.0 (#1724, "Fix
@@ -256,7 +355,11 @@ fn test_cpp_smooth_sdf() {
         0.5,
     );
 
-    assert!(gyroid.num_tri() < 76000, "SDF gyroid tris={}", gyroid.num_tri());
+    assert!(
+        gyroid.num_tri() < 76000,
+        "SDF gyroid tris={}",
+        gyroid.num_tri()
+    );
 }
 
 // ============================================================================
@@ -267,14 +370,25 @@ fn test_cpp_smooth_sdf() {
 fn circular_tangent(tangent: Vec3, edge_vec: Vec3) -> [f64; 4] {
     let dir = {
         let len = length(tangent);
-        if len > 0.0 { tangent * (1.0 / len) } else { tangent }
+        if len > 0.0 {
+            tangent * (1.0 / len)
+        } else {
+            tangent
+        }
     };
     let edge_len = length(edge_vec);
     let mut weight = dot(dir, edge_vec * (1.0 / edge_len)).abs();
-    if weight == 0.0 { weight = 1.0; }
+    if weight == 0.0 {
+        weight = 1.0;
+    }
     // Quadratic weighted bezier for circular interpolation
     let bz2_xyz = dir * (edge_len / (2.0 * weight));
-    let bz2 = [bz2_xyz.x * weight, bz2_xyz.y * weight, bz2_xyz.z * weight, weight];
+    let bz2 = [
+        bz2_xyz.x * weight,
+        bz2_xyz.y * weight,
+        bz2_xyz.z * weight,
+        weight,
+    ];
     // Equivalent cubic weighted bezier: lerp(identity, bz2, 2/3)
     let t = 2.0 / 3.0;
     let bz3 = [
@@ -293,18 +407,12 @@ pub(super) fn csaszar_gl() -> MeshGL {
     let mut gl = MeshGL::default();
     gl.num_prop = 3;
     gl.vert_properties = vec![
-        -20.0, -20.0, -10.0,
-        -20.0,  20.0, -15.0,
-         -5.0,  -8.0,   8.0,
-          0.0,   0.0,  30.0,
-          5.0,   8.0,   8.0,
-         20.0, -20.0, -15.0,
-         20.0,  20.0, -10.0,
+        -20.0, -20.0, -10.0, -20.0, 20.0, -15.0, -5.0, -8.0, 8.0, 0.0, 0.0, 30.0, 5.0, 8.0, 8.0,
+        20.0, -20.0, -15.0, 20.0, 20.0, -10.0,
     ];
     gl.tri_verts = vec![
-        1, 3, 6, 1, 6, 5, 2, 5, 6, 0, 2, 6, 0, 6, 4, 3, 4, 6,
-        1, 2, 3, 1, 4, 2, 1, 0, 4, 1, 5, 0, 3, 5, 4, 0, 5, 3,
-        0, 3, 2, 2, 4, 5,
+        1, 3, 6, 1, 6, 5, 2, 5, 6, 0, 2, 6, 0, 6, 4, 3, 4, 6, 1, 2, 3, 1, 4, 2, 1, 0, 4, 1, 5, 0,
+        3, 5, 4, 0, 5, 3, 0, 3, 2, 2, 4, 5,
     ];
     gl.run_original_id = vec![crate::impl_mesh::reserve_ids(1) as u32];
     gl
@@ -316,10 +424,16 @@ fn test_cpp_smooth_missing_normals() {
     let tet_norm = Manifold::tetrahedron().calculate_normals(0, 60.0);
     let diff = tet_norm.difference(&Manifold::tetrahedron().translate(Vec3::new(0.5, 0.5, 0.5)));
     let out = diff.smooth_by_normals(0).refine(10);
-    assert!((out.volume() - 2.46).abs() < 0.01,
-        "MissingNormals vol={}", out.volume());
-    assert!((out.surface_area() - 12.45).abs() < 0.01,
-        "MissingNormals sa={}", out.surface_area());
+    assert!(
+        (out.volume() - 2.46).abs() < 0.01,
+        "MissingNormals vol={}",
+        out.volume()
+    );
+    assert!(
+        (out.surface_area() - 12.45).abs() < 0.01,
+        "MissingNormals sa={}",
+        out.surface_area()
+    );
 }
 
 /// C++ TEST(Smooth, MissingNormalsCone) — smooth cone with missing normals at cut
@@ -329,10 +443,16 @@ fn test_cpp_smooth_missing_normals_cone() {
     let cube = Manifold::cube(Vec3::splat(10.0), true).translate(Vec3::new(0.0, 0.0, 10.0));
     let diff = cone.difference(&cube);
     let out = diff.smooth_by_normals(0).refine(20);
-    assert!((out.volume() - 1009.0).abs() < 1.0,
-        "MissingNormalsCone vol={}", out.volume());
-    assert!((out.surface_area() - 736.0).abs() < 1.0,
-        "MissingNormalsCone sa={}", out.surface_area());
+    assert!(
+        (out.volume() - 1009.0).abs() < 1.0,
+        "MissingNormalsCone vol={}",
+        out.volume()
+    );
+    assert!(
+        (out.surface_area() - 736.0).abs() < 1.0,
+        "MissingNormalsCone sa={}",
+        out.surface_area()
+    );
 }
 
 /// C++ TEST(Smooth, InvalidTangents) — corrupted w=-1 tangents → InvalidTangents error
@@ -351,8 +471,12 @@ fn test_cpp_smooth_invalid_tangents() {
     }
     let cube2 = Manifold::from_mesh_gl(&mesh);
     let smooth = cube2.refine(10);
-    assert_eq!(smooth.status(), Error::InvalidTangents,
-        "Expected InvalidTangents, got {:?}", smooth.status());
+    assert_eq!(
+        smooth.status(),
+        Error::InvalidTangents,
+        "Expected InvalidTangents, got {:?}",
+        smooth.status()
+    );
 }
 
 /// C++ TEST(Manifold, MeshRelationRefine) — position colors preserved after RefineToLength
@@ -367,13 +491,28 @@ fn test_cpp_mesh_relation_refine() {
     // Check mesh sizes after refine to length 1
     let refined = csaszar.refine_to_length(1.0);
     assert!(!refined.is_empty(), "MeshRelationRefine: result is empty");
-    assert!(refined.matches_tri_normals(), "MeshRelationRefine: normals don't match tris");
-    assert_eq!(refined.num_vert(), 9019,
-        "MeshRelationRefine: expected 9019 verts, got {}", refined.num_vert());
-    assert_eq!(refined.num_tri(), 18038,
-        "MeshRelationRefine: expected 18038 tris, got {}", refined.num_tri());
-    assert_eq!(refined.num_prop(), 3,
-        "MeshRelationRefine: expected num_prop=3, got {}", refined.num_prop());
+    assert!(
+        refined.matches_tri_normals(),
+        "MeshRelationRefine: normals don't match tris"
+    );
+    assert_eq!(
+        refined.num_vert(),
+        9019,
+        "MeshRelationRefine: expected 9019 verts, got {}",
+        refined.num_vert()
+    );
+    assert_eq!(
+        refined.num_tri(),
+        18038,
+        "MeshRelationRefine: expected 18038 tris, got {}",
+        refined.num_tri()
+    );
+    assert_eq!(
+        refined.num_prop(),
+        3,
+        "MeshRelationRefine: expected num_prop=3, got {}",
+        refined.num_prop()
+    );
     super::related_gl(&refined, &[&in_gl]);
 }
 
@@ -386,20 +525,40 @@ fn test_cpp_mesh_relation_refine_precision() {
     let csaszar = Manifold::smooth(&in_gl, &[]);
 
     let refined = csaszar.refine_to_tolerance(0.05);
-    assert!(!refined.is_empty(), "MeshRelationRefinePrecision: result is empty");
-    assert!(refined.matches_tri_normals(), "MeshRelationRefinePrecision: normals don't match tris");
+    assert!(
+        !refined.is_empty(),
+        "MeshRelationRefinePrecision: result is empty"
+    );
+    assert!(
+        refined.matches_tri_normals(),
+        "MeshRelationRefinePrecision: normals don't match tris"
+    );
     // C++ v3.5.0 expects {{2343, 4686, 3}} after the #1724/#1671 smoothing fixes.
-    assert_eq!(refined.num_vert(), 2343,
-        "MeshRelationRefinePrecision: expected 2343 verts, got {}", refined.num_vert());
-    assert_eq!(refined.num_tri(), 4686,
-        "MeshRelationRefinePrecision: expected 4686 tris, got {}", refined.num_tri());
-    assert_eq!(refined.num_prop(), 3,
-        "MeshRelationRefinePrecision: expected num_prop=3, got {}", refined.num_prop());
+    assert_eq!(
+        refined.num_vert(),
+        2343,
+        "MeshRelationRefinePrecision: expected 2343 verts, got {}",
+        refined.num_vert()
+    );
+    assert_eq!(
+        refined.num_tri(),
+        4686,
+        "MeshRelationRefinePrecision: expected 4686 tris, got {}",
+        refined.num_tri()
+    );
+    assert_eq!(
+        refined.num_prop(),
+        3,
+        "MeshRelationRefinePrecision: expected num_prop=3, got {}",
+        refined.num_prop()
+    );
     // Verify the run original ID is preserved
     let out_gl = refined.get_mesh_gl(0);
     assert_eq!(out_gl.run_original_id.len(), 1);
-    assert_eq!(out_gl.run_original_id[0], id,
-        "MeshRelationRefinePrecision: original ID not preserved");
+    assert_eq!(
+        out_gl.run_original_id[0], id,
+        "MeshRelationRefinePrecision: original ID not preserved"
+    );
 }
 
 /// C++ TEST(Smooth, Sphere) — smoothed sphere vertices stay near radius 1
@@ -419,14 +578,24 @@ fn test_cpp_smooth_sphere() {
         for v in 0..num_vert {
             let p = mesh.get_vert_pos(v);
             let r2 = p[0] * p[0] + p[1] * p[1] + p[2] * p[2];
-            if r2 > max_r2 { max_r2 = r2; }
-            if r2 < min_r2 { min_r2 = r2; }
+            if r2 > max_r2 {
+                max_r2 = r2;
+            }
+            if r2 < min_r2 {
+                min_r2 = r2;
+            }
         }
         let prec = precisions[i];
-        assert!((min_r2.sqrt() - 1.0).abs() < prec,
-            "Sphere n={n}: min_r={:.6} expected ≈1.0 within {prec}", min_r2.sqrt());
-        assert!((max_r2.sqrt() - 1.0).abs() < prec,
-            "Sphere n={n}: max_r={:.6} expected ≈1.0 within {prec}", max_r2.sqrt());
+        assert!(
+            (min_r2.sqrt() - 1.0).abs() < prec,
+            "Sphere n={n}: min_r={:.6} expected ≈1.0 within {prec}",
+            min_r2.sqrt()
+        );
+        assert!(
+            (max_r2.sqrt() - 1.0).abs() < prec,
+            "Sphere n={n}: max_r={:.6} expected ≈1.0 within {prec}",
+            max_r2.sqrt()
+        );
     }
 }
 
@@ -438,15 +607,24 @@ fn test_cpp_smooth_fillet() {
     let slice = cylinder.slice(0.0);
     let section = CrossSection::new(slice.to_polygons()).simplify(1e-6);
     let chamfer = Manifold::extrude(
-        &section.to_polygons(), depth, 0, 0.0, crate::linalg::Vec2::new(1.2, 1.3),
-    ).mirror(Vec3::new(0.0, 0.0, 1.0));
+        &section.to_polygons(),
+        depth,
+        0,
+        0.0,
+        crate::linalg::Vec2::new(1.2, 1.3),
+    )
+    .mirror(Vec3::new(0.0, 0.0, 1.0));
     let base = Manifold::cube(Vec3::splat(40.0), true)
         .translate(Vec3::new(0.0, 0.0, -20.0 - depth + 0.001))
         .calculate_normals(0, 60.0);
     let chamfered = (cylinder + chamfer).difference(&base);
     let fillet = chamfered.simplify(0.01).smooth_by_normals(0).refine(10);
-    assert_eq!(fillet.status(), crate::types::Error::NoError,
-        "Fillet status={:?}", fillet.status());
+    assert_eq!(
+        fillet.status(),
+        crate::types::Error::NoError,
+        "Fillet status={:?}",
+        fillet.status()
+    );
 }
 
 /// C++ TEST(Manifold, MeshRelation) — gyroid with position colors, RelatedGL after simplify
@@ -467,8 +645,20 @@ fn with_position_colors(m: &Manifold) -> Manifold {
         bbox.max.z - bbox.min.z,
     );
     m.set_properties(3, move |prop: &mut [f64], pos: Vec3, _old: &[f64]| {
-        prop[0] = if size.x > 0.0 { (pos.x - bbox.min.x) / size.x } else { 0.0 };
-        prop[1] = if size.y > 0.0 { (pos.y - bbox.min.y) / size.y } else { 0.0 };
-        prop[2] = if size.z > 0.0 { (pos.z - bbox.min.z) / size.z } else { 0.0 };
+        prop[0] = if size.x > 0.0 {
+            (pos.x - bbox.min.x) / size.x
+        } else {
+            0.0
+        };
+        prop[1] = if size.y > 0.0 {
+            (pos.y - bbox.min.y) / size.y
+        } else {
+            0.0
+        };
+        prop[2] = if size.z > 0.0 {
+            (pos.z - bbox.min.z) / size.z
+        } else {
+            0.0
+        };
     })
 }

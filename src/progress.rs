@@ -221,7 +221,8 @@ impl ProgressReporter {
     #[cold]
     fn report_at(&self, done: u64) {
         let step = self.step.load(Ordering::Relaxed);
-        self.next.store(done.saturating_add(step), Ordering::Relaxed);
+        self.next
+            .store(done.saturating_add(step), Ordering::Relaxed);
         let total = self.total.load(Ordering::Relaxed);
         let Some(phase) = Phase::from_id(self.phase.load(Ordering::Relaxed)) else {
             return;

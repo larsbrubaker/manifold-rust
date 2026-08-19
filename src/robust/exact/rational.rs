@@ -33,7 +33,10 @@ pub fn rat(v: f64) -> Rational {
 /// intermediate rounding can occur.
 #[inline]
 fn pow2(e: i64) -> f64 {
-    debug_assert!((-1074..=1023).contains(&e), "pow2 exponent out of range: {e}");
+    debug_assert!(
+        (-1074..=1023).contains(&e),
+        "pow2 exponent out of range: {e}"
+    );
     if e >= -1022 {
         f64::from_bits(((e + 1023) as u64) << 52)
     } else {
@@ -93,7 +96,14 @@ fn mag_ratio_to_f64(n: &Uint, d: &Uint, neg: bool) -> (f64, bool) {
         e -= 1;
     }
     if e > 1023 {
-        return (if neg { f64::NEG_INFINITY } else { f64::INFINITY }, false);
+        return (
+            if neg {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            },
+            false,
+        );
     }
 
     // Position of the result's least significant bit. Normal numbers carry
@@ -133,7 +143,14 @@ fn mag_ratio_to_f64(n: &Uint, d: &Uint, neg: bool) -> (f64, bool) {
     // Rounding up may have crossed into the next binade (m = 2^53) or past
     // the largest finite value (2^1024 -> infinity).
     if backend::uint_bits(&m) as i64 - 1 + lsb > 1023 {
-        return (if neg { f64::NEG_INFINITY } else { f64::INFINITY }, false);
+        return (
+            if neg {
+                f64::NEG_INFINITY
+            } else {
+                f64::INFINITY
+            },
+            false,
+        );
     }
     // m <= 2^53, so both the u64 and the f64 conversion are exact, and
     // m * 2^lsb is representable by construction — the multiply is exact.
@@ -215,7 +232,11 @@ impl R3 {
     }
 
     pub fn to_vec3_rounded(&self) -> Vec3 {
-        Vec3::new(rat_to_f64(&self.x), rat_to_f64(&self.y), rat_to_f64(&self.z))
+        Vec3::new(
+            rat_to_f64(&self.x),
+            rat_to_f64(&self.y),
+            rat_to_f64(&self.z),
+        )
     }
 
     pub fn sub(&self, o: &R3) -> R3 {

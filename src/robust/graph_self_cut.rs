@@ -258,12 +258,7 @@ pub(super) fn real_self_contact(
         // triangles along the overlap region's boundary.
         TriTriIsect::Coplanar { polygon, .. } => Some(
             (0..polygon.len())
-                .map(|i| {
-                    (
-                        polygon[i].clone(),
-                        polygon[(i + 1) % polygon.len()].clone(),
-                    )
-                })
+                .map(|i| (polygon[i].clone(), polygon[(i + 1) % polygon.len()].clone()))
                 .collect(),
         ),
     }

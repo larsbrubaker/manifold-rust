@@ -31,7 +31,7 @@
 use std::collections::BTreeMap;
 
 use crate::impl_mesh::ManifoldImpl;
-use crate::linalg::{Vec3, dot};
+use crate::linalg::{dot, Vec3};
 use crate::types::{Halfedge, TriRef};
 
 // ---------------------------------------------------------------------------
@@ -66,7 +66,9 @@ impl PartialOrd for OrderedF64 {
 
 impl Ord for OrderedF64 {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.partial_cmp(&other.0).unwrap_or(std::cmp::Ordering::Equal)
+        self.0
+            .partial_cmp(&other.0)
+            .unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
@@ -612,4 +614,3 @@ pub(super) fn append_whole_edges(
 #[path = "boolean_result_assemble.rs"]
 mod boolean_result_assemble;
 pub use boolean_result_assemble::{boolean_result, boolean_result_with_token};
-

@@ -22,7 +22,7 @@
 
 #[path = "subdivision_partition.rs"]
 mod subdivision_partition;
-use subdivision_partition::{BaryIndices, Partition, next3};
+use subdivision_partition::{next3, BaryIndices, Partition};
 
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{BVec4, IVec3, IVec4, Mat3, Mat3x4, Vec3, Vec4};
@@ -91,12 +91,20 @@ impl ManifoldImpl {
         let mut idx = halfedge % 3;
         let neighbor = self.get_neighbor(tri);
         if idx == neighbor {
-            return BaryIndices { tri: -1, start4: -1, end4: -1 };
+            return BaryIndices {
+                tri: -1,
+                start4: -1,
+                end4: -1,
+            };
         }
 
         if neighbor < 0 {
             // tri
-            BaryIndices { tri, start4: idx, end4: next3(idx) }
+            BaryIndices {
+                tri,
+                start4: idx,
+                end4: next3(idx),
+            }
         } else {
             // quad
             let pair = self.halfedge[(3 * tri + neighbor) as usize].paired_halfedge;
@@ -106,7 +114,11 @@ impl ManifoldImpl {
             } else {
                 idx = if next3(neighbor) == idx { 2 } else { 3 };
             }
-            BaryIndices { tri, start4: idx, end4: (idx + 1) % 4 }
+            BaryIndices {
+                tri,
+                start4: idx,
+                end4: (idx + 1) % 4,
+            }
         }
     }
 
@@ -252,7 +264,10 @@ impl ManifoldImpl {
                 let mut uvw = Vec4::splat(0.0);
                 uvw[indices.end4 as usize] = (j + 1) as f64 * frac;
                 uvw[indices.start4 as usize] = 1.0 - uvw[indices.end4 as usize];
-                vert_bary[(offset + j) as usize] = Barycentric { tri: indices.tri, uvw };
+                vert_bary[(offset + j) as usize] = Barycentric {
+                    tri: indices.tri,
+                    uvw,
+                };
             }
         }
 
@@ -305,7 +320,10 @@ impl ManifoldImpl {
         let mut tri_verts = vec![IVec3::default(); total_new_tris as usize];
         vert_bary.resize(
             total_new_verts as usize,
-            Barycentric { tri: 0, uvw: Vec4::splat(0.0) },
+            Barycentric {
+                tri: 0,
+                uvw: Vec4::splat(0.0),
+            },
         );
         let mut tri_ref_out = vec![TriRef::default(); total_new_tris as usize];
         let mut face_normal_out = vec![Vec3::splat(0.0); total_new_tris as usize];
@@ -331,12 +349,7 @@ impl ManifoldImpl {
                 edge_fwd[i] = he.is_forward();
             }
 
-            let new_tris = sub_tris[tri].reindex(
-                tri3,
-                edge_offs,
-                edge_fwd,
-                interior_offset[tri],
-            );
+            let new_tris = sub_tris[tri].reindex(tri3, edge_offs, edge_fwd, interior_offset[tri]);
 
             let start = tri_offset[tri] as usize;
             for (j, t) in new_tris.iter().enumerate() {
@@ -427,21 +440,24 @@ impl ManifoldImpl {
                         // triangle
                         let mut tri_prop = Vec3::splat(0.0);
                         for k in 0..3 {
-                            tri_prop[k] = self.properties
-                                [self.halfedge[3 * bary.tri as usize + k].prop_vert as usize
-                                    * num_prop
-                                    + p];
+                            tri_prop[k] = self.properties[self.halfedge[3 * bary.tri as usize + k]
+                                .prop_vert
+                                as usize
+                                * num_prop
+                                + p];
                         }
-                        prop[vert * num_prop + p] =
-                            tri_prop.x * bary.uvw.x + tri_prop.y * bary.uvw.y + tri_prop.z * bary.uvw.z;
+                        prop[vert * num_prop + p] = tri_prop.x * bary.uvw.x
+                            + tri_prop.y * bary.uvw.y
+                            + tri_prop.z * bary.uvw.z;
                     } else {
                         // quad
                         let mut quad_prop = Vec4::splat(0.0);
                         for k in 0..4 {
-                            quad_prop[k] = self.properties
-                                [self.halfedge[halfedges[k] as usize].prop_vert as usize
-                                    * num_prop
-                                    + p];
+                            quad_prop[k] = self.properties[self.halfedge[halfedges[k] as usize]
+                                .prop_vert
+                                as usize
+                                * num_prop
+                                + p];
                         }
                         prop[vert * num_prop + p] = quad_prop.x * bary.uvw.x
                             + quad_prop.y * bary.uvw.y

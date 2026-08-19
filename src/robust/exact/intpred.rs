@@ -271,8 +271,8 @@ pub fn orient3d_i(a: [f64; 3], b: [f64; 3], c: [f64; 3], d: [f64; 3]) -> Sign {
     let (ux, uy, uz) = (&bx - &ax, &by - &ay, &bz - &az);
     let (vx, vy, vz) = (&cx - &ax, &cy - &ay, &cz - &az);
     let (wx, wy, wz) = (&dx - &ax, &dy - &ay, &dz - &az);
-    let det = ux * (&vy * &wz - &vz * &wy) + uy * (&vz * &wx - &vx * &wz)
-        + uz * (&vx * &wy - &vy * &wx);
+    let det =
+        ux * (&vy * &wz - &vz * &wy) + uy * (&vz * &wx - &vx * &wz) + uz * (&vx * &wy - &vy * &wx);
     sign_big(&det)
 }
 
@@ -304,7 +304,10 @@ mod tests {
     struct Rng(u64);
     impl Rng {
         fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             self.0
         }
         /// f64 in roughly [-2, 2] with f32-like granularity (the common case:
@@ -317,7 +320,11 @@ mod tests {
             let m = self.next() as i32 as f64;
             let e = (self.next() % 500) as i32 - 250;
             let v = m * 2.0f64.powi(e);
-            if v.is_finite() { v } else { m }
+            if v.is_finite() {
+                v
+            } else {
+                m
+            }
         }
     }
 
@@ -397,10 +404,7 @@ mod tests {
             assert_eq!(orient2d_i(p[0], p[1], p[2]), o2_ref(p[0], p[1], p[2]));
         }
         // Exact collinear.
-        assert_eq!(
-            orient2d_i([0.0, 0.0], [1.0, 1.0], [0.5, 0.5]),
-            Sign::Zero
-        );
+        assert_eq!(orient2d_i([0.0, 0.0], [1.0, 1.0], [0.5, 0.5]), Sign::Zero);
     }
 
     // ---- i64 tier ----
@@ -417,10 +421,7 @@ mod tests {
         // The budget applies after per-axis rescaling: 1.0 and 2^-30 share the
         // scale 2^-30, so 1.0 becomes 2^30 and must decline.
         assert_eq!(scaled_i64([1.0, 2.0f64.powi(-30)], 30), None);
-        assert_eq!(
-            scaled_i64([1.0, 2.0f64.powi(-29)], 30),
-            Some([1 << 29, 1])
-        );
+        assert_eq!(scaled_i64([1.0, 2.0f64.powi(-29)], 30), Some([1 << 29, 1]));
         // Zeros never constrain the scale, and negatives keep their sign.
         assert_eq!(scaled_i64([0.0, -3.0, 1e300], 30), None);
         assert_eq!(scaled_i64([0.0, -3.0, 6.0], 30), Some([0, -3, 6]));

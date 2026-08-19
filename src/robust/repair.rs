@@ -111,11 +111,13 @@ fn connected_shells(tris: &[[Vec3; 3]]) -> (Vec<usize>, usize) {
     let mut next = 0u32;
     let tri_verts: Vec<[u32; 3]> = tris
         .iter()
-        .map(|t| [
-            vert_id(t[0], &mut next),
-            vert_id(t[1], &mut next),
-            vert_id(t[2], &mut next),
-        ])
+        .map(|t| {
+            [
+                vert_id(t[0], &mut next),
+                vert_id(t[1], &mut next),
+                vert_id(t[2], &mut next),
+            ]
+        })
         .collect();
 
     let ds = DisjointSets::new(tris.len().max(1) as u32);
@@ -158,7 +160,13 @@ impl ShellGeom {
         let tris_f64: Vec<[Vec3; 3]> = members.iter().map(|&t| tris[t]).collect();
         let tris_r = tris_f64
             .iter()
-            .map(|t| [R3::from_vec3(t[0]), R3::from_vec3(t[1]), R3::from_vec3(t[2])])
+            .map(|t| {
+                [
+                    R3::from_vec3(t[0]),
+                    R3::from_vec3(t[1]),
+                    R3::from_vec3(t[2]),
+                ]
+            })
             .collect();
         let boxes = tris_f64
             .iter()
@@ -284,7 +292,14 @@ fn analyze(tris: &[[Vec3; 3]]) -> Analysis {
 pub fn shells_well_nested(tris: &[[Vec3; 3]]) -> bool {
     let a = analyze(tris);
     (0..a.num_shells).all(|s| match &a.classified[s] {
-        Some(c) => c.sign == if a.containers[s].len() % 2 == 0 { 1 } else { -1 },
+        Some(c) => {
+            c.sign
+                == if a.containers[s].len() % 2 == 0 {
+                    1
+                } else {
+                    -1
+                }
+        }
         None => false,
     })
 }
@@ -371,7 +386,11 @@ pub fn apply_flips(imp: &mut ManifoldImpl, flip: &[bool]) {
         if !flip[t] {
             continue;
         }
-        let (e0, e1, e2) = (old[3 * t].clone(), old[3 * t + 1].clone(), old[3 * t + 2].clone());
+        let (e0, e1, e2) = (
+            old[3 * t].clone(),
+            old[3 * t + 1].clone(),
+            old[3 * t + 2].clone(),
+        );
         imp.halfedge[3 * t] = Halfedge {
             start_vert: e0.start_vert,
             end_vert: e2.start_vert,

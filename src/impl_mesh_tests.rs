@@ -1,5 +1,5 @@
 use super::*;
-use crate::linalg::{Vec3, Mat3x4};
+use crate::linalg::{Mat3x4, Vec3};
 
 #[test]
 fn test_next_halfedge() {
@@ -57,13 +57,17 @@ fn test_tetrahedron_symmetric() {
     // Tetrahedron is centered about origin with vertices at distance sqrt(3)
     for v in &m.vert_pos {
         let dist2 = v.x * v.x + v.y * v.y + v.z * v.z;
-        assert!((dist2 - 3.0).abs() < 1e-10, "Expected dist^2=3, got {}", dist2);
+        assert!(
+            (dist2 - 3.0).abs() < 1e-10,
+            "Expected dist^2=3, got {}",
+            dist2
+        );
     }
 }
 
 #[test]
 fn test_cube_transform() {
-    use crate::linalg::{translation_matrix, mat4_to_mat3x4};
+    use crate::linalg::{mat4_to_mat3x4, translation_matrix};
     let t = mat4_to_mat3x4(translation_matrix(Vec3::new(1.0, 2.0, 3.0)));
     let m = ManifoldImpl::cube(&t);
     assert!((m.bbox.min.x - 1.0).abs() < 1e-10);
@@ -113,16 +117,39 @@ fn test_increment_mesh_ids_preserves_id_order() {
     let mut m = ManifoldImpl::tetrahedron(&Mat3x4::identity());
     m.mesh_relation.mesh_id_transform.clear();
     for &(id, orig) in &[(9, 900), (2, 200), (5, 500)] {
-        m.mesh_relation.mesh_id_transform.insert(id, Relation {
-            original_id: orig,
-            ..Default::default()
-        });
+        m.mesh_relation.mesh_id_transform.insert(
+            id,
+            Relation {
+                original_id: orig,
+                ..Default::default()
+            },
+        );
     }
     m.mesh_relation.tri_ref = vec![
-        TriRef { mesh_id: 5, original_id: 500, face_id: 0, coplanar_id: 0 },
-        TriRef { mesh_id: 2, original_id: 200, face_id: 1, coplanar_id: 1 },
-        TriRef { mesh_id: 9, original_id: 900, face_id: 2, coplanar_id: 2 },
-        TriRef { mesh_id: 2, original_id: 200, face_id: 3, coplanar_id: 3 },
+        TriRef {
+            mesh_id: 5,
+            original_id: 500,
+            face_id: 0,
+            coplanar_id: 0,
+        },
+        TriRef {
+            mesh_id: 2,
+            original_id: 200,
+            face_id: 1,
+            coplanar_id: 1,
+        },
+        TriRef {
+            mesh_id: 9,
+            original_id: 900,
+            face_id: 2,
+            coplanar_id: 2,
+        },
+        TriRef {
+            mesh_id: 2,
+            original_id: 200,
+            face_id: 3,
+            coplanar_id: 3,
+        },
     ];
     m.increment_mesh_ids();
 
@@ -130,10 +157,17 @@ fn test_increment_mesh_ids_preserves_id_order() {
     assert_eq!(new_ids.len(), 3);
     assert_eq!(new_ids[1], new_ids[0] + 1, "fresh IDs must be consecutive");
     assert_eq!(new_ids[2], new_ids[0] + 2, "fresh IDs must be consecutive");
-    let originals: Vec<i32> = m.mesh_relation.mesh_id_transform.values()
-        .map(|r| r.original_id).collect();
-    assert_eq!(originals, vec![200, 500, 900],
-        "fresh IDs must be assigned in ascending old-ID order (C++ std::map)");
+    let originals: Vec<i32> = m
+        .mesh_relation
+        .mesh_id_transform
+        .values()
+        .map(|r| r.original_id)
+        .collect();
+    assert_eq!(
+        originals,
+        vec![200, 500, 900],
+        "fresh IDs must be assigned in ascending old-ID order (C++ std::map)"
+    );
     assert_eq!(m.mesh_relation.tri_ref[1].mesh_id, new_ids[0]);
     assert_eq!(m.mesh_relation.tri_ref[3].mesh_id, new_ids[0]);
     assert_eq!(m.mesh_relation.tri_ref[0].mesh_id, new_ids[1]);

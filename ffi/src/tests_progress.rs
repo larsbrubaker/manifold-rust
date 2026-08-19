@@ -46,9 +46,7 @@ extern "C" fn collect(phase_id: u32, fraction: f64, user: *mut c_void) {
 fn run(engine: i32, progress: ManifoldRsProgressFn, user: *mut c_void) -> *mut ManifoldRs {
     let a = ffi_cube([0.0, 0.0, 0.0], 1.0);
     let b = ffi_cube([0.5, 0.25, 0.25], 1.0);
-    let out = unsafe {
-        manifold_rs_boolean_progress(a, b, 0, engine, ptr::null(), progress, user)
-    };
+    let out = unsafe { manifold_rs_boolean_progress(a, b, 0, engine, ptr::null(), progress, user) };
     unsafe {
         manifold_rs_destroy(a);
         manifold_rs_destroy(b);
@@ -59,7 +57,10 @@ fn run(engine: i32, progress: ManifoldRsProgressFn, user: *mut c_void) -> *mut M
 #[test]
 fn every_phase_id_has_a_name_and_out_of_range_is_null() {
     let count = manifold_rs_progress_phase_count();
-    assert!(count >= 8, "expected the documented phase table, got {count}");
+    assert!(
+        count >= 8,
+        "expected the documented phase table, got {count}"
+    );
     for id in 0..count {
         let ptr = manifold_rs_progress_phase_name(id);
         assert!(!ptr.is_null(), "phase {id} has no name");
@@ -125,8 +126,15 @@ fn the_exact_engine_reports_a_single_indeterminate_phase() {
     let result = run(0, Some(collect), &sink as *const _ as *mut c_void);
     assert!(!result.is_null());
     let events = sink.events.lock().unwrap().clone();
-    assert_eq!(events.len(), 1, "exact engine should report exactly one phase");
-    assert!(events[0].1 < 0.0, "an indeterminate phase reports a negative fraction");
+    assert_eq!(
+        events.len(),
+        1,
+        "exact engine should report exactly one phase"
+    );
+    assert!(
+        events[0].1 < 0.0,
+        "an indeterminate phase reports a negative fraction"
+    );
     let name = unsafe { CStr::from_ptr(manifold_rs_progress_phase_name(events[0].0)) };
     assert_eq!(name.to_str().unwrap(), "exact boolean");
     unsafe { manifold_rs_destroy(result) };
@@ -137,10 +145,12 @@ fn argument_errors_return_null() {
     let a = ffi_cube([0.0, 0.0, 0.0], 1.0);
     unsafe {
         // Unknown op / engine.
-        assert!(manifold_rs_boolean_progress(a, a, 99, 0, ptr::null(), None, ptr::null_mut())
-            .is_null());
-        assert!(manifold_rs_boolean_progress(a, a, 0, 99, ptr::null(), None, ptr::null_mut())
-            .is_null());
+        assert!(
+            manifold_rs_boolean_progress(a, a, 99, 0, ptr::null(), None, ptr::null_mut()).is_null()
+        );
+        assert!(
+            manifold_rs_boolean_progress(a, a, 0, 99, ptr::null(), None, ptr::null_mut()).is_null()
+        );
         // NULL operands.
         assert!(manifold_rs_boolean_progress(
             ptr::null(),
@@ -185,7 +195,10 @@ fn a_pre_cancelled_token_still_wins_with_a_reporter_attached() {
             &sink as *const _ as *mut c_void,
         )
     };
-    assert!(!result.is_null(), "cancellation must not look like a failure");
+    assert!(
+        !result.is_null(),
+        "cancellation must not look like a failure"
+    );
     // 14 = Error::Cancelled, the code the header documents.
     assert_eq!(unsafe { manifold_rs_status(result) }, 14);
 

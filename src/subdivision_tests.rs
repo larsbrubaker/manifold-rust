@@ -62,11 +62,7 @@ fn test_subdivide_preserves_manifold() {
     let sub = subdivide_impl(&cube, 1);
     // Every halfedge should have a valid pair
     for (i, he) in sub.halfedge.iter().enumerate() {
-        assert!(
-            he.paired_halfedge >= 0,
-            "Halfedge {} has no pair",
-            i
-        );
+        assert!(he.paired_halfedge >= 0, "Halfedge {} has no pair", i);
         let pair = he.paired_halfedge as usize;
         assert!(
             pair < sub.halfedge.len(),

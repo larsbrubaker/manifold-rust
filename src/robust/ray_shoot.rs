@@ -40,11 +40,7 @@ const DIRS: [[i32; 3]; 12] = [
 ];
 
 fn dir_r3(d: [i32; 3]) -> R3 {
-    R3::new(
-        rat(d[0] as f64),
-        rat(d[1] as f64),
-        rat(d[2] as f64),
-    )
+    R3::new(rat(d[0] as f64), rat(d[1] as f64), rat(d[2] as f64))
 }
 
 /// Conservative f64 prefilter for one winding query: triangles whose
@@ -197,11 +193,7 @@ pub fn winding_number_indexed(point: &R3, tris: &[[Vec3; 3]], index: &WindingInd
 
 /// [`winding_number`] with caller-provided per-triangle boxes — batch query
 /// sites build them once per operand instead of once per query.
-pub fn winding_number_boxed(
-    point: &R3,
-    tris: &[[Vec3; 3]],
-    boxes: &[crate::types::Box],
-) -> i32 {
+pub fn winding_number_boxed(point: &R3, tris: &[[Vec3; 3]], boxes: &[crate::types::Box]) -> i32 {
     let prefilter = RayPrefilter::new(point);
     let ap = [
         rat_to_f64(&point.x),
@@ -209,8 +201,7 @@ pub fn winding_number_boxed(
         rat_to_f64(&point.z),
     ];
     for d in DIRS {
-        if let Some(w) = winding_one_dir(point, &ap, d, &prefilter, tris.iter().zip(boxes.iter()))
-        {
+        if let Some(w) = winding_one_dir(point, &ap, d, &prefilter, tris.iter().zip(boxes.iter())) {
             return w;
         }
     }
@@ -241,82 +232,82 @@ fn winding_one_dir<'a, I: Iterator<Item = (&'a [Vec3; 3], &'a crate::types::Box)
         if !prefilter.may_hit(d, bbox) {
             continue;
         }
-            let fa = [t[0].x, t[0].y, t[0].z];
-            let fb = [t[1].x, t[1].y, t[1].z];
-            let fc = [t[2].x, t[2].y, t[2].z];
-            // Plücker side tests of the ray line against the three edges —
-            // approx first, exact only when the filter cannot certify.
-            let sides = [
-                orient3d_a(*ap, ao2, fa, fb),
-                orient3d_a(*ap, ao2, fb, fc),
-                orient3d_a(*ap, ao2, fc, fa),
-            ];
-            // Certified miss without touching the bignum tier: two strict opposite
-            // signs mean the line cannot pierce the closed triangle.
-            if matches!(
-                (sides[0], sides[1]),
-                (Some(Sign::Pos), Some(Sign::Neg)) | (Some(Sign::Neg), Some(Sign::Pos))
-            ) || matches!(
-                (sides[1], sides[2]),
-                (Some(Sign::Pos), Some(Sign::Neg)) | (Some(Sign::Neg), Some(Sign::Pos))
-            ) || matches!(
-                (sides[0], sides[2]),
-                (Some(Sign::Pos), Some(Sign::Neg)) | (Some(Sign::Neg), Some(Sign::Pos))
-            ) {
-                continue;
-            }
-            // Resolve any uncertain side exactly (rational triangle built
-            // only when a filter actually missed).
-            let (s_ab, s_bc, s_ca) = match (sides[0], sides[1], sides[2]) {
-                (Some(x), Some(y), Some(z)) => (x, y, z),
-                _ => {
-                    let a = R3::from_vec3(t[0]);
-                    let b = R3::from_vec3(t[1]);
-                    let c = R3::from_vec3(t[2]);
-                    let s_ab = sides[0].unwrap_or_else(|| orient3d_r(point, &o2, &a, &b));
-                    let s_bc = sides[1].unwrap_or_else(|| orient3d_r(point, &o2, &b, &c));
-                    let s_ca = sides[2].unwrap_or_else(|| orient3d_r(point, &o2, &c, &a));
-                    if s_ab == Sign::Zero || s_bc == Sign::Zero || s_ca == Sign::Zero {
-                        // Might graze an edge or vertex of this triangle —
-                        // only a problem if the grazing happens on the
-                        // forward ray within the triangle's neighborhood;
-                        // retrying is always safe.
-                        if could_graze(point, &o2, &a, &b, &c) {
-                            return None;
-                        }
-                        continue;
+        let fa = [t[0].x, t[0].y, t[0].z];
+        let fb = [t[1].x, t[1].y, t[1].z];
+        let fc = [t[2].x, t[2].y, t[2].z];
+        // Plücker side tests of the ray line against the three edges —
+        // approx first, exact only when the filter cannot certify.
+        let sides = [
+            orient3d_a(*ap, ao2, fa, fb),
+            orient3d_a(*ap, ao2, fb, fc),
+            orient3d_a(*ap, ao2, fc, fa),
+        ];
+        // Certified miss without touching the bignum tier: two strict opposite
+        // signs mean the line cannot pierce the closed triangle.
+        if matches!(
+            (sides[0], sides[1]),
+            (Some(Sign::Pos), Some(Sign::Neg)) | (Some(Sign::Neg), Some(Sign::Pos))
+        ) || matches!(
+            (sides[1], sides[2]),
+            (Some(Sign::Pos), Some(Sign::Neg)) | (Some(Sign::Neg), Some(Sign::Pos))
+        ) || matches!(
+            (sides[0], sides[2]),
+            (Some(Sign::Pos), Some(Sign::Neg)) | (Some(Sign::Neg), Some(Sign::Pos))
+        ) {
+            continue;
+        }
+        // Resolve any uncertain side exactly (rational triangle built
+        // only when a filter actually missed).
+        let (s_ab, s_bc, s_ca) = match (sides[0], sides[1], sides[2]) {
+            (Some(x), Some(y), Some(z)) => (x, y, z),
+            _ => {
+                let a = R3::from_vec3(t[0]);
+                let b = R3::from_vec3(t[1]);
+                let c = R3::from_vec3(t[2]);
+                let s_ab = sides[0].unwrap_or_else(|| orient3d_r(point, &o2, &a, &b));
+                let s_bc = sides[1].unwrap_or_else(|| orient3d_r(point, &o2, &b, &c));
+                let s_ca = sides[2].unwrap_or_else(|| orient3d_r(point, &o2, &c, &a));
+                if s_ab == Sign::Zero || s_bc == Sign::Zero || s_ca == Sign::Zero {
+                    // Might graze an edge or vertex of this triangle —
+                    // only a problem if the grazing happens on the
+                    // forward ray within the triangle's neighborhood;
+                    // retrying is always safe.
+                    if could_graze(point, &o2, &a, &b, &c) {
+                        return None;
                     }
-                    (s_ab, s_bc, s_ca)
+                    continue;
                 }
-            };
-            if s_ab != s_bc || s_bc != s_ca {
-                continue; // line misses the triangle
+                (s_ab, s_bc, s_ca)
             }
-            // Line pierces the triangle interior. Forward (t > 0)?
-            let h = orient3d_a(fa, fb, fc, *ap).unwrap_or_else(|| {
-                orient3d_r(
-                    &R3::from_vec3(t[0]),
-                    &R3::from_vec3(t[1]),
-                    &R3::from_vec3(t[2]),
-                    point,
-                )
-            });
-            if h == Sign::Zero {
-                // Point on the triangle's plane while the line pierces the
-                // interior ⇒ the point is on the surface — caller violated
-                // the precondition, or the ray grazes; retry.
-                return None;
-            }
-            // n·dir sign == common side-sign (all three Pos ⇔ dir on the
-            // CCW-normal side).
-            let n_dot_dir = s_ab; // s_ab == s_bc == s_ca == sign(n·dir)
-            if h != n_dot_dir.flip() {
-                continue; // intersection lies behind the ray origin
-            }
-            winding += match n_dot_dir {
-                Sign::Pos => 1, // exits through a front face
-                _ => -1,
-            };
+        };
+        if s_ab != s_bc || s_bc != s_ca {
+            continue; // line misses the triangle
+        }
+        // Line pierces the triangle interior. Forward (t > 0)?
+        let h = orient3d_a(fa, fb, fc, *ap).unwrap_or_else(|| {
+            orient3d_r(
+                &R3::from_vec3(t[0]),
+                &R3::from_vec3(t[1]),
+                &R3::from_vec3(t[2]),
+                point,
+            )
+        });
+        if h == Sign::Zero {
+            // Point on the triangle's plane while the line pierces the
+            // interior ⇒ the point is on the surface — caller violated
+            // the precondition, or the ray grazes; retry.
+            return None;
+        }
+        // n·dir sign == common side-sign (all three Pos ⇔ dir on the
+        // CCW-normal side).
+        let n_dot_dir = s_ab; // s_ab == s_bc == s_ca == sign(n·dir)
+        if h != n_dot_dir.flip() {
+            continue; // intersection lies behind the ray origin
+        }
+        winding += match n_dot_dir {
+            Sign::Pos => 1, // exits through a front face
+            _ => -1,
+        };
     }
     Some(winding)
 }
@@ -356,10 +347,7 @@ pub fn winding_off_surface(
         rat_to_f64(&point.y),
         rat_to_f64(&point.z),
     ];
-    'dirs: for d in DIRS
-        .iter()
-        .flat_map(|d| [*d, [-d[0], -d[1], -d[2]]])
-    {
+    'dirs: for d in DIRS.iter().flat_map(|d| [*d, [-d[0], -d[1], -d[2]]]) {
         let dir = dir_r3(d);
         // Outward hemisphere only: the ε·outward offset must stay on the
         // near side of the piece's own plane relative to the ray.
@@ -451,9 +439,16 @@ fn could_graze(o: &R3, o2: &R3, a: &R3, b: &R3, c: &R3) -> bool {
     let s_ca = orient3d_r(o, o2, c, a);
     // The line misses the closed triangle only if two side tests have
     // strictly opposite signs.
-    !(matches!((s_ab, s_bc), (Sign::Pos, Sign::Neg) | (Sign::Neg, Sign::Pos))
-        || matches!((s_bc, s_ca), (Sign::Pos, Sign::Neg) | (Sign::Neg, Sign::Pos))
-        || matches!((s_ab, s_ca), (Sign::Pos, Sign::Neg) | (Sign::Neg, Sign::Pos)))
+    !(matches!(
+        (s_ab, s_bc),
+        (Sign::Pos, Sign::Neg) | (Sign::Neg, Sign::Pos)
+    ) || matches!(
+        (s_bc, s_ca),
+        (Sign::Pos, Sign::Neg) | (Sign::Neg, Sign::Pos)
+    ) || matches!(
+        (s_ab, s_ca),
+        (Sign::Pos, Sign::Neg) | (Sign::Neg, Sign::Pos)
+    ))
 }
 
 /// Representative interior point of a piece: its centroid (exact).

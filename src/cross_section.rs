@@ -12,8 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use clipper2_rust::{area, difference_d, inflate_paths_d, intersect_d, minkowski_sum_d, simplify_paths, union_d, EndType, FillRule, JoinType, PathD, PathsD, Point};
 use crate::types::OpType;
+use clipper2_rust::{
+    area, difference_d, inflate_paths_d, intersect_d, minkowski_sum_d, simplify_paths, union_d,
+    EndType, FillRule, JoinType, PathD, PathsD, Point,
+};
 
 use crate::linalg::Vec2;
 use crate::math;
@@ -32,7 +35,8 @@ fn to_paths(polygons: &Polygons) -> PathsD {
 }
 
 fn from_paths(paths: &PathsD) -> Polygons {
-    paths.iter()
+    paths
+        .iter()
         .map(|path| path.iter().map(|p| Vec2::new(p.x, p.y)).collect())
         .collect()
 }
@@ -61,7 +65,9 @@ impl CrossSection {
         let paths = to_paths(&polygons);
         let empty = PathsD::new();
         let result = union_d(&paths, &empty, FillRule::NonZero, 6);
-        Self { polygons: from_paths(&result) }
+        Self {
+            polygons: from_paths(&result),
+        }
     }
 
     /// Create a CrossSection from a Rect (axis-aligned rectangle).
@@ -152,22 +158,41 @@ impl CrossSection {
     }
 
     pub fn union(&self, other: &Self) -> Self {
-        Self::new(from_paths(&union_d(&to_paths(&self.polygons), &to_paths(&other.polygons), FillRule::NonZero, 6)))
+        Self::new(from_paths(&union_d(
+            &to_paths(&self.polygons),
+            &to_paths(&other.polygons),
+            FillRule::NonZero,
+            6,
+        )))
     }
 
     pub fn intersection(&self, other: &Self) -> Self {
-        Self::new(from_paths(&intersect_d(&to_paths(&self.polygons), &to_paths(&other.polygons), FillRule::NonZero, 6)))
+        Self::new(from_paths(&intersect_d(
+            &to_paths(&self.polygons),
+            &to_paths(&other.polygons),
+            FillRule::NonZero,
+            6,
+        )))
     }
 
     pub fn difference(&self, other: &Self) -> Self {
-        Self::new(from_paths(&difference_d(&to_paths(&self.polygons), &to_paths(&other.polygons), FillRule::NonZero, 6)))
+        Self::new(from_paths(&difference_d(
+            &to_paths(&self.polygons),
+            &to_paths(&other.polygons),
+            FillRule::NonZero,
+            6,
+        )))
     }
 
     pub fn scale(&self, v: Vec2) -> Self {
         Self::new(
             self.polygons
                 .iter()
-                .map(|poly| poly.iter().map(|p| Vec2::new(p.x * v.x, p.y * v.y)).collect())
+                .map(|poly| {
+                    poly.iter()
+                        .map(|p| Vec2::new(p.x * v.x, p.y * v.y))
+                        .collect()
+                })
                 .collect(),
         )
     }
@@ -311,10 +336,18 @@ impl CrossSection {
                 let (mut min_x, mut min_y) = (f64::MAX, f64::MAX);
                 let (mut max_x, mut max_y) = (f64::MIN, f64::MIN);
                 for p in poly {
-                    if p.x < min_x { min_x = p.x; }
-                    if p.x > max_x { max_x = p.x; }
-                    if p.y < min_y { min_y = p.y; }
-                    if p.y > max_y { max_y = p.y; }
+                    if p.x < min_x {
+                        min_x = p.x;
+                    }
+                    if p.x > max_x {
+                        max_x = p.x;
+                    }
+                    if p.y < min_y {
+                        min_y = p.y;
+                    }
+                    if p.y > max_y {
+                        max_y = p.y;
+                    }
                 }
                 let max_size = (max_x - min_x).max(max_y - min_y);
                 a > max_size * epsilon
@@ -325,7 +358,15 @@ impl CrossSection {
     }
 
     pub fn offset(&self, delta: f64) -> Self {
-        Self::new(from_paths(&inflate_paths_d(&to_paths(&self.polygons), delta, JoinType::Round, EndType::Polygon, 2.0, 6, 0.0)))
+        Self::new(from_paths(&inflate_paths_d(
+            &to_paths(&self.polygons),
+            delta,
+            JoinType::Round,
+            EndType::Polygon,
+            2.0,
+            6,
+            0.0,
+        )))
     }
 
     /// Offset with explicit join type and segment count.
@@ -388,14 +429,26 @@ impl CrossSection {
         let paths = PathsD::from(vec![path]);
         let empty = PathsD::new();
         let result = union_d(&paths, &empty, fr, 6);
-        Self { polygons: from_paths(&result) }
+        Self {
+            polygons: from_paths(&result),
+        }
     }
 
     /// Apply a function to every vertex in-place.
     pub fn warp<F: FnMut(&mut Vec2)>(&self, mut f: F) -> Self {
-        let polys = self.polygons.iter().map(|poly| {
-            poly.iter().map(|&v| { let mut v2 = v; f(&mut v2); v2 }).collect()
-        }).collect();
+        let polys = self
+            .polygons
+            .iter()
+            .map(|poly| {
+                poly.iter()
+                    .map(|&v| {
+                        let mut v2 = v;
+                        f(&mut v2);
+                        v2
+                    })
+                    .collect()
+            })
+            .collect();
         Self { polygons: polys }
     }
 
@@ -414,7 +467,9 @@ impl CrossSection {
                     }
                 }
                 let empty = PathsD::new();
-                Self { polygons: from_paths(&union_d(&paths, &empty, FillRule::NonZero, 6)) }
+                Self {
+                    polygons: from_paths(&union_d(&paths, &empty, FillRule::NonZero, 6)),
+                }
             }
             OpType::Subtract => {
                 let mut result = sections[0].clone();
@@ -435,7 +490,8 @@ impl CrossSection {
 
     /// Compute convex hull of all vertices in a slice of CrossSections.
     pub fn hull_cross_sections(sections: &[Self]) -> Self {
-        let points: Vec<Vec2> = sections.iter()
+        let points: Vec<Vec2> = sections
+            .iter()
             .flat_map(|s| s.polygons.iter().flat_map(|p| p.iter().cloned()))
             .collect();
         Self::hull_points(&points)
@@ -447,7 +503,11 @@ impl CrossSection {
             return Self::default();
         }
         let mut pts: Vec<Vec2> = points.to_vec();
-        pts.sort_by(|a, b| a.x.partial_cmp(&b.x).unwrap().then(a.y.partial_cmp(&b.y).unwrap()));
+        pts.sort_by(|a, b| {
+            a.x.partial_cmp(&b.x)
+                .unwrap()
+                .then(a.y.partial_cmp(&b.y).unwrap())
+        });
         pts.dedup_by(|a, b| (a.x - b.x).abs() < 1e-10 && (a.y - b.y).abs() < 1e-10);
 
         let cross = |o: Vec2, a: Vec2, b: Vec2| -> f64 {
@@ -455,11 +515,13 @@ impl CrossSection {
         };
 
         let n = pts.len();
-        if n < 3 { return Self::default(); }
+        if n < 3 {
+            return Self::default();
+        }
         let mut hull: Vec<Vec2> = Vec::with_capacity(2 * n);
         // Lower hull
         for &p in &pts {
-            while hull.len() >= 2 && cross(hull[hull.len()-2], hull[hull.len()-1], p) <= 0.0 {
+            while hull.len() >= 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], p) <= 0.0 {
                 hull.pop();
             }
             hull.push(p);
@@ -467,20 +529,25 @@ impl CrossSection {
         // Upper hull
         let lower_len = hull.len();
         for &p in pts.iter().rev() {
-            while hull.len() > lower_len && cross(hull[hull.len()-2], hull[hull.len()-1], p) <= 0.0 {
+            while hull.len() > lower_len
+                && cross(hull[hull.len() - 2], hull[hull.len() - 1], p) <= 0.0
+            {
                 hull.pop();
             }
             hull.push(p);
         }
         hull.pop(); // last point == first
-        if hull.len() < 3 { return Self::default(); }
+        if hull.len() < 3 {
+            return Self::default();
+        }
         Self::new(vec![hull])
     }
 
     /// Compose (merge) multiple CrossSections by combining all their contours.
     /// Matches C++ CrossSection::Compose(vector<CrossSection>) which unions all polygons.
     pub fn compose(sections: &[Self]) -> Self {
-        let all: Vec<Vec<Vec2>> = sections.iter()
+        let all: Vec<Vec<Vec2>> = sections
+            .iter()
             .flat_map(|s| s.polygons.iter().cloned())
             .collect();
         if all.is_empty() {
@@ -522,10 +589,7 @@ mod tests {
     #[test]
     fn test_cpp_cross_section_square() {
         let cs = CrossSection::square(5.0);
-        let a = crate::manifold::Manifold::cube(
-            crate::linalg::Vec3::new(5.0, 5.0, 5.0),
-            false,
-        );
+        let a = crate::manifold::Manifold::cube(crate::linalg::Vec3::new(5.0, 5.0, 5.0), false);
         let b = crate::manifold::Manifold::extrude(
             &cs.to_polygons(),
             5.0,
@@ -546,6 +610,9 @@ mod tests {
     fn test_cpp_cross_section_empty() {
         let polys: crate::types::Polygons = vec![vec![], vec![]];
         let cs = CrossSection::new(polys);
-        assert!(cs.area().abs() < 1e-10, "CrossSection from empty polygons should have zero area");
+        assert!(
+            cs.area().abs() < 1e-10,
+            "CrossSection from empty polygons should have zero area"
+        );
     }
 }

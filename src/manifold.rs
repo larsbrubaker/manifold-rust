@@ -14,9 +14,11 @@
 
 use crate::boolean3;
 use crate::cross_section::CrossSection;
-use crate::math;
 use crate::impl_mesh::ManifoldImpl;
-use crate::linalg::{mat4_to_mat3x4, normalize, scaling_matrix, translation_matrix, Mat3, Mat3x4, Vec3};
+use crate::linalg::{
+    mat4_to_mat3x4, normalize, scaling_matrix, translation_matrix, Mat3, Mat3x4, Vec3,
+};
+use crate::math;
 use crate::types::{Error, OpType, RayHit};
 
 #[derive(Clone)]
@@ -32,7 +34,9 @@ impl Default for Manifold {
 
 impl Manifold {
     pub fn new() -> Self {
-        Self { imp: ManifoldImpl::new() }
+        Self {
+            imp: ManifoldImpl::new(),
+        }
     }
 
     pub fn empty() -> Self {
@@ -58,19 +62,48 @@ impl Manifold {
         self.imp
     }
 
-    pub fn num_vert(&self) -> usize { self.imp.num_vert() }
-    pub fn num_tri(&self) -> usize { self.imp.num_tri() }
-    pub fn num_edge(&self) -> usize { self.imp.num_edge() }
-    pub fn num_prop(&self) -> usize { self.imp.num_prop }
-    pub fn num_prop_vert(&self) -> usize { self.imp.num_prop_vert() }
-    pub fn is_empty(&self) -> bool { self.imp.is_empty() }
-    pub fn status(&self) -> Error { self.imp.status }
-    pub fn volume(&self) -> f64 { self.imp.get_property(crate::properties::Property::Volume).abs() }
-    pub fn surface_area(&self) -> f64 { self.imp.get_property(crate::properties::Property::SurfaceArea) }
-    pub fn matches_tri_normals(&self) -> bool { self.imp.matches_tri_normals() }
-    pub fn num_degenerate_tris(&self) -> i32 { self.imp.num_degenerate_tris() }
-    pub fn get_tolerance(&self) -> f64 { self.imp.tolerance }
-    pub fn get_epsilon(&self) -> f64 { self.imp.epsilon }
+    pub fn num_vert(&self) -> usize {
+        self.imp.num_vert()
+    }
+    pub fn num_tri(&self) -> usize {
+        self.imp.num_tri()
+    }
+    pub fn num_edge(&self) -> usize {
+        self.imp.num_edge()
+    }
+    pub fn num_prop(&self) -> usize {
+        self.imp.num_prop
+    }
+    pub fn num_prop_vert(&self) -> usize {
+        self.imp.num_prop_vert()
+    }
+    pub fn is_empty(&self) -> bool {
+        self.imp.is_empty()
+    }
+    pub fn status(&self) -> Error {
+        self.imp.status
+    }
+    pub fn volume(&self) -> f64 {
+        self.imp
+            .get_property(crate::properties::Property::Volume)
+            .abs()
+    }
+    pub fn surface_area(&self) -> f64 {
+        self.imp
+            .get_property(crate::properties::Property::SurfaceArea)
+    }
+    pub fn matches_tri_normals(&self) -> bool {
+        self.imp.matches_tri_normals()
+    }
+    pub fn num_degenerate_tris(&self) -> i32 {
+        self.imp.num_degenerate_tris()
+    }
+    pub fn get_tolerance(&self) -> f64 {
+        self.imp.tolerance
+    }
+    pub fn get_epsilon(&self) -> f64 {
+        self.imp.epsilon
+    }
 
     /// Port of C++ Manifold::Genus()
     pub fn genus(&self) -> i32 {
@@ -99,8 +132,12 @@ impl Manifold {
     /// Port of C++ Manifold::AsOriginal()
     /// Removes all mesh relations and recreates as an original mesh.
     pub fn as_original(&self) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
-        if self.is_empty() { return self.clone(); }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
+        if self.is_empty() {
+            return self.clone();
+        }
         let mut out = self.imp.clone();
         out.initialize_original();
         out.set_normals_and_coplanar();
@@ -114,8 +151,12 @@ impl Manifold {
 
     /// Port of C++ Manifold::SetTolerance()
     pub fn set_tolerance(&self, tolerance: f64) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
-        if self.is_empty() { return self.clone(); }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
+        if self.is_empty() {
+            return self.clone();
+        }
         let mut out = self.imp.clone();
         // Matches C++ SetTolerance: operate on the `tolerance` field (which
         // drives coplanar grouping in mark_coplanar), not `epsilon`. When
@@ -138,8 +179,12 @@ impl Manifold {
 
     /// Port of C++ Manifold::Simplify()
     pub fn simplify(&self, tolerance: f64) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
-        if self.is_empty() { return self.clone(); }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
+        if self.is_empty() {
+            return self.clone();
+        }
         let mut out = self.imp.clone();
         // C++ uses tolerance_ (not epsilon_) throughout Simplify()
         let old_tolerance = out.tolerance;
@@ -161,7 +206,9 @@ impl Manifold {
 
     /// Port of C++ Manifold::WarpBatch()
     pub fn warp_batch<F: Fn(&mut [Vec3])>(&self, warp_fn: F) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
         if self.is_empty() {
             return self.clone();
         }
@@ -248,7 +295,9 @@ impl Manifold {
     /// Warp the mesh by applying a function to each vertex position.
     /// Does not check for self-intersection.
     pub fn warp<F: Fn(&mut Vec3)>(&self, warp_fn: F) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
         if self.is_empty() {
             return self.clone();
         }
@@ -343,12 +392,18 @@ impl Manifold {
         let n = normalize(normal);
         let cutter = Self::cube(Vec3::splat(2.0), true).translate(Vec3::new(1.0, 0.0, 0.0));
         let center = bbox.center();
-        let size_len = (bbox.size().x * bbox.size().x + bbox.size().y * bbox.size().y + bbox.size().z * bbox.size().z).sqrt();
+        let size_len = (bbox.size().x * bbox.size().x
+            + bbox.size().y * bbox.size().y
+            + bbox.size().z * bbox.size().z)
+            .sqrt();
         let dist = ((center.x - n.x * origin_offset).powi(2)
             + (center.y - n.y * origin_offset).powi(2)
-            + (center.z - n.z * origin_offset).powi(2)).sqrt()
+            + (center.z - n.z * origin_offset).powi(2))
+        .sqrt()
             + 0.5 * size_len;
-        let cutter = cutter.scale(Vec3::splat(dist)).translate(Vec3::new(origin_offset, 0.0, 0.0));
+        let cutter = cutter
+            .scale(Vec3::splat(dist))
+            .translate(Vec3::new(origin_offset, 0.0, 0.0));
         let y_deg = -math::asin(n.z).to_degrees();
         let z_deg = math::atan2(n.y, n.x).to_degrees();
         cutter.rotate(0.0, y_deg, z_deg)
@@ -416,7 +471,9 @@ impl Manifold {
         op: OpType,
         engine: crate::types::BooleanEngine,
     ) -> Self {
-        Self::from_impl(boolean3::boolean_dispatch(&self.imp, &other.imp, op, engine, None))
+        Self::from_impl(boolean3::boolean_dispatch(
+            &self.imp, &other.imp, op, engine, None,
+        ))
     }
 
     /// [`Manifold::boolean_with_engine`] with cooperative cancellation.
@@ -427,7 +484,9 @@ impl Manifold {
         engine: crate::types::BooleanEngine,
         token: Option<&crate::cancel::CancelToken>,
     ) -> Self {
-        Self::from_impl(boolean3::boolean_dispatch(&self.imp, &other.imp, op, engine, token))
+        Self::from_impl(boolean3::boolean_dispatch(
+            &self.imp, &other.imp, op, engine, token,
+        ))
     }
 
     /// [`Manifold::boolean_with_engine_and_token`] that also reports coarse
@@ -507,11 +566,19 @@ impl Manifold {
         self.boolean_with_engine(other, OpType::Add, engine)
     }
 
-    pub fn difference_with_engine(&self, other: &Self, engine: crate::types::BooleanEngine) -> Self {
+    pub fn difference_with_engine(
+        &self,
+        other: &Self,
+        engine: crate::types::BooleanEngine,
+    ) -> Self {
         self.boolean_with_engine(other, OpType::Subtract, engine)
     }
 
-    pub fn intersection_with_engine(&self, other: &Self, engine: crate::types::BooleanEngine) -> Self {
+    pub fn intersection_with_engine(
+        &self,
+        other: &Self,
+        engine: crate::types::BooleanEngine,
+    ) -> Self {
         self.boolean_with_engine(other, OpType::Intersect, engine)
     }
 
@@ -528,7 +595,9 @@ impl Manifold {
         op: OpType,
         token: Option<&crate::cancel::CancelToken>,
     ) -> Self {
-        Self::from_impl(boolean3::boolean_with_token(&self.imp, &other.imp, op, token))
+        Self::from_impl(boolean3::boolean_with_token(
+            &self.imp, &other.imp, op, token,
+        ))
     }
 
     pub fn union(&self, other: &Self) -> Self {
@@ -544,8 +613,12 @@ impl Manifold {
     }
 
     pub fn calculate_curvature(&self, gaussian_idx: i32, mean_idx: i32) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
-        if self.is_empty() { return self.clone(); }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
+        if self.is_empty() {
+            return self.clone();
+        }
         let mut out = self.imp.clone();
         out.calculate_curvature(gaussian_idx, mean_idx);
         Self::from_impl(out)
@@ -559,8 +632,12 @@ impl Manifold {
     where
         F: Fn(&mut [f64], Vec3, &[f64]),
     {
-        if let Some(e) = self.require_paired() { return e; }
-        if self.is_empty() { return self.clone(); }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
+        if self.is_empty() {
+            return self.clone();
+        }
         let mut out = self.imp.clone();
         let old_num_prop = out.num_prop;
         let old_properties = out.properties.clone();
@@ -577,11 +654,13 @@ impl Manifold {
                     let vert = edge.start_vert as usize;
                     let prop_vert = edge.prop_vert as usize;
                     let pos = out.vert_pos[vert];
-                    let old_slice = if old_num_prop > 0 && prop_vert * old_num_prop < old_properties.len() {
-                        &old_properties[old_num_prop * prop_vert..old_num_prop * prop_vert + old_num_prop]
-                    } else {
-                        &[]
-                    };
+                    let old_slice =
+                        if old_num_prop > 0 && prop_vert * old_num_prop < old_properties.len() {
+                            &old_properties
+                                [old_num_prop * prop_vert..old_num_prop * prop_vert + old_num_prop]
+                        } else {
+                            &[]
+                        };
                     prop_func(
                         &mut out.properties[num_prop * prop_vert..num_prop * prop_vert + num_prop],
                         pos,
@@ -594,7 +673,6 @@ impl Manifold {
         out.num_prop = num_prop;
         Self::from_impl(out)
     }
-
 
     pub fn compose(parts: &[Self]) -> Self {
         let impls: Vec<_> = parts.iter().map(|m| m.imp.clone()).collect();
@@ -642,12 +720,19 @@ impl Manifold {
                 .filter(|&v| component_indices[v as usize] == comp)
                 .collect();
             let n_vert = vert_new2old.len();
-            if n_vert == 0 { continue; }
+            if n_vert == 0 {
+                continue;
+            }
 
-            imp.vert_pos = vert_new2old.iter().map(|&v| self.imp.vert_pos[v as usize]).collect();
+            imp.vert_pos = vert_new2old
+                .iter()
+                .map(|&v| self.imp.vert_pos[v as usize])
+                .collect();
             if !self.imp.vert_normal.is_empty() {
-                imp.vert_normal = vert_new2old.iter()
-                    .map(|&v| self.imp.vert_normal[v as usize]).collect();
+                imp.vert_normal = vert_new2old
+                    .iter()
+                    .map(|&v| self.imp.vert_normal[v as usize])
+                    .collect();
             }
 
             // Collect faces belonging to this component
@@ -658,7 +743,9 @@ impl Manifold {
                 })
                 .collect();
 
-            if face_new2old.is_empty() { continue; }
+            if face_new2old.is_empty() {
+                continue;
+            }
 
             // Copy full data from original, then gather_faces will filter
             imp.halfedge = self.imp.halfedge.clone();
@@ -698,71 +785,101 @@ impl Manifold {
 
 impl std::ops::Add for Manifold {
     type Output = Self;
-    fn add(self, rhs: Self) -> Self { self.union(&rhs) }
+    fn add(self, rhs: Self) -> Self {
+        self.union(&rhs)
+    }
 }
 
 impl std::ops::Add<&Manifold> for Manifold {
     type Output = Self;
-    fn add(self, rhs: &Self) -> Self { self.union(rhs) }
+    fn add(self, rhs: &Self) -> Self {
+        self.union(rhs)
+    }
 }
 
 impl std::ops::Add<&Manifold> for &Manifold {
     type Output = Manifold;
-    fn add(self, rhs: &Manifold) -> Manifold { self.union(rhs) }
+    fn add(self, rhs: &Manifold) -> Manifold {
+        self.union(rhs)
+    }
 }
 
 impl std::ops::AddAssign for Manifold {
-    fn add_assign(&mut self, rhs: Self) { *self = self.union(&rhs); }
+    fn add_assign(&mut self, rhs: Self) {
+        *self = self.union(&rhs);
+    }
 }
 
 impl std::ops::AddAssign<&Manifold> for Manifold {
-    fn add_assign(&mut self, rhs: &Self) { *self = self.union(rhs); }
+    fn add_assign(&mut self, rhs: &Self) {
+        *self = self.union(rhs);
+    }
 }
 
 impl std::ops::Sub for Manifold {
     type Output = Self;
-    fn sub(self, rhs: Self) -> Self { self.difference(&rhs) }
+    fn sub(self, rhs: Self) -> Self {
+        self.difference(&rhs)
+    }
 }
 
 impl std::ops::Sub<&Manifold> for Manifold {
     type Output = Self;
-    fn sub(self, rhs: &Self) -> Self { self.difference(rhs) }
+    fn sub(self, rhs: &Self) -> Self {
+        self.difference(rhs)
+    }
 }
 
 impl std::ops::Sub<&Manifold> for &Manifold {
     type Output = Manifold;
-    fn sub(self, rhs: &Manifold) -> Manifold { self.difference(rhs) }
+    fn sub(self, rhs: &Manifold) -> Manifold {
+        self.difference(rhs)
+    }
 }
 
 impl std::ops::SubAssign for Manifold {
-    fn sub_assign(&mut self, rhs: Self) { *self = self.difference(&rhs); }
+    fn sub_assign(&mut self, rhs: Self) {
+        *self = self.difference(&rhs);
+    }
 }
 
 impl std::ops::SubAssign<&Manifold> for Manifold {
-    fn sub_assign(&mut self, rhs: &Self) { *self = self.difference(rhs); }
+    fn sub_assign(&mut self, rhs: &Self) {
+        *self = self.difference(rhs);
+    }
 }
 
 impl std::ops::BitXor for Manifold {
     type Output = Self;
-    fn bitxor(self, rhs: Self) -> Self { self.intersection(&rhs) }
+    fn bitxor(self, rhs: Self) -> Self {
+        self.intersection(&rhs)
+    }
 }
 
 impl std::ops::BitXor<&Manifold> for Manifold {
     type Output = Self;
-    fn bitxor(self, rhs: &Self) -> Self { self.intersection(rhs) }
+    fn bitxor(self, rhs: &Self) -> Self {
+        self.intersection(rhs)
+    }
 }
 
 impl std::ops::BitXor<&Manifold> for &Manifold {
     type Output = Manifold;
-    fn bitxor(self, rhs: &Manifold) -> Manifold { self.intersection(rhs) }
+    fn bitxor(self, rhs: &Manifold) -> Manifold {
+        self.intersection(rhs)
+    }
 }
 
 impl std::ops::BitXorAssign for Manifold {
-    fn bitxor_assign(&mut self, rhs: Self) { *self = self.intersection(&rhs); }
+    fn bitxor_assign(&mut self, rhs: Self) {
+        *self = self.intersection(&rhs);
+    }
 }
 
 impl std::ops::BitXorAssign<&Manifold> for Manifold {
-    fn bitxor_assign(&mut self, rhs: &Self) { *self = self.intersection(rhs); }
+    fn bitxor_assign(&mut self, rhs: &Self) {
+        *self = self.intersection(rhs);
+    }
 }
 
 #[path = "manifold_meshgl.rs"]

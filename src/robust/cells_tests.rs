@@ -155,11 +155,7 @@ fn in_result_honors_the_winding_rule() {
                 (OpType::Intersect, a && b),
                 (OpType::Subtract, a && !b),
             ] {
-                assert_eq!(
-                    in_result(op, rule, w),
-                    want,
-                    "{op:?} {rule:?} on {w:?}"
-                );
+                assert_eq!(in_result(op, rule, w), want, "{op:?} {rule:?} on {w:?}");
             }
         }
     }
@@ -170,7 +166,11 @@ fn in_result_honors_the_winding_rule() {
     assert!(!in_result(OpType::Subtract, WindingRule::Nonzero, [1, -1]));
     assert!(in_result(OpType::Subtract, WindingRule::Positive, [1, -1]));
     assert!(in_result(OpType::Intersect, WindingRule::Nonzero, [-1, -1]));
-    assert!(!in_result(OpType::Intersect, WindingRule::Positive, [-1, -1]));
+    assert!(!in_result(
+        OpType::Intersect,
+        WindingRule::Positive,
+        [-1, -1]
+    ));
 }
 
 /// An inverted shell is material under `Nonzero` and vacuum under
@@ -184,12 +184,20 @@ fn nonzero_rule_keeps_an_inverted_operand() {
 
     let positive = boolean_via_cells_rule(&p, &flipped, OpType::Add, WindingRule::Positive);
     assert_eq!(positive.status(), Error::NoError);
-    assert!((positive.volume() - 8.0).abs() < 1e-9, "{}", positive.volume());
+    assert!(
+        (positive.volume() - 8.0).abs() < 1e-9,
+        "{}",
+        positive.volume()
+    );
 
     let nonzero = boolean_via_cells_rule(&p, &flipped, OpType::Add, WindingRule::Nonzero);
     assert_eq!(nonzero.status(), Error::NoError);
     assert!(!nonzero.as_impl().is_soup, "nonzero result must close");
-    assert!((nonzero.volume() - 9.0).abs() < 1e-9, "{}", nonzero.volume());
+    assert!(
+        (nonzero.volume() - 9.0).abs() < 1e-9,
+        "{}",
+        nonzero.volume()
+    );
 }
 
 /// Two 2³ cubes overlapping in a 1³ corner: union 15, intersection 1,
@@ -267,10 +275,7 @@ fn nonzero_rule_keeps_inside_out_geometry_through_the_public_api() {
     // A bar from x=1 to x=5 through both cubes' interiors.
     let b = mesh_from_tris(&cube(Vec3::new(1.0, 0.5, 0.5), Vec3::new(5.0, 1.5, 1.5)));
 
-    for (rule, want) in [
-        (WindingRule::Positive, 11.0),
-        (WindingRule::Nonzero, 18.0),
-    ] {
+    for (rule, want) in [(WindingRule::Positive, 11.0), (WindingRule::Nonzero, 18.0)] {
         let out = a.boolean_with_engine_and_rule(&b, OpType::Add, BooleanEngine::Robust, rule);
         assert_eq!(out.status(), Error::NoError, "{rule:?} status");
         assert!(

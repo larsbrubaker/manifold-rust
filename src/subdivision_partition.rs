@@ -43,8 +43,10 @@ impl Partition {
     }
 
     pub fn interior_offset(&self) -> i32 {
-        self.sorted_divisions[0] + self.sorted_divisions[1]
-            + self.sorted_divisions[2] + self.sorted_divisions[3]
+        self.sorted_divisions[0]
+            + self.sorted_divisions[1]
+            + self.sorted_divisions[2]
+            + self.sorted_divisions[3]
     }
 
     pub fn num_interior(&self) -> i32 {
@@ -126,10 +128,18 @@ impl Partition {
         for i in 0..4 {
             let n = self.sorted_divisions[i] - 1;
             let mut offset = edge_offsets[self.idx[i] as usize]
-                + if edge_fwd[self.idx[i] as usize] { 0 } else { n - 1 };
+                + if edge_fwd[self.idx[i] as usize] {
+                    0
+                } else {
+                    n - 1
+                };
             for _ in 0..n {
                 new_verts.push(offset);
-                offset += if edge_fwd[self.idx[i] as usize] { 1 } else { -1 };
+                offset += if edge_fwd[self.idx[i] as usize] {
+                    1
+                } else {
+                    -1
+                };
             }
         }
 
@@ -144,8 +154,7 @@ impl Partition {
         let mut new_tri_vert = vec![IVec3::default(); num_tri];
         for tri in 0..num_tri {
             for j in 0..3 {
-                new_tri_vert[tri][out_tri[j] as usize] =
-                    new_verts[self.tri_vert[tri][j] as usize];
+                new_tri_vert[tri][out_tri[j] as usize] = new_verts[self.tri_vert[tri][j] as usize];
             }
         }
         new_tri_vert
@@ -227,11 +236,9 @@ impl Partition {
                 }
             } else if (n[1] * n[1]) as f64 > f - (2.0_f64).sqrt() * n[0] as f64 * n[2] as f64 {
                 // acute-ish
-                partition.tri_vert.push(IVec3::new(
-                    edge_offsets[1] - 1,
-                    1,
-                    edge_offsets[1],
-                ));
+                partition
+                    .tri_vert
+                    .push(IVec3::new(edge_offsets[1] - 1, 1, edge_offsets[1]));
                 partition_quad(
                     &mut partition.tri_vert,
                     &mut partition.vert_bary,
@@ -242,12 +249,9 @@ impl Partition {
                 );
             } else {
                 // obtuse -> split into two acute
-                let ns = (n[0] - 2).min(
-                    ((f - (n[1] * n[1]) as f64) / (2.0 * n[0] as f64)).round() as i32,
-                );
-                let nh = 1.0_f64
-                    .max(((n[2] * n[2] - ns * ns) as f64).sqrt().round())
-                    as i32;
+                let ns = (n[0] - 2)
+                    .min(((f - (n[1] * n[1]) as f64) / (2.0 * n[0] as f64)).round() as i32);
+                let nh = 1.0_f64.max(((n[2] * n[2] - ns * ns) as f64).sqrt().round()) as i32;
 
                 let h_offset = partition.vert_bary.len() as i32;
                 let middle_bary = partition.vert_bary[(edge_offsets[0] + ns - 1) as usize];
@@ -259,11 +263,9 @@ impl Partition {
                     ));
                 }
 
-                partition.tri_vert.push(IVec3::new(
-                    edge_offsets[1] - 1,
-                    1,
-                    edge_offsets[1],
-                ));
+                partition
+                    .tri_vert
+                    .push(IVec3::new(edge_offsets[1] - 1, 1, edge_offsets[1]));
                 partition_quad(
                     &mut partition.tri_vert,
                     &mut partition.vert_bary,
@@ -286,11 +288,9 @@ impl Partition {
                         edge_offsets[0],
                     );
                 } else if ns == 1 {
-                    partition.tri_vert.push(IVec3::new(
-                        h_offset,
-                        2,
-                        edge_offsets[2],
-                    ));
+                    partition
+                        .tri_vert
+                        .push(IVec3::new(h_offset, 2, edge_offsets[2]));
                     partition_quad(
                         &mut partition.tri_vert,
                         &mut partition.vert_bary,
@@ -300,26 +300,14 @@ impl Partition {
                         BVec4::new(true, true, true, false),
                     );
                 } else {
-                    partition.tri_vert.push(IVec3::new(
-                        h_offset - 1,
-                        0,
-                        edge_offsets[0],
-                    ));
+                    partition
+                        .tri_vert
+                        .push(IVec3::new(h_offset - 1, 0, edge_offsets[0]));
                     partition_quad(
                         &mut partition.tri_vert,
                         &mut partition.vert_bary,
-                        IVec4::new(
-                            h_offset - 1,
-                            edge_offsets[0],
-                            edge_offsets[0] + ns - 1,
-                            2,
-                        ),
-                        IVec4::new(
-                            -1,
-                            edge_offsets[0] + 1,
-                            h_offset + nh - 2,
-                            edge_offsets[2],
-                        ),
+                        IVec4::new(h_offset - 1, edge_offsets[0], edge_offsets[0] + ns - 1, 2),
+                        IVec4::new(-1, edge_offsets[0] + 1, h_offset + nh - 2, edge_offsets[2]),
                         IVec4::new(0, ns - 2, nh - 1, n[2] - 2),
                         BVec4::new(true, true, false, true),
                     );
@@ -346,7 +334,11 @@ fn partition_cache() -> &'static Mutex<HashMap<(i32, i32, i32, i32), Partition>>
 
 #[inline]
 pub(crate) fn next3(i: i32) -> i32 {
-    if i == 2 { 0 } else { i + 1 }
+    if i == 2 {
+        0
+    } else {
+        i + 1
+    }
 }
 
 #[inline]
@@ -426,21 +418,13 @@ fn partition_quad(
             let mut last_v = corner_verts[edge[0] as usize];
             for i in 0..=middle {
                 let next = get_edge_vert(max_edge as usize, i);
-                tri_vert.push(IVec3::new(
-                    corner_verts[edge[3] as usize],
-                    last_v,
-                    next,
-                ));
+                tri_vert.push(IVec3::new(corner_verts[edge[3] as usize], last_v, next));
                 last_v = next;
             }
             last_v = corner_verts[edge[1] as usize];
             for i in (middle..edge_added[max_edge as usize]).rev() {
                 let next = get_edge_vert(max_edge as usize, i);
-                tri_vert.push(IVec3::new(
-                    corner_verts[edge[2] as usize],
-                    next,
-                    last_v,
-                ));
+                tri_vert.push(IVec3::new(corner_verts[edge[2] as usize], next, last_v));
                 last_v = next;
             }
         } else {
@@ -459,11 +443,7 @@ fn partition_quad(
                 }
                 for i in 0..edge_added[side] {
                     let next_vert = get_edge_vert(side, i);
-                    tri_vert.push(IVec3::new(
-                        corner_verts[corner_u],
-                        side_vert,
-                        next_vert,
-                    ));
+                    tri_vert.push(IVec3::new(corner_verts[corner_u], side_vert, next_vert));
                     side_vert = next_vert;
                 }
                 if j == 2 || edge_added[side] == 0 {

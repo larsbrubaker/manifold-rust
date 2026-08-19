@@ -164,7 +164,10 @@ fn robust_boolean_reports_monotonic_phases_with_valid_fractions() {
         "winding",
         "assemble",
     ] {
-        assert!(seen.contains(&expected), "phase {expected:?} never reported (saw {seen:?})");
+        assert!(
+            seen.contains(&expected),
+            "phase {expected:?} never reported (saw {seen:?})"
+        );
     }
 }
 
@@ -174,14 +177,20 @@ fn a_reporter_does_not_change_the_result() {
     let mesh = |m: &Manifold| -> MeshGL { m.get_mesh_gl(-1) };
     let (a, b) = spheres();
     for op in [OpType::Add, OpType::Subtract, OpType::Intersect] {
-        for engine in [BooleanEngine::Exact, BooleanEngine::Robust, BooleanEngine::Auto] {
+        for engine in [
+            BooleanEngine::Exact,
+            BooleanEngine::Robust,
+            BooleanEngine::Auto,
+        ] {
             let plain = a.boolean_with_engine(&b, op, engine);
             let sink = Sink::default();
             let reporter = sink.reporter();
-            let watched =
-                a.boolean_with_engine_and_progress(&b, op, engine, None, Some(&reporter));
+            let watched = a.boolean_with_engine_and_progress(&b, op, engine, None, Some(&reporter));
             let (p, w) = (mesh(&plain), mesh(&watched));
-            assert_eq!(p.tri_verts, w.tri_verts, "{op:?}/{engine:?} topology changed");
+            assert_eq!(
+                p.tri_verts, w.tri_verts,
+                "{op:?}/{engine:?} topology changed"
+            );
             assert_eq!(
                 p.vert_properties, w.vert_properties,
                 "{op:?}/{engine:?} positions changed"

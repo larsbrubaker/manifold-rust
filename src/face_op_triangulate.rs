@@ -28,7 +28,10 @@ fn write_local_triangles(
     first_tri: usize,
     triangles: &[[i32; 3]],
 ) {
-    debug_assert!(triangles.len() <= 2, "local face path only handles tris/quads");
+    debug_assert!(
+        triangles.len() <= 2,
+        "local face path only handles tris/quads"
+    );
     let first_out = 3 * first_tri as i32;
     // (start, end, out) — start/end are face-halfedge indices, out is the
     // output halfedge index.
@@ -232,7 +235,11 @@ pub fn face2tri_ct(
 
         if num_edge == 3 {
             // Single triangle — sort edges into correct winding order.
-            let mut tri_edge = [first_edge as i32, first_edge as i32 + 1, first_edge as i32 + 2];
+            let mut tri_edge = [
+                first_edge as i32,
+                first_edge as i32 + 1,
+                first_edge as i32 + 2,
+            ];
             let mut tri = [
                 face_halfedge[first_edge].start_vert,
                 face_halfedge[first_edge + 1].start_vert,
@@ -265,9 +272,12 @@ pub fn face2tri_ct(
             let projection = get_axis_aligned_projection(normal);
             let tri_ccw = |t: [i32; 3]| -> bool {
                 ccw(
-                    projection.apply(mesh.vert_pos[face_halfedge[t[0] as usize].start_vert as usize]),
-                    projection.apply(mesh.vert_pos[face_halfedge[t[1] as usize].start_vert as usize]),
-                    projection.apply(mesh.vert_pos[face_halfedge[t[2] as usize].start_vert as usize]),
+                    projection
+                        .apply(mesh.vert_pos[face_halfedge[t[0] as usize].start_vert as usize]),
+                    projection
+                        .apply(mesh.vert_pos[face_halfedge[t[1] as usize].start_vert as usize]),
+                    projection
+                        .apply(mesh.vert_pos[face_halfedge[t[2] as usize].start_vert as usize]),
                     mesh.epsilon,
                 ) >= 0
             };
@@ -276,14 +286,8 @@ pub fn face2tri_ct(
                 assemble_halfedges(&face_halfedge[first_edge..last_edge], first_edge as i32);
             let quad = &quad_loops[0]; // Should be exactly one loop
 
-            let tris0 = [
-                [quad[0], quad[1], quad[2]],
-                [quad[0], quad[2], quad[3]],
-            ];
-            let tris1 = [
-                [quad[1], quad[2], quad[3]],
-                [quad[0], quad[1], quad[3]],
-            ];
+            let tris0 = [[quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]]];
+            let tris1 = [[quad[1], quad[2], quad[3]], [quad[0], quad[1], quad[3]]];
 
             let choice = if !(tri_ccw(tris0[0]) && tri_ccw(tris0[1])) {
                 1
@@ -292,7 +296,11 @@ pub fn face2tri_ct(
                     - mesh.vert_pos[face_halfedge[quad[2] as usize].start_vert as usize];
                 let diag1 = mesh.vert_pos[face_halfedge[quad[1] as usize].start_vert as usize]
                     - mesh.vert_pos[face_halfedge[quad[3] as usize].start_vert as usize];
-                if length2(diag0) > length2(diag1) { 1 } else { 0 }
+                if length2(diag0) > length2(diag1) {
+                    1
+                } else {
+                    0
+                }
             } else {
                 0
             };
@@ -341,7 +349,10 @@ pub fn face2tri_ct(
             continue;
         }
         let pair_tri = contour2tri[pair as usize];
-        debug_assert!(pair_tri >= 0, "boundary edge did not triangulate with its pair");
+        debug_assert!(
+            pair_tri >= 0,
+            "boundary edge did not triangulate with its pair"
+        );
         new_halfedge[tri_edge as usize].paired_halfedge = pair_tri;
     }
 

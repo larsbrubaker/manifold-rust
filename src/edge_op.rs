@@ -3,11 +3,11 @@
 // Ports src/edge_op.cpp from the Manifold C++ library.
 // All algorithms are sequential (rayon deferred to later).
 
-use crate::linalg::{Vec2, Vec3, dot, dot2, length2_2};
-use crate::types::{next_halfedge, Halfedge};
+use crate::face_op::{calculate_vert_normals, get_axis_aligned_projection};
 use crate::impl_mesh::ManifoldImpl;
-use crate::face_op::{get_axis_aligned_projection, calculate_vert_normals};
+use crate::linalg::{dot, dot2, length2_2, Vec2, Vec3};
 use crate::polygon::ccw;
+use crate::types::{next_halfedge, Halfedge};
 
 // -----------------------------------------------------------------------
 // Private helpers (mirrors anonymous-namespace functions in edge_op.cpp)
@@ -58,9 +58,11 @@ pub fn update_vert(mesh: &mut ManifoldImpl, vert: i32, start_edge: usize, end_ed
 /// both endpoints and re-attach the manifold the other way across this edge.
 pub fn form_loop(mesh: &mut ManifoldImpl, current: usize, end: usize) {
     let start_vert = mesh.vert_pos.len() as i32;
-    mesh.vert_pos.push(mesh.vert_pos[mesh.halfedge[current].start_vert as usize]);
+    mesh.vert_pos
+        .push(mesh.vert_pos[mesh.halfedge[current].start_vert as usize]);
     let end_vert = mesh.vert_pos.len() as i32;
-    mesh.vert_pos.push(mesh.vert_pos[mesh.halfedge[current].end_vert as usize]);
+    mesh.vert_pos
+        .push(mesh.vert_pos[mesh.halfedge[current].end_vert as usize]);
 
     let old_match = mesh.halfedge[current].paired_halfedge as usize;
     let new_match = mesh.halfedge[end].paired_halfedge as usize;
@@ -88,7 +90,12 @@ pub fn collapse_tri(halfedge: &mut Vec<Halfedge>, tri_edge: [usize; 3]) {
     halfedge[pair2].paired_halfedge = pair1 as i32;
     for i in 0..3 {
         let prop_vert = halfedge[tri_edge[i]].prop_vert;
-        halfedge[tri_edge[i]] = Halfedge { start_vert: -1, end_vert: -1, paired_halfedge: -1, prop_vert };
+        halfedge[tri_edge[i]] = Halfedge {
+            start_vert: -1,
+            end_vert: -1,
+            paired_halfedge: -1,
+            prop_vert,
+        };
     }
 }
 
@@ -135,8 +142,18 @@ pub fn remove_if_folded(mesh: &mut ManifoldImpl, edge: usize) {
         pair_up(&mut mesh.halfedge, p01, p12);
         pair_up(&mut mesh.halfedge, p02, p11);
         for i in 0..3 {
-            mesh.halfedge[tri0edge[i]] = Halfedge { start_vert: -1, end_vert: -1, paired_halfedge: -1, prop_vert: -1 };
-            mesh.halfedge[tri1edge[i]] = Halfedge { start_vert: -1, end_vert: -1, paired_halfedge: -1, prop_vert: -1 };
+            mesh.halfedge[tri0edge[i]] = Halfedge {
+                start_vert: -1,
+                end_vert: -1,
+                paired_halfedge: -1,
+                prop_vert: -1,
+            };
+            mesh.halfedge[tri1edge[i]] = Halfedge {
+                start_vert: -1,
+                end_vert: -1,
+                paired_halfedge: -1,
+                prop_vert: -1,
+            };
         }
     }
 }
@@ -148,7 +165,13 @@ pub fn remove_if_folded(mesh: &mut ManifoldImpl, edge: usize) {
 /// Collapses the given edge by merging `startVert` into `endVert`.
 /// Returns false if the collapse cannot be done safely.
 /// May form loops (topological splits) to avoid non-manifold configurations.
-pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usize>, tol: f64, first_new_vert: i32) -> bool {
+pub fn collapse_edge(
+    mesh: &mut ManifoldImpl,
+    edge: usize,
+    scratch: &mut Vec<usize>,
+    tol: f64,
+    first_new_vert: i32,
+) -> bool {
     // Per #1671: `tol` defaults to epsilon when negative. In a Boolean
     // (first_new_vert != 0) callers pass tolerance_ so newly-created verts may
     // move up to tolerance, but an edge whose far end is an *old* vert is still
@@ -221,8 +244,13 @@ pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usi
             }
 
             // Don't collapse edge if it would cause a triangle to invert.
-            if ccw(projection.apply(p_next), projection.apply(p_last),
-                   projection.apply(p_new), mesh.epsilon) < 0 {
+            if ccw(
+                projection.apply(p_next),
+                projection.apply(p_last),
+                projection.apply(p_new),
+                mesh.epsilon,
+            ) < 0
+            {
                 return false;
             }
 
@@ -277,7 +305,11 @@ pub fn collapse_edge(mesh: &mut ManifoldImpl, edge: usize, scratch: &mut Vec<usi
 
         let vert = mesh.halfedge[current].end_vert;
         let next_pair = mesh.halfedge[current].paired_halfedge;
-        let next_edge = if next_pair >= 0 { next_pair as usize } else { break };
+        let next_edge = if next_pair >= 0 {
+            next_pair as usize
+        } else {
+            break;
+        };
 
         // Check if this creates a loop (edge to an already-encountered vert)
         let mut formed_loop = false;
@@ -452,8 +484,12 @@ pub fn recursive_edge_swap(
             let _ = collapse_edge(mesh, tri0edge[2], scratch, -1.0, 0);
             scratch.clear();
         } else {
-            if edge < visited.len() { visited[edge] = *tag; }
-            if pair < visited.len() { visited[pair] = *tag; }
+            if edge < visited.len() {
+                visited[edge] = *tag;
+            }
+            if pair < visited.len() {
+                visited[pair] = *tag;
+            }
             for &e in &[tri1edge[1], tri1edge[0], tri0edge[1], tri0edge[0]] {
                 edge_swap_stack.push(e as i32);
             }
@@ -465,8 +501,12 @@ pub fn recursive_edge_swap(
     } else {
         // Normal swap path
         do_swap(mesh);
-        if edge < visited.len() { visited[edge] = *tag; }
-        if pair < visited.len() { visited[pair] = *tag; }
+        if edge < visited.len() {
+            visited[edge] = *tag;
+        }
+        if pair < visited.len() {
+            visited[pair] = *tag;
+        }
         // These pair lookups can be -1; C++ pushes them as-is and relies on the
         // `edge < 0` guard at the top of the next call to skip them.
         let p1 = mesh.halfedge[tri1edge[0]].paired_halfedge;
@@ -509,16 +549,22 @@ pub fn split_pinched_verts(mesh: &mut ManifoldImpl) {
             let mut current = i;
             loop {
                 let paired = mesh.halfedge[current].paired_halfedge;
-                if paired < 0 { break; }
+                if paired < 0 {
+                    break;
+                }
                 current = next_halfedge(paired) as usize;
-                if current >= halfedge_processed.len() { break; }
+                if current >= halfedge_processed.len() {
+                    break;
+                }
                 halfedge_processed[current] = true;
                 mesh.halfedge[current].start_vert = new_vert;
                 let curr_paired = mesh.halfedge[current].paired_halfedge;
                 if curr_paired >= 0 {
                     mesh.halfedge[curr_paired as usize].end_vert = new_vert;
                 }
-                if current == i { break; }
+                if current == i {
+                    break;
+                }
             }
         } else {
             // First time seeing this vert: mark cycle as processed.
@@ -528,11 +574,17 @@ pub fn split_pinched_verts(mesh: &mut ManifoldImpl) {
             let mut current = i;
             loop {
                 let paired = mesh.halfedge[current].paired_halfedge;
-                if paired < 0 { break; }
+                if paired < 0 {
+                    break;
+                }
                 current = next_halfedge(paired) as usize;
-                if current >= halfedge_processed.len() { break; }
+                if current >= halfedge_processed.len() {
+                    break;
+                }
                 halfedge_processed[current] = true;
-                if current == i { break; }
+                if current == i {
+                    break;
+                }
             }
         }
         i += 1;
@@ -569,10 +621,14 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
             // C++ advances current BEFORE building triangles:
             // current = halfedge_[NextHalfedge(current)].pairedHalfedge;
             let next_p = mesh.halfedge[next_halfedge(current as i32) as usize].paired_halfedge;
-            if next_p < 0 { break; }
+            if next_p < 0 {
+                break;
+            }
             current = next_p as usize;
             let opp_p = mesh.halfedge[next_halfedge(edge as i32) as usize].paired_halfedge;
-            if opp_p < 0 { break; }
+            if opp_p < 0 {
+                break;
+            }
             let opposite = opp_p as usize;
 
             update_vert(mesh, new_vert, current, opposite);
@@ -580,11 +636,26 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
             let new_he = mesh.halfedge.len();
             let old_face = current / 3;
             let outside_vert = mesh.halfedge[current].start_vert;
-            mesh.halfedge.push(Halfedge { start_vert: end_vert, end_vert: new_vert, paired_halfedge: -1, prop_vert: end_prop });
-            mesh.halfedge.push(Halfedge { start_vert: new_vert, end_vert: outside_vert, paired_halfedge: -1, prop_vert: end_prop });
+            mesh.halfedge.push(Halfedge {
+                start_vert: end_vert,
+                end_vert: new_vert,
+                paired_halfedge: -1,
+                prop_vert: end_prop,
+            });
+            mesh.halfedge.push(Halfedge {
+                start_vert: new_vert,
+                end_vert: outside_vert,
+                paired_halfedge: -1,
+                prop_vert: end_prop,
+            });
             let curr_prop_vert = mesh.halfedge[current].prop_vert;
             let curr_paired = mesh.halfedge[current].paired_halfedge as usize;
-            mesh.halfedge.push(Halfedge { start_vert: outside_vert, end_vert: end_vert, paired_halfedge: -1, prop_vert: curr_prop_vert });
+            mesh.halfedge.push(Halfedge {
+                start_vert: outside_vert,
+                end_vert: end_vert,
+                paired_halfedge: -1,
+                prop_vert: curr_prop_vert,
+            });
             pair_up(&mut mesh.halfedge, new_he + 2, curr_paired);
             pair_up(&mut mesh.halfedge, new_he + 1, current);
             if !mesh.mesh_relation.tri_ref.is_empty() {
@@ -599,11 +670,26 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
             let new_he2 = new_he + 3;
             let old_face2 = opposite / 3;
             let outside_vert2 = mesh.halfedge[opposite].start_vert;
-            mesh.halfedge.push(Halfedge { start_vert: new_vert, end_vert: end_vert, paired_halfedge: -1, prop_vert: end_prop });
-            mesh.halfedge.push(Halfedge { start_vert: end_vert, end_vert: outside_vert2, paired_halfedge: -1, prop_vert: end_prop });
+            mesh.halfedge.push(Halfedge {
+                start_vert: new_vert,
+                end_vert: end_vert,
+                paired_halfedge: -1,
+                prop_vert: end_prop,
+            });
+            mesh.halfedge.push(Halfedge {
+                start_vert: end_vert,
+                end_vert: outside_vert2,
+                paired_halfedge: -1,
+                prop_vert: end_prop,
+            });
             let opp_prop_vert = mesh.halfedge[opposite].prop_vert;
             let opp_paired = mesh.halfedge[opposite].paired_halfedge as usize;
-            mesh.halfedge.push(Halfedge { start_vert: outside_vert2, end_vert: new_vert, paired_halfedge: -1, prop_vert: opp_prop_vert });
+            mesh.halfedge.push(Halfedge {
+                start_vert: outside_vert2,
+                end_vert: new_vert,
+                paired_halfedge: -1,
+                prop_vert: opp_prop_vert,
+            });
             pair_up(&mut mesh.halfedge, new_he2 + 2, opp_paired);
             pair_up(&mut mesh.halfedge, new_he2 + 1, opposite);
             pair_up(&mut mesh.halfedge, new_he2, new_he);
@@ -618,7 +704,9 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
             break;
         }
         let orbit_p = mesh.halfedge[next_halfedge(current as i32) as usize].paired_halfedge;
-        if orbit_p < 0 { break; }
+        if orbit_p < 0 {
+            break;
+        }
         current = orbit_p as usize;
     }
 
@@ -632,20 +720,28 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
         loop {
             mesh.halfedge[cur].start_vert = new_vert;
             let paired_cur = mesh.halfedge[cur].paired_halfedge;
-            if paired_cur < 0 { break; }
+            if paired_cur < 0 {
+                break;
+            }
             mesh.halfedge[paired_cur as usize].end_vert = new_vert;
             // ForVert step: next_halfedge(halfedge[cur].paired_halfedge)
             cur = next_halfedge(paired_cur) as usize;
-            if cur == start { break; }
+            if cur == start {
+                break;
+            }
         }
     }
 
     // Orbit startVert - check if endVert is pinched
     let pair = mesh.halfedge[edge].paired_halfedge;
-    if pair < 0 { return; }
+    if pair < 0 {
+        return;
+    }
     let pair = pair as usize;
     let cur = mesh.halfedge[next_halfedge(pair as i32) as usize].paired_halfedge;
-    if cur < 0 { return; }
+    if cur < 0 {
+        return;
+    }
     let mut cur = cur as usize;
     while cur != pair {
         let v = mesh.halfedge[cur].start_vert;
@@ -653,7 +749,9 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
             return; // Connected: not a pinched vert
         }
         let p = mesh.halfedge[next_halfedge(cur as i32) as usize].paired_halfedge;
-        if p < 0 { break; }
+        if p < 0 {
+            break;
+        }
         cur = p as usize;
     }
 
@@ -666,10 +764,14 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
         loop {
             mesh.halfedge[c2].start_vert = new_vert2;
             let paired_c2 = mesh.halfedge[c2].paired_halfedge;
-            if paired_c2 < 0 { break; }
+            if paired_c2 < 0 {
+                break;
+            }
             mesh.halfedge[paired_c2 as usize].end_vert = new_vert2;
             c2 = next_halfedge(paired_c2) as usize;
-            if c2 == s2 { break; }
+            if c2 == s2 {
+                break;
+            }
         }
     }
 }
@@ -683,34 +785,48 @@ pub fn dedupe_edges(mesh: &mut ManifoldImpl) {
         let mut duplicates: Vec<usize> = Vec::new();
 
         for i in 0..n_edges {
-            if processed[i] { continue; }
+            if processed[i] {
+                continue;
+            }
             let sv = mesh.halfedge[i].start_vert;
             let ev = mesh.halfedge[i].end_vert;
-            if sv < 0 || ev < 0 { continue; }
+            if sv < 0 || ev < 0 {
+                continue;
+            }
 
             // Track all endVerts seen in this vertex's orbit, keeping smallest edge idx.
             // Uses ForVert traversal: current = next_halfedge(halfedge[current].paired_halfedge)
             let mut end_verts: Vec<(i32, usize)> = Vec::new(); // (endVert, min_edge_idx)
-            // Process i itself first
+                                                               // Process i itself first
             processed[i] = true;
             let c_ev0 = mesh.halfedge[i].end_vert;
-            if c_ev0 >= 0 { end_verts.push((c_ev0, i)); }
+            if c_ev0 >= 0 {
+                end_verts.push((c_ev0, i));
+            }
             // Then orbit (with safety bound to prevent infinite loops)
             let mut current = i;
             let mut orbit_steps = 0;
             loop {
                 let pair = mesh.halfedge[current].paired_halfedge;
-                if pair < 0 { break; }
+                if pair < 0 {
+                    break;
+                }
                 current = next_halfedge(pair) as usize;
-                if current == i { break; }
+                if current == i {
+                    break;
+                }
                 orbit_steps += 1;
-                if orbit_steps > n_edges { break; } // safety
+                if orbit_steps > n_edges {
+                    break;
+                } // safety
                 processed[current] = true;
                 let c_sv = mesh.halfedge[current].start_vert;
                 let c_ev = mesh.halfedge[current].end_vert;
                 if c_sv >= 0 && c_ev >= 0 {
                     if let Some(entry) = end_verts.iter_mut().find(|(v, _)| *v == c_ev) {
-                        if current < entry.1 { entry.1 = current; }
+                        if current < entry.1 {
+                            entry.1 = current;
+                        }
                     } else {
                         end_verts.push((c_ev, current));
                     }
@@ -721,18 +837,26 @@ pub fn dedupe_edges(mesh: &mut ManifoldImpl) {
             let c_ev0 = mesh.halfedge[i].end_vert;
             if c_ev0 >= 0 {
                 if let Some(&(_, min_edge)) = end_verts.iter().find(|(v, _)| *v == c_ev0) {
-                    if min_edge != i { duplicates.push(i); }
+                    if min_edge != i {
+                        duplicates.push(i);
+                    }
                 }
             }
             current = i;
             orbit_steps = 0;
             loop {
                 let pair = mesh.halfedge[current].paired_halfedge;
-                if pair < 0 { break; }
+                if pair < 0 {
+                    break;
+                }
                 current = next_halfedge(pair) as usize;
-                if current == i { break; }
+                if current == i {
+                    break;
+                }
                 orbit_steps += 1;
-                if orbit_steps > n_edges { break; } // safety
+                if orbit_steps > n_edges {
+                    break;
+                } // safety
                 let c_ev = mesh.halfedge[current].end_vert;
                 if c_ev >= 0 {
                     if let Some(&(_, min_edge)) = end_verts.iter().find(|(v, _)| *v == c_ev) {
@@ -744,7 +868,9 @@ pub fn dedupe_edges(mesh: &mut ManifoldImpl) {
             }
         }
 
-        if duplicates.is_empty() { break; }
+        if duplicates.is_empty() {
+            break;
+        }
         for &dup in &duplicates {
             dedupe_edge(mesh, dup);
         }
@@ -758,7 +884,9 @@ pub fn dedupe_edges(mesh: &mut ManifoldImpl) {
 /// Coerces an even-manifold into a proper 2-manifold by splitting
 /// non-manifold verts and deduplicating edges.
 pub fn cleanup_topology(mesh: &mut ManifoldImpl) {
-    if mesh.halfedge.is_empty() { return; }
+    if mesh.halfedge.is_empty() {
+        return;
+    }
     split_pinched_verts(mesh);
     dedupe_edges(mesh);
 }
@@ -766,7 +894,9 @@ pub fn cleanup_topology(mesh: &mut ManifoldImpl) {
 /// Collapses short edges and colinear edges, and swaps degenerate edge diagonals.
 /// `first_new_vert` constrains which verts can be collapsed.
 pub fn simplify_topology(mesh: &mut ManifoldImpl, first_new_vert: i32) {
-    if mesh.halfedge.is_empty() { return; }
+    if mesh.halfedge.is_empty() {
+        return;
+    }
     cleanup_topology(mesh);
     collapse_short_edges(mesh, first_new_vert);
     collapse_colinear_edges(mesh, first_new_vert);
@@ -776,7 +906,9 @@ pub fn simplify_topology(mesh: &mut ManifoldImpl, first_new_vert: i32) {
 
 /// Like simplify_topology but without colinear-edge collapse.
 pub fn remove_degenerates(mesh: &mut ManifoldImpl, first_new_vert: i32) {
-    if mesh.halfedge.is_empty() { return; }
+    if mesh.halfedge.is_empty() {
+        return;
+    }
     cleanup_topology(mesh);
     collapse_short_edges(mesh, first_new_vert);
     swap_degenerates(mesh, first_new_vert);
@@ -793,13 +925,23 @@ pub fn collapse_short_edges(mesh: &mut ManifoldImpl, first_new_vert: i32) {
     // epsilon to avoid error stacking; in a Boolean we only touch new verts, so
     // we may collapse up to tolerance. The per-edge max length below still
     // restricts new->old edges (old verts only move by epsilon).
-    let tol = if first_new_vert == 0 { mesh.epsilon } else { mesh.tolerance };
+    let tol = if first_new_vert == 0 {
+        mesh.epsilon
+    } else {
+        mesh.tolerance
+    };
 
     for i in 0..n {
         let h = &mesh.halfedge[i];
-        if h.paired_halfedge < 0 { continue; }
-        if h.start_vert < first_new_vert && h.end_vert < first_new_vert { continue; }
-        if h.start_vert < 0 || h.end_vert < 0 { continue; }
+        if h.paired_halfedge < 0 {
+            continue;
+        }
+        if h.start_vert < first_new_vert && h.end_vert < first_new_vert {
+            continue;
+        }
+        if h.start_vert < 0 || h.end_vert < 0 {
+            continue;
+        }
         let delta = mesh.vert_pos[h.end_vert as usize] - mesh.vert_pos[h.start_vert as usize];
         let len_sq = dot(delta, delta);
         let max_len = if h.end_vert < first_new_vert {
@@ -828,18 +970,28 @@ pub fn collapse_colinear_edges(mesh: &mut ManifoldImpl, first_new_vert: i32) {
 
         for i in 0..n {
             let h = &mesh.halfedge[i];
-            if h.paired_halfedge < 0 || h.start_vert < first_new_vert { continue; }
-            if h.start_vert < 0 { continue; }
-            if mesh.mesh_relation.tri_ref.is_empty() { continue; }
-            if i / 3 >= mesh.mesh_relation.tri_ref.len() { continue; }
+            if h.paired_halfedge < 0 || h.start_vert < first_new_vert {
+                continue;
+            }
+            if h.start_vert < 0 {
+                continue;
+            }
+            if mesh.mesh_relation.tri_ref.is_empty() {
+                continue;
+            }
+            if i / 3 >= mesh.mesh_relation.tri_ref.len() {
+                continue;
+            }
 
             let ref0 = mesh.mesh_relation.tri_ref[i / 3];
             let mut current = next_halfedge(mesh.halfedge[i].paired_halfedge) as usize;
-            if current >= mesh.halfedge.len() { continue; }
+            if current >= mesh.halfedge.len() {
+                continue;
+            }
             let mut ref1 = if current / 3 < mesh.mesh_relation.tri_ref.len() {
                 mesh.mesh_relation.tri_ref[current / 3]
             } else {
-                continue
+                continue;
             };
             let mut ref1_updated = !ref0.same_face(&ref1);
 
@@ -854,11 +1006,20 @@ pub fn collapse_colinear_edges(mesh: &mut ManifoldImpl, first_new_vert: i32) {
                 }
                 // FlagEdge traversal: current = NextHalfedge(halfedge[current].pairedHalfedge)
                 let pair = mesh.halfedge[current].paired_halfedge;
-                if pair < 0 { is_redundant = false; break; }
+                if pair < 0 {
+                    is_redundant = false;
+                    break;
+                }
                 current = next_halfedge(pair) as usize;
-                if current >= mesh.halfedge.len() { is_redundant = false; break; }
+                if current >= mesh.halfedge.len() {
+                    is_redundant = false;
+                    break;
+                }
                 let tri = current / 3;
-                if tri >= mesh.mesh_relation.tri_ref.len() { is_redundant = false; break; }
+                if tri >= mesh.mesh_relation.tri_ref.len() {
+                    is_redundant = false;
+                    break;
+                }
                 let ref_cur = mesh.mesh_relation.tri_ref[tri];
                 if !ref_cur.same_face(&ref0) && !ref_cur.same_face(&ref1) {
                     if !ref1_updated {
@@ -875,7 +1036,9 @@ pub fn collapse_colinear_edges(mesh: &mut ManifoldImpl, first_new_vert: i32) {
             }
         }
 
-        if flagged.is_empty() { break; }
+        if flagged.is_empty() {
+            break;
+        }
         let mut num_collapsed = 0;
         for &i in &flagged {
             scratch.clear();
@@ -883,20 +1046,26 @@ pub fn collapse_colinear_edges(mesh: &mut ManifoldImpl, first_new_vert: i32) {
                 num_collapsed += 1;
             }
         }
-        if num_collapsed == 0 { break; }
+        if num_collapsed == 0 {
+            break;
+        }
     }
 }
 
 /// Swaps long edges of degenerate triangles.
 pub fn swap_degenerates(mesh: &mut ManifoldImpl, first_new_vert: i32) {
-    if mesh.face_normal.is_empty() { return; }
+    if mesh.face_normal.is_empty() {
+        return;
+    }
 
     let n = mesh.halfedge.len();
     let mut flagged: Vec<usize> = Vec::new();
 
     for i in 0..n {
         let h = &mesh.halfedge[i];
-        if h.paired_halfedge < 0 { continue; }
+        if h.paired_halfedge < 0 {
+            continue;
+        }
         // Skip edges where all 4 involved verts are old
         let tri0edge = tri_of(i);
         let pair = h.paired_halfedge as usize;
@@ -909,7 +1078,9 @@ pub fn swap_degenerates(mesh: &mut ManifoldImpl, first_new_vert: i32) {
             continue;
         }
         let tri = i / 3;
-        if tri >= mesh.face_normal.len() { continue; }
+        if tri >= mesh.face_normal.len() {
+            continue;
+        }
         let proj = get_axis_aligned_projection(mesh.face_normal[tri]);
         let mut v = [Vec2::new(0.0, 0.0); 3];
         for j in 0..3 {
@@ -924,7 +1095,9 @@ pub fn swap_degenerates(mesh: &mut ManifoldImpl, first_new_vert: i32) {
         // Switch to the neighbor's projection — C++ projects the PAIR
         // triangle's verts (pairTriEdge), not tri0's.
         let tri_p = pair / 3;
-        if tri_p >= mesh.face_normal.len() { continue; }
+        if tri_p >= mesh.face_normal.len() {
+            continue;
+        }
         let proj_p = get_axis_aligned_projection(mesh.face_normal[tri_p]);
         for j in 0..3 {
             let sv = mesh.halfedge[tri1edge[j]].start_vert;
@@ -944,9 +1117,23 @@ pub fn swap_degenerates(mesh: &mut ManifoldImpl, first_new_vert: i32) {
 
     for &i in &flagged {
         tag += 1;
-        recursive_edge_swap(mesh, i as i32, &mut tag, &mut visited, &mut edge_swap_stack, &mut scratch);
+        recursive_edge_swap(
+            mesh,
+            i as i32,
+            &mut tag,
+            &mut visited,
+            &mut edge_swap_stack,
+            &mut scratch,
+        );
         while let Some(e) = edge_swap_stack.pop() {
-            recursive_edge_swap(mesh, e, &mut tag, &mut visited, &mut edge_swap_stack, &mut scratch);
+            recursive_edge_swap(
+                mesh,
+                e,
+                &mut tag,
+                &mut visited,
+                &mut edge_swap_stack,
+                &mut scratch,
+            );
         }
     }
 }

@@ -63,9 +63,9 @@ fn round_trip_is_bit_exact() {
         1e-300,
         f64::MAX,
         f64::MIN,
-        f64::MIN_POSITIVE,          // smallest normal
-        f64::MIN_POSITIVE / 4.0,    // subnormal
-        5e-324,                     // smallest subnormal
+        f64::MIN_POSITIVE,       // smallest normal
+        f64::MIN_POSITIVE / 4.0, // subnormal
+        5e-324,                  // smallest subnormal
         -5e-324,
         123456789.123456789,
     ];
@@ -183,9 +183,15 @@ fn rat_to_f64_matches_the_backend_oracle() {
     // Ties at 1, at the subnormal boundary, and at the overflow boundary.
     let half_ulp = rat_new(1.into(), Int::one() << 53usize);
     check(&(rat(1.0) + &half_ulp), "tie at 1 (down)");
-    check(&(rat(1.0) + &half_ulp * rat_from_int(3.into())), "tie at 1 (up)");
+    check(
+        &(rat(1.0) + &half_ulp * rat_from_int(3.into())),
+        "tie at 1 (up)",
+    );
     check(&(rat(5e-324) / rat_from_int(2.into())), "underflow tie (+)");
-    check(&(rat(-5e-324) / rat_from_int(2.into())), "underflow tie (-)");
+    check(
+        &(rat(-5e-324) / rat_from_int(2.into())),
+        "underflow tie (-)",
+    );
     check(
         &(rat(5e-324) * rat_new(1.into(), 4.into())),
         "quarter subnormal (+)",
@@ -279,8 +285,16 @@ fn int_ratio_to_f64_agrees_with_rat_to_f64() {
 
     // Unreduced pairs must round exactly like their reduced form.
     for k in [2i64, 3, 5, 1 << 20, 1 << 40] {
-        check(&Int::from(3 * k), &Int::from(4 * k), &format!("3k/4k k={k}"));
-        check(&Int::from(-3 * k), &Int::from(4 * k), &format!("-3k/4k k={k}"));
+        check(
+            &Int::from(3 * k),
+            &Int::from(4 * k),
+            &format!("3k/4k k={k}"),
+        );
+        check(
+            &Int::from(-3 * k),
+            &Int::from(4 * k),
+            &format!("-3k/4k k={k}"),
+        );
     }
 
     // Inexact values: 1/3 rounds, and must not be flagged exact.
@@ -385,8 +399,16 @@ fn homogeneous_translation_rounds_identically_to_rational_subtraction() {
         let hden = &hp.2 * &ho.2;
         let (gx, _) = int_ratio_to_f64(&(&hp.0 * &ho.2 - &ho.0 * &hp.2), &hden);
         let (gy, _) = int_ratio_to_f64(&(&hp.1 * &ho.2 - &ho.1 * &hp.2), &hden);
-        assert_eq!(gx.to_bits(), hx.to_bits(), "#{i} x: homogeneous form differs");
-        assert_eq!(gy.to_bits(), hy.to_bits(), "#{i} y: homogeneous form differs");
+        assert_eq!(
+            gx.to_bits(),
+            hx.to_bits(),
+            "#{i} x: homogeneous form differs"
+        );
+        assert_eq!(
+            gy.to_bits(),
+            hy.to_bits(),
+            "#{i} y: homogeneous form differs"
+        );
         // Reference: exact rational subtraction, then one rounding.
         let t = p.sub(&o);
         let (rx, ry) = (rat_to_f64(&t.x), rat_to_f64(&t.y));
@@ -418,7 +440,10 @@ fn orient2d_adversarial_near_collinear() {
     let base = 12.0;
     for i in 0..32 {
         for j in 0..32 {
-            let a = Vec2::new(base + (i as f64) * 2f64.powi(-52), base + (j as f64) * 2f64.powi(-52));
+            let a = Vec2::new(
+                base + (i as f64) * 2f64.powi(-52),
+                base + (j as f64) * 2f64.powi(-52),
+            );
             let b = Vec2::new(24.0, 24.0);
             let c = Vec2::new(48.0, 48.0);
             let exact = orient2d_r(&R2::from_vec2(a), &R2::from_vec2(b), &R2::from_vec2(c));
@@ -427,7 +452,11 @@ fn orient2d_adversarial_near_collinear() {
     }
     // Exactly collinear must report Zero.
     assert_eq!(
-        orient2d(Vec2::new(0.0, 0.0), Vec2::new(1.0, 1.0), Vec2::new(3.0, 3.0)),
+        orient2d(
+            Vec2::new(0.0, 0.0),
+            Vec2::new(1.0, 1.0),
+            Vec2::new(3.0, 3.0)
+        ),
         Sign::Zero
     );
 }
@@ -436,9 +465,8 @@ fn orient2d_adversarial_near_collinear() {
 fn orient3d_matches_exact_on_random_input() {
     let mut rng = Lcg::new(7);
     for _ in 0..5000 {
-        let p = |rng: &mut Lcg| {
-            Vec3::new(rng.next_f64(50.0), rng.next_f64(50.0), rng.next_f64(50.0))
-        };
+        let p =
+            |rng: &mut Lcg| Vec3::new(rng.next_f64(50.0), rng.next_f64(50.0), rng.next_f64(50.0));
         let (a, b, c, d) = (p(&mut rng), p(&mut rng), p(&mut rng), p(&mut rng));
         let exact = orient3d_r(
             &R3::from_vec3(a),
@@ -530,9 +558,8 @@ fn filter_hit_rate_is_high_on_generic_input() {
     };
     let mut rng = Lcg::new(99);
     for _ in 0..10000 {
-        let p = |rng: &mut Lcg| {
-            Vec3::new(rng.next_f64(50.0), rng.next_f64(50.0), rng.next_f64(50.0))
-        };
+        let p =
+            |rng: &mut Lcg| Vec3::new(rng.next_f64(50.0), rng.next_f64(50.0), rng.next_f64(50.0));
         let (a, b, c, d) = (p(&mut rng), p(&mut rng), p(&mut rng), p(&mut rng));
         tally(filtered::orient3d_filter(a, b, c, d), orient3d(a, b, c, d));
         let (a2, b2, c2) = (
@@ -564,10 +591,7 @@ fn line_plane_intersect_lands_on_plane_and_segment() {
     // Exactly on the plane: orient3d of the four points is Zero.
     assert_eq!(orient3d_r(&a, &b, &c, &x), Sign::Zero);
     // Parameter is exactly 1/3.
-    assert_eq!(
-        segment_param(&p, &q, &x),
-        rat_new(1.into(), 3.into())
-    );
+    assert_eq!(segment_param(&p, &q, &x), rat_new(1.into(), 3.into()));
     // Parallel segment → None.
     let p2 = r3(0.0, 0.0, 2.0);
     let q2 = r3(1.0, 1.0, 2.0);
@@ -612,9 +636,18 @@ fn point_in_tri_2d_classifies_all_regions() {
     let b = r2(4.0, 0.0);
     let c = r2(0.0, 4.0);
     assert_eq!(point_in_tri_2d(&r2(1.0, 1.0), &a, &b, &c), TriLoc::Inside);
-    assert_eq!(point_in_tri_2d(&r2(2.0, 0.0), &a, &b, &c), TriLoc::OnEdge(0));
-    assert_eq!(point_in_tri_2d(&r2(2.0, 2.0), &a, &b, &c), TriLoc::OnEdge(1));
-    assert_eq!(point_in_tri_2d(&r2(0.0, 1.0), &a, &b, &c), TriLoc::OnEdge(2));
+    assert_eq!(
+        point_in_tri_2d(&r2(2.0, 0.0), &a, &b, &c),
+        TriLoc::OnEdge(0)
+    );
+    assert_eq!(
+        point_in_tri_2d(&r2(2.0, 2.0), &a, &b, &c),
+        TriLoc::OnEdge(1)
+    );
+    assert_eq!(
+        point_in_tri_2d(&r2(0.0, 1.0), &a, &b, &c),
+        TriLoc::OnEdge(2)
+    );
     assert_eq!(point_in_tri_2d(&a, &a, &b, &c), TriLoc::OnVertex(0));
     assert_eq!(point_in_tri_2d(&b, &a, &b, &c), TriLoc::OnVertex(1));
     assert_eq!(point_in_tri_2d(&c, &a, &b, &c), TriLoc::OnVertex(2));
@@ -622,7 +655,10 @@ fn point_in_tri_2d_classifies_all_regions() {
     assert_eq!(point_in_tri_2d(&r2(-0.1, 1.0), &a, &b, &c), TriLoc::Outside);
     // Same answers with clockwise winding.
     assert_eq!(point_in_tri_2d(&r2(1.0, 1.0), &a, &c, &b), TriLoc::Inside);
-    assert_eq!(point_in_tri_2d(&r2(2.0, 0.0), &a, &c, &b), TriLoc::OnEdge(2));
+    assert_eq!(
+        point_in_tri_2d(&r2(2.0, 0.0), &a, &c, &b),
+        TriLoc::OnEdge(2)
+    );
     // Degenerate triangle: everything is Outside.
     let d = r2(8.0, 0.0);
     assert_eq!(point_in_tri_2d(&r2(1.0, 0.0), &a, &b, &d), TriLoc::Outside);

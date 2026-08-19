@@ -179,7 +179,11 @@ pub fn build_cells_with_progress(
     }
     incident.sort_unstable();
 
-    crate::progress::begin_phase(progress, crate::progress::Phase::Cells, incident.len() as u64);
+    crate::progress::begin_phase(
+        progress,
+        crate::progress::Phase::Cells,
+        incident.len() as u64,
+    );
     let mut at = 0;
     while at < incident.len() {
         if crate::cancel::is_cancelled(token) {
@@ -315,11 +319,17 @@ const U: f64 = f64::EPSILON;
 impl Approx {
     /// A correctly rounded approximation of an exact value.
     fn input(v: f64) -> Self {
-        Approx { v, err: U * v.abs() }
+        Approx {
+            v,
+            err: U * v.abs(),
+        }
     }
     fn sub(self, o: Approx) -> Self {
         let v = self.v - o.v;
-        Approx { v, err: self.err + o.err + U * v.abs() }
+        Approx {
+            v,
+            err: self.err + o.err + U * v.abs(),
+        }
     }
     fn mul(self, o: Approx) -> Self {
         let v = self.v * o.v;
@@ -330,7 +340,10 @@ impl Approx {
     }
     fn add(self, o: Approx) -> Self {
         let v = self.v + o.v;
-        Approx { v, err: self.err + o.err + U * v.abs() }
+        Approx {
+            v,
+            err: self.err + o.err + U * v.abs(),
+        }
     }
     fn sign(self) -> Option<Sign> {
         if self.v.abs() > self.err {
@@ -377,10 +390,7 @@ fn on_axis(vt: VertTables, k0: u32, k1: u32, a: u32) -> bool {
 fn same_ray_sign(vt: VertTables, k0: u32, k1: u32, a: u32, b: u32) -> Sign {
     let ca = radial_cross_a(vt, k0, k1, a);
     let cb = radial_cross_a(vt, k0, k1, b);
-    let dot = ca[0]
-        .mul(cb[0])
-        .add(ca[1].mul(cb[1]))
-        .add(ca[2].mul(cb[2]));
+    let dot = ca[0].mul(cb[0]).add(ca[1].mul(cb[1])).add(ca[2].mul(cb[2]));
     if let Some(s) = dot.sign() {
         return s;
     }
@@ -535,7 +545,13 @@ pub fn windings(
 
 fn to_rational(tris: &[[Vec3; 3]]) -> Vec<[R3; 3]> {
     tris.iter()
-        .map(|t| [R3::from_vec3(t[0]), R3::from_vec3(t[1]), R3::from_vec3(t[2])])
+        .map(|t| {
+            [
+                R3::from_vec3(t[0]),
+                R3::from_vec3(t[1]),
+                R3::from_vec3(t[2]),
+            ]
+        })
         .collect()
 }
 
@@ -655,10 +671,7 @@ pub fn inconsistent_walls(
         if cn == ca || !wind.known[cn] || !wind.known[ca] {
             continue;
         }
-        let actual = [
-            wind.w[ca][0] - wind.w[cn][0],
-            wind.w[ca][1] - wind.w[cn][1],
-        ];
+        let actual = [wind.w[ca][0] - wind.w[cn][0], wind.w[ca][1] - wind.w[cn][1]];
         if actual != delta {
             bad.push((rep, delta, actual));
         }
@@ -728,7 +741,6 @@ fn bfs(adj: &[Vec<(usize, [i32; 2])>], out: &mut Windings, start: usize) {
         }
     }
 }
-
 
 #[cfg(test)]
 #[path = "cells_tests.rs"]

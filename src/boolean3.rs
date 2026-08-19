@@ -70,7 +70,6 @@ pub struct Boolean3 {
     pub valid: bool,
 }
 
-
 // ---------------------------------------------------------------------------
 // Boolean3 constructor
 // ---------------------------------------------------------------------------
@@ -257,12 +256,16 @@ pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
 
         let old_tri_vert = extract_tri_vert(mesh);
         let old_tri_prop = extract_tri_prop(mesh);
-        tri_vert.extend(old_tri_vert.into_iter().map(|t| {
-            IVec3::new(t.x + vert_offset, t.y + vert_offset, t.z + vert_offset)
-        }));
-        tri_prop.extend(old_tri_prop.into_iter().map(|t| {
-            IVec3::new(t.x + prop_offset, t.y + prop_offset, t.z + prop_offset)
-        }));
+        tri_vert.extend(
+            old_tri_vert
+                .into_iter()
+                .map(|t| IVec3::new(t.x + vert_offset, t.y + vert_offset, t.z + vert_offset)),
+        );
+        tri_prop.extend(
+            old_tri_prop
+                .into_iter()
+                .map(|t| IVec3::new(t.x + prop_offset, t.y + prop_offset, t.z + prop_offset)),
+        );
 
         if num_prop > 0 {
             let prop_rows = mesh.num_prop_vert();
@@ -489,9 +492,7 @@ pub fn boolean_dispatch_full(
             crate::progress::begin_phase(progress, crate::progress::Phase::ExactBoolean, 0);
             boolean_with_token(mesh_a, mesh_b, op, token)
         }
-        E::Robust => {
-            crate::robust::boolean_with_rule(mesh_a, mesh_b, op, rule, token, progress)
-        }
+        E::Robust => crate::robust::boolean_with_rule(mesh_a, mesh_b, op, rule, token, progress),
     }
 }
 
@@ -524,8 +525,18 @@ pub fn ray_cast(mesh: &ManifoldImpl, origin: Vec3, endpoint: Vec3) -> Vec<RayHit
     ray_impl.vert_pos = vec![origin, endpoint];
     ray_impl.vert_normal = vec![Vec3::splat(0.0), Vec3::splat(0.0)];
     ray_impl.halfedge = vec![
-        Halfedge { start_vert: 0, end_vert: 1, paired_halfedge: 1, prop_vert: 0 },
-        Halfedge { start_vert: 1, end_vert: 0, paired_halfedge: 0, prop_vert: 0 },
+        Halfedge {
+            start_vert: 0,
+            end_vert: 1,
+            paired_halfedge: 1,
+            prop_vert: 0,
+        },
+        Halfedge {
+            start_vert: 1,
+            end_vert: 0,
+            paired_halfedge: 0,
+            prop_vert: 0,
+        },
     ];
     ray_impl.face_normal = vec![Vec3::splat(0.0)];
 
@@ -534,8 +545,16 @@ pub fn ray_cast(mesh: &ManifoldImpl, origin: Vec3, endpoint: Vec3) -> Vec<RayHit
 
     // Ray AABB for BVH query.
     let ray_box = BBox::from_points(
-        Vec3::new(origin.x.min(endpoint.x), origin.y.min(endpoint.y), origin.z.min(endpoint.z)),
-        Vec3::new(origin.x.max(endpoint.x), origin.y.max(endpoint.y), origin.z.max(endpoint.z)),
+        Vec3::new(
+            origin.x.min(endpoint.x),
+            origin.y.min(endpoint.y),
+            origin.z.min(endpoint.z),
+        ),
+        Vec3::new(
+            origin.x.max(endpoint.x),
+            origin.y.max(endpoint.y),
+            origin.z.max(endpoint.z),
+        ),
     );
 
     // Determine which component axis is largest for stable t computation.
@@ -571,7 +590,11 @@ pub fn ray_cast(mesh: &ManifoldImpl, origin: Vec3, endpoint: Vec3) -> Vec<RayHit
         }
     });
 
-    hits.sort_by(|a, b| a.distance.partial_cmp(&b.distance).unwrap_or(std::cmp::Ordering::Equal));
+    hits.sort_by(|a, b| {
+        a.distance
+            .partial_cmp(&b.distance)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     hits
 }
 

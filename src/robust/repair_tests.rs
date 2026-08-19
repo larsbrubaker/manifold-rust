@@ -55,9 +55,7 @@ fn mesh_from_tris(tris: &[[Vec3; 3]]) -> Manifold {
 fn signed_volume(m: &Manifold) -> f64 {
     let tris = crate::robust::soup::impl_to_tris(m.as_impl());
     tris.iter()
-        .map(|t| {
-            crate::linalg::dot(t[0], crate::linalg::cross(t[1], t[2])) / 6.0
-        })
+        .map(|t| crate::linalg::dot(t[0], crate::linalg::cross(t[1], t[2])) / 6.0)
         .sum()
 }
 
@@ -196,8 +194,7 @@ fn manifold_repair_preserves_cavity_and_pairing() {
     assert!(!repaired.as_impl().is_soup);
     assert!(repaired.as_impl().is_manifold());
     // And it must boolean correctly as a standalone repaired solid.
-    let probe = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false)
-        .translate(Vec3::new(2.5, 2.5, 2.5));
+    let probe = Manifold::cube(Vec3::new(1.0, 1.0, 1.0), false).translate(Vec3::new(2.5, 2.5, 2.5));
     let inter = repaired.intersection_with_engine(&probe, crate::types::BooleanEngine::Robust);
     assert!(
         inter.volume() < 1e-9,
@@ -215,7 +212,10 @@ fn repair_is_available_before_any_boolean_and_fixes_union() {
     let engine = crate::types::BooleanEngine::Robust;
     let broken = a.union_with_engine(&b, engine);
     let fixed = a.union_with_engine(&b.repair_orientation(), engine);
-    assert!((broken.volume() - 8.0).abs() < 1e-9, "inverted B adds nothing");
+    assert!(
+        (broken.volume() - 8.0).abs() < 1e-9,
+        "inverted B adds nothing"
+    );
     assert!(
         (fixed.volume() - 15.0).abs() < 1e-9,
         "8 + 8 - 1 overlap = 15, got {}",

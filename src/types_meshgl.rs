@@ -26,14 +26,22 @@ pub trait MeshPrecision: Copy + Default {
 
 impl MeshPrecision for f32 {
     const IS_SINGLE: bool = true;
-    fn to_f64(self) -> f64 { self as f64 }
-    fn from_f64(v: f64) -> Self { v as f32 }
+    fn to_f64(self) -> f64 {
+        self as f64
+    }
+    fn from_f64(v: f64) -> Self {
+        v as f32
+    }
 }
 
 impl MeshPrecision for f64 {
     const IS_SINGLE: bool = false;
-    fn to_f64(self) -> f64 { self }
-    fn from_f64(v: f64) -> Self { v }
+    fn to_f64(self) -> f64 {
+        self
+    }
+    fn from_f64(v: f64) -> Self {
+        v
+    }
 }
 
 /// Index parameter of a [`MeshGLP`] (`u32` or `u64`), mirroring the `I`
@@ -50,15 +58,27 @@ pub trait MeshIndex: Copy + Default {
 }
 
 impl MeshIndex for u32 {
-    fn to_u64(self) -> u64 { self as u64 }
-    fn from_usize(v: usize) -> Self { v as u32 }
-    fn from_i32(v: i32) -> Self { v as u32 }
+    fn to_u64(self) -> u64 {
+        self as u64
+    }
+    fn from_usize(v: usize) -> Self {
+        v as u32
+    }
+    fn from_i32(v: i32) -> Self {
+        v as u32
+    }
 }
 
 impl MeshIndex for u64 {
-    fn to_u64(self) -> u64 { self }
-    fn from_usize(v: usize) -> Self { v as u64 }
-    fn from_i32(v: i32) -> Self { v as i64 as u64 }
+    fn to_u64(self) -> u64 {
+        self
+    }
+    fn from_usize(v: usize) -> Self {
+        v as u64
+    }
+    fn from_i32(v: i32) -> Self {
+        v as i64 as u64
+    }
 }
 
 /// GL-style mesh representation. Generic over precision (f32/f64) and index type (u32/u64).
@@ -105,12 +125,20 @@ impl<P: MeshPrecision, I: MeshIndex> MeshGLP<P, I> {
 
     pub fn get_vert_pos(&self, v: usize) -> [P; 3] {
         let offset = v * self.num_prop.to_u64() as usize;
-        [self.vert_properties[offset], self.vert_properties[offset + 1], self.vert_properties[offset + 2]]
+        [
+            self.vert_properties[offset],
+            self.vert_properties[offset + 1],
+            self.vert_properties[offset + 2],
+        ]
     }
 
     pub fn get_tri_verts(&self, t: usize) -> [I; 3] {
         let offset = 3 * t;
-        [self.tri_verts[offset], self.tri_verts[offset + 1], self.tri_verts[offset + 2]]
+        [
+            self.tri_verts[offset],
+            self.tri_verts[offset + 1],
+            self.tri_verts[offset + 2],
+        ]
     }
 
     pub fn get_tangent(&self, h: usize) -> [P; 4] {
@@ -186,10 +214,7 @@ impl MeshGLP<f32, u32> {
             bbox.union_point(p);
         }
 
-        let tolerance = f64::max(
-            self.tolerance as f64,
-            f32::EPSILON as f64 * bbox.scale(),
-        );
+        let tolerance = f64::max(self.tolerance as f64, f32::EPSILON as f64 * bbox.scale());
 
         // Build BVH boxes and morton codes for open vertices
         let mut vert_box: Vec<Box> = Vec::with_capacity(num_open);
@@ -276,14 +301,20 @@ impl MeshGLP<f32, u32> {
             let has_transform = offset + 12 <= self.run_transform.len();
 
             // Extract mat3 (upper-left 3x3 of the 3x4 transform)
-            let (m00, m01, m02,
-                 m10, m11, m12,
-                 m20, m21, m22) = if has_transform {
+            let (m00, m01, m02, m10, m11, m12, m20, m21, m22) = if has_transform {
                 let t = &self.run_transform[offset..offset + 12];
                 // Column-major: col0=[t0,t1,t2], col1=[t3,t4,t5], col2=[t6,t7,t8]
-                (t[0] as f64, t[3] as f64, t[6] as f64,
-                 t[1] as f64, t[4] as f64, t[7] as f64,
-                 t[2] as f64, t[5] as f64, t[8] as f64)
+                (
+                    t[0] as f64,
+                    t[3] as f64,
+                    t[6] as f64,
+                    t[1] as f64,
+                    t[4] as f64,
+                    t[7] as f64,
+                    t[2] as f64,
+                    t[5] as f64,
+                    t[8] as f64,
+                )
             } else {
                 (1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
             };
@@ -292,44 +323,55 @@ impl MeshGLP<f32, u32> {
             // For a rotation matrix R: (R^T)^{-1} = R itself.
             // For a general transform with scale s: det = s^3, inv_trans = M / s^2.
             // We compute full adjugate/determinant to match C++ la::inverse(la::transpose(M)).
-            let det = m00*(m11*m22 - m12*m21) - m01*(m10*m22 - m12*m20) + m02*(m10*m21 - m11*m20);
+            let det = m00 * (m11 * m22 - m12 * m21) - m01 * (m10 * m22 - m12 * m20)
+                + m02 * (m10 * m21 - m11 * m20);
             let (n00, n01, n02, n10, n11, n12, n20, n21, n22) = if det.abs() < 1e-30 {
                 (1.0f64, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0)
             } else {
                 let inv = 1.0 / det;
                 // Adjugate of transpose(M) = transpose of adjugate(M)
-                let a00 = (m11*m22 - m12*m21) * inv;
-                let a01 = (m02*m21 - m01*m22) * inv;
-                let a02 = (m01*m12 - m02*m11) * inv;
-                let a10 = (m12*m20 - m10*m22) * inv;
-                let a11 = (m00*m22 - m02*m20) * inv;
-                let a12 = (m02*m10 - m00*m12) * inv;
-                let a20 = (m10*m21 - m11*m20) * inv;
-                let a21 = (m01*m20 - m00*m21) * inv;
-                let a22 = (m00*m11 - m01*m10) * inv;
+                let a00 = (m11 * m22 - m12 * m21) * inv;
+                let a01 = (m02 * m21 - m01 * m22) * inv;
+                let a02 = (m01 * m12 - m02 * m11) * inv;
+                let a10 = (m12 * m20 - m10 * m22) * inv;
+                let a11 = (m00 * m22 - m02 * m20) * inv;
+                let a12 = (m02 * m10 - m00 * m12) * inv;
+                let a20 = (m10 * m21 - m11 * m20) * inv;
+                let a21 = (m01 * m20 - m00 * m21) * inv;
+                let a22 = (m00 * m11 - m01 * m10) * inv;
                 (a00, a01, a02, a10, a11, a12, a20, a21, a22)
             };
 
             let sign = if self.backside(run) { -1.0f64 } else { 1.0 };
 
             // Determine run's vertex range
-            let start = if run < self.run_index.len() { self.run_index[run] as usize } else { 0 };
-            let end = if run + 1 < self.run_index.len() { self.run_index[run + 1] as usize } else { self.tri_verts.len() };
+            let start = if run < self.run_index.len() {
+                self.run_index[run] as usize
+            } else {
+                0
+            };
+            let end = if run + 1 < self.run_index.len() {
+                self.run_index[run + 1] as usize
+            } else {
+                self.tri_verts.len()
+            };
 
             for idx in (start..end).step_by(1) {
                 let vert = self.tri_verts[idx] as usize;
-                if vert >= num_vert || vert_updated[vert] { continue; }
+                if vert >= num_vert || vert_updated[vert] {
+                    continue;
+                }
                 vert_updated[vert] = true;
                 let prop_start = vert * np + normal_idx;
                 let nx = self.vert_properties[prop_start] as f64;
                 let ny = self.vert_properties[prop_start + 1] as f64;
                 let nz = self.vert_properties[prop_start + 2] as f64;
                 // Apply normal transform
-                let tx = n00*nx + n01*ny + n02*nz;
-                let ty = n10*nx + n11*ny + n12*nz;
-                let tz = n20*nx + n21*ny + n22*nz;
+                let tx = n00 * nx + n01 * ny + n02 * nz;
+                let ty = n10 * nx + n11 * ny + n12 * nz;
+                let tz = n20 * nx + n21 * ny + n22 * nz;
                 // SafeNormalize
-                let len = (tx*tx + ty*ty + tz*tz).sqrt();
+                let len = (tx * tx + ty * ty + tz * tz).sqrt();
                 let (tx, ty, tz) = if len > 0.0 {
                     (sign * tx / len, sign * ty / len, sign * tz / len)
                 } else {

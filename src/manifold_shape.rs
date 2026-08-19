@@ -8,16 +8,18 @@
 // static constructors of C++ Manifold (constructors.cpp, sdf.cpp,
 // quickhull.cpp, minkowski.cpp).
 
+use super::Manifold;
 use crate::constructors;
 use crate::cross_section::CrossSection;
 use crate::impl_mesh::ManifoldImpl;
-use crate::linalg::{mat4_to_mat3x4, normalize, scaling_matrix, translation_matrix, Mat3x4, Vec2, Vec3};
+use crate::linalg::{
+    mat4_to_mat3x4, normalize, scaling_matrix, translation_matrix, Mat3x4, Vec2, Vec3,
+};
 use crate::math;
 use crate::minkowski;
 use crate::quickhull;
 use crate::sdf;
 use crate::types::{Error, Polygons};
-use super::Manifold;
 
 impl Manifold {
     pub fn tetrahedron() -> Self {
@@ -25,9 +27,7 @@ impl Manifold {
     }
 
     pub fn cube(size: Vec3, center: bool) -> Self {
-        if size.x < 0.0 || size.y < 0.0 || size.z < 0.0
-            || crate::linalg::length(size) == 0.0
-        {
+        if size.x < 0.0 || size.y < 0.0 || size.z < 0.0 || crate::linalg::length(size) == 0.0 {
             return Self::make_empty(crate::types::Error::InvalidConstruction);
         }
         let translation = if center {
@@ -39,11 +39,22 @@ impl Manifold {
         Self::from_impl(ManifoldImpl::cube(&transform))
     }
 
-    pub fn cylinder(height: f64, radius_low: f64, radius_high: f64, circular_segments: i32) -> Self {
+    pub fn cylinder(
+        height: f64,
+        radius_low: f64,
+        radius_high: f64,
+        circular_segments: i32,
+    ) -> Self {
         Self::cylinder_centered(height, radius_low, radius_high, circular_segments, false)
     }
 
-    pub fn cylinder_centered(height: f64, radius_low: f64, radius_high: f64, circular_segments: i32, center: bool) -> Self {
+    pub fn cylinder_centered(
+        height: f64,
+        radius_low: f64,
+        radius_high: f64,
+        circular_segments: i32,
+        center: bool,
+    ) -> Self {
         if height <= 0.0 || radius_low < 0.0 {
             return Self::make_empty(crate::types::Error::InvalidConstruction);
         }
@@ -92,7 +103,11 @@ impl Manifold {
                 math::cos(K_HALF_PI * (1.0 - v.z)),
             );
             let n = normalize(mapped);
-            *v = if n.x.is_nan() { Vec3::splat(0.0) } else { Vec3::new(n.x * radius, n.y * radius, n.z * radius) };
+            *v = if n.x.is_nan() {
+                Vec3::splat(0.0)
+            } else {
+                Vec3::new(n.x * radius, n.y * radius, n.z * radius)
+            };
         }
 
         // Rebuild mesh metadata after vertex positions changed
@@ -104,25 +119,50 @@ impl Manifold {
         Self::from_impl(mesh)
     }
 
-    pub fn extrude(cross_section: &Polygons, height: f64, n_divisions: i32, twist_degrees: f64, scale_top: Vec2) -> Self {
+    pub fn extrude(
+        cross_section: &Polygons,
+        height: f64,
+        n_divisions: i32,
+        twist_degrees: f64,
+        scale_top: Vec2,
+    ) -> Self {
         if cross_section.is_empty() || height <= 0.0 {
             return Self::make_empty(crate::types::Error::InvalidConstruction);
         }
-        Self::from_impl(constructors::extrude(cross_section, height, n_divisions, twist_degrees, scale_top))
+        Self::from_impl(constructors::extrude(
+            cross_section,
+            height,
+            n_divisions,
+            twist_degrees,
+            scale_top,
+        ))
     }
 
     pub fn revolve(cross_section: &Polygons, circular_segments: i32, revolve_degrees: f64) -> Self {
         if cross_section.is_empty() {
             return Self::make_empty(crate::types::Error::InvalidConstruction);
         }
-        Self::from_impl(constructors::revolve(cross_section, circular_segments, revolve_degrees))
+        Self::from_impl(constructors::revolve(
+            cross_section,
+            circular_segments,
+            revolve_degrees,
+        ))
     }
 
-    pub fn level_set<F: Fn(Vec3) -> f64 + Sync>(sdf_fn: F, bounds: crate::types::Box, edge_length: f64) -> Self {
+    pub fn level_set<F: Fn(Vec3) -> f64 + Sync>(
+        sdf_fn: F,
+        bounds: crate::types::Box,
+        edge_length: f64,
+    ) -> Self {
         Self::from_impl(sdf::level_set(sdf_fn, bounds, edge_length, 0.0, -1.0))
     }
 
-    pub fn level_set_with_level<F: Fn(Vec3) -> f64 + Sync>(sdf_fn: F, bounds: crate::types::Box, edge_length: f64, level: f64) -> Self {
+    pub fn level_set_with_level<F: Fn(Vec3) -> f64 + Sync>(
+        sdf_fn: F,
+        bounds: crate::types::Box,
+        edge_length: f64,
+        level: f64,
+    ) -> Self {
         Self::from_impl(sdf::level_set(sdf_fn, bounds, edge_length, level, -1.0))
     }
 
@@ -136,7 +176,13 @@ impl Manifold {
         level: f64,
         tolerance: f64,
     ) -> Self {
-        Self::from_impl(sdf::level_set(sdf_fn, bounds, edge_length, level, tolerance))
+        Self::from_impl(sdf::level_set(
+            sdf_fn,
+            bounds,
+            edge_length,
+            level,
+            tolerance,
+        ))
     }
 
     pub fn hull(points: &[Vec3]) -> Self {
@@ -145,7 +191,9 @@ impl Manifold {
 
     /// Compute the convex hull of this manifold's vertices.
     pub fn convex_hull(&self) -> Self {
-        if self.is_empty() { return self.clone(); }
+        if self.is_empty() {
+            return self.clone();
+        }
         Self::from_impl(quickhull::convex_hull(&self.imp.vert_pos))
     }
 
@@ -166,19 +214,35 @@ impl Manifold {
     }
 
     pub fn minkowski_sum(&self, other: &Self) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
-        if let Some(e) = other.require_paired() { return e; }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
+        if let Some(e) = other.require_paired() {
+            return e;
+        }
         // Per C++ #1659: propagate errored input status before computing.
-        if self.imp.status != Error::NoError { return self.clone(); }
-        if other.imp.status != Error::NoError { return other.clone(); }
+        if self.imp.status != Error::NoError {
+            return self.clone();
+        }
+        if other.imp.status != Error::NoError {
+            return other.clone();
+        }
         Self::from_impl(minkowski::minkowski_sum(&self.imp, &other.imp))
     }
 
     pub fn minkowski_difference(&self, other: &Self) -> Self {
-        if let Some(e) = self.require_paired() { return e; }
-        if let Some(e) = other.require_paired() { return e; }
-        if self.imp.status != Error::NoError { return self.clone(); }
-        if other.imp.status != Error::NoError { return other.clone(); }
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
+        if let Some(e) = other.require_paired() {
+            return e;
+        }
+        if self.imp.status != Error::NoError {
+            return self.clone();
+        }
+        if other.imp.status != Error::NoError {
+            return other.clone();
+        }
         Self::from_impl(minkowski::minkowski_difference(&self.imp, &other.imp))
     }
 

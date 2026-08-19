@@ -90,7 +90,10 @@ fn pre_cancelled_token_yields_a_handle_with_the_cancelled_status() {
     let result = unsafe { manifold_rs_batch_boolean_ct(inputs.as_ptr(), inputs.len(), 0, t) };
     // NOT NULL: a caller must be able to tell cancellation from a panic or a
     // bad argument, both of which are NULL.
-    assert!(!result.is_null(), "cancellation must not look like a failure");
+    assert!(
+        !result.is_null(),
+        "cancellation must not look like a failure"
+    );
     assert_eq!(unsafe { manifold_rs_status(result) }, CANCELLED);
     assert!(export(result).tri_verts.is_empty());
 

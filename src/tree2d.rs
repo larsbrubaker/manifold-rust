@@ -18,9 +18,19 @@ use crate::types::{PolyVert, Rect};
 
 fn build_two_d_tree_impl(points: &mut [PolyVert], sort_x: bool) {
     if sort_x {
-        points.sort_by(|a, b| a.pos.x.partial_cmp(&b.pos.x).unwrap_or(std::cmp::Ordering::Equal));
+        points.sort_by(|a, b| {
+            a.pos
+                .x
+                .partial_cmp(&b.pos.x)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     } else {
-        points.sort_by(|a, b| a.pos.y.partial_cmp(&b.pos.y).unwrap_or(std::cmp::Ordering::Equal));
+        points.sort_by(|a, b| {
+            a.pos
+                .y
+                .partial_cmp(&b.pos.y)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
     }
     if points.len() < 2 {
         return;
@@ -126,15 +136,42 @@ mod tests {
     #[test]
     fn test_build_two_d_tree_and_query() {
         let mut points = vec![
-            PolyVert { pos: Vec2::new(0.0, 0.0), idx: 0 },
-            PolyVert { pos: Vec2::new(1.0, 1.0), idx: 1 },
-            PolyVert { pos: Vec2::new(2.0, 2.0), idx: 2 },
-            PolyVert { pos: Vec2::new(3.0, 3.0), idx: 3 },
-            PolyVert { pos: Vec2::new(4.0, 4.0), idx: 4 },
-            PolyVert { pos: Vec2::new(5.0, 5.0), idx: 5 },
-            PolyVert { pos: Vec2::new(6.0, 6.0), idx: 6 },
-            PolyVert { pos: Vec2::new(7.0, 7.0), idx: 7 },
-            PolyVert { pos: Vec2::new(8.0, 8.0), idx: 8 },
+            PolyVert {
+                pos: Vec2::new(0.0, 0.0),
+                idx: 0,
+            },
+            PolyVert {
+                pos: Vec2::new(1.0, 1.0),
+                idx: 1,
+            },
+            PolyVert {
+                pos: Vec2::new(2.0, 2.0),
+                idx: 2,
+            },
+            PolyVert {
+                pos: Vec2::new(3.0, 3.0),
+                idx: 3,
+            },
+            PolyVert {
+                pos: Vec2::new(4.0, 4.0),
+                idx: 4,
+            },
+            PolyVert {
+                pos: Vec2::new(5.0, 5.0),
+                idx: 5,
+            },
+            PolyVert {
+                pos: Vec2::new(6.0, 6.0),
+                idx: 6,
+            },
+            PolyVert {
+                pos: Vec2::new(7.0, 7.0),
+                idx: 7,
+            },
+            PolyVert {
+                pos: Vec2::new(8.0, 8.0),
+                idx: 8,
+            },
         ];
         build_two_d_tree(&mut points);
         let rect = Rect::from_points(Vec2::new(1.5, 1.5), Vec2::new(6.5, 6.5));
@@ -147,8 +184,14 @@ mod tests {
     #[test]
     fn test_query_two_d_tree_small_input() {
         let points = vec![
-            PolyVert { pos: Vec2::new(0.0, 0.0), idx: 0 },
-            PolyVert { pos: Vec2::new(2.0, 2.0), idx: 1 },
+            PolyVert {
+                pos: Vec2::new(0.0, 0.0),
+                idx: 0,
+            },
+            PolyVert {
+                pos: Vec2::new(2.0, 2.0),
+                idx: 1,
+            },
         ];
         let rect = Rect::from_points(Vec2::new(-1.0, -1.0), Vec2::new(1.0, 1.0));
         let mut out = Vec::new();

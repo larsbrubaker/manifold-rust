@@ -54,8 +54,12 @@ fn test_cpp_complex_offset_triangulation_failure() {
     let a = read_test_obj("Offset1.obj");
     let b = read_test_obj("Offset2.obj");
     let result = a.union(&b);
-    assert_eq!(result.status(), Error::NoError,
-        "OffsetTriangulationFailure: status {:?}", result.status());
+    assert_eq!(
+        result.status(),
+        Error::NoError,
+        "OffsetTriangulationFailure: status {:?}",
+        result.status()
+    );
 }
 
 /// C++ TEST(BooleanComplex, OffsetSelfIntersect)
@@ -64,27 +68,24 @@ fn test_cpp_complex_offset_self_intersect() {
     let a = read_test_obj("Offset3.obj");
     let b = read_test_obj("Offset4.obj");
     let result = a.union(&b);
-    assert_eq!(result.status(), Error::NoError,
-        "OffsetSelfIntersect: status {:?}", result.status());
+    assert_eq!(
+        result.status(),
+        Error::NoError,
+        "OffsetSelfIntersect: status {:?}",
+        result.status()
+    );
 }
 
 /// C++ TEST(BooleanComplex, Subtract) — specific mesh subtract
 #[test]
 fn test_cpp_complex_subtract() {
     let first_verts: Vec<f32> = vec![
-        0.0,    0.0,  0.0,
-        1540.0, 0.0,  0.0,
-        1540.0, 70.0, 0.0,
-        0.0,    70.0, 0.0,
-        0.0,    0.0,  -278.282,
-        1540.0, 70.0, -278.282,
-        1540.0, 0.0,  -278.282,
-        0.0,    70.0, -278.282,
+        0.0, 0.0, 0.0, 1540.0, 0.0, 0.0, 1540.0, 70.0, 0.0, 0.0, 70.0, 0.0, 0.0, 0.0, -278.282,
+        1540.0, 70.0, -278.282, 1540.0, 0.0, -278.282, 0.0, 70.0, -278.282,
     ];
     let first_tris: Vec<u32> = vec![
-        0, 1, 2,  2, 3, 0,  4, 5, 6,  5, 4, 7,
-        6, 2, 1,  6, 5, 2,  5, 3, 2,  5, 7, 3,
-        7, 0, 3,  7, 4, 0,  4, 1, 0,  4, 6, 1,
+        0, 1, 2, 2, 3, 0, 4, 5, 6, 5, 4, 7, 6, 2, 1, 6, 5, 2, 5, 3, 2, 5, 7, 3, 7, 0, 3, 7, 4, 0,
+        4, 1, 0, 4, 6, 1,
     ];
 
     let mut first_mesh = MeshGL::default();
@@ -93,19 +94,34 @@ fn test_cpp_complex_subtract() {
     first_mesh.tri_verts = first_tris;
 
     let second_verts: Vec<f32> = vec![
-        2.04636e-12, 70.0,           50000.0,
-        2.04636e-12, -1.27898e-13,   50000.0,
-        1470.0,      -1.27898e-13,   50000.0,
-        1540.0,      70.0,           50000.0,
-        2.04636e-12, 70.0,           -28.2818,
-        1470.0,      -1.27898e-13,   0.0,
-        2.04636e-12, -1.27898e-13,   0.0,
-        1540.0,      70.0,           -28.2818,
+        2.04636e-12,
+        70.0,
+        50000.0,
+        2.04636e-12,
+        -1.27898e-13,
+        50000.0,
+        1470.0,
+        -1.27898e-13,
+        50000.0,
+        1540.0,
+        70.0,
+        50000.0,
+        2.04636e-12,
+        70.0,
+        -28.2818,
+        1470.0,
+        -1.27898e-13,
+        0.0,
+        2.04636e-12,
+        -1.27898e-13,
+        0.0,
+        1540.0,
+        70.0,
+        -28.2818,
     ];
     let second_tris: Vec<u32> = vec![
-        0, 1, 2,  2, 3, 0,  4, 5, 6,  5, 4, 7,
-        6, 2, 1,  6, 5, 2,  5, 3, 2,  5, 7, 3,
-        7, 0, 3,  7, 4, 0,  4, 1, 0,  4, 6, 1,
+        0, 1, 2, 2, 3, 0, 4, 5, 6, 5, 4, 7, 6, 2, 1, 6, 5, 2, 5, 3, 2, 5, 7, 3, 7, 0, 3, 7, 4, 0,
+        4, 1, 0, 4, 6, 1,
     ];
 
     let mut second_mesh = MeshGL::default();
@@ -126,25 +142,25 @@ fn test_cpp_complex_subtract() {
 fn test_cpp_complex_cylinders() {
     let rod = Manifold::cylinder(1.0, 0.4, -1.0, 12);
     let arrays1: Vec<[f64; 12]> = vec![
-        [0.0, 0.0, 1.0, 3.0,  -1.0, 0.0, 0.0, 3.0,  0.0, -1.0, 0.0, 6.0],
-        [0.0, 0.0, 1.0, 2.0,  -1.0, 0.0, 0.0, 3.0,  0.0, -1.0, 0.0, 8.0],
-        [0.0, 0.0, 1.0, 1.0,  -1.0, 0.0, 0.0, 2.0,  0.0, -1.0, 0.0, 7.0],
-        [1.0, 0.0, 0.0, 3.0,   0.0, 1.0, 0.0, 2.0,  0.0, 0.0, 1.0, 6.0],
-        [0.0, 0.0, 1.0, 3.0,  -1.0, 0.0, 0.0, 3.0,  0.0, -1.0, 0.0, 7.0],
-        [0.0, 0.0, 1.0, 1.0,  -1.0, 0.0, 0.0, 3.0,  0.0, -1.0, 0.0, 7.0],
-        [1.0, 0.0, 0.0, 3.0,   0.0, 0.0, 1.0, 4.0,  0.0, -1.0, 0.0, 6.0],
-        [1.0, 0.0, 0.0, 4.0,   0.0, 0.0, 1.0, 4.0,  0.0, -1.0, 0.0, 6.0],
+        [0.0, 0.0, 1.0, 3.0, -1.0, 0.0, 0.0, 3.0, 0.0, -1.0, 0.0, 6.0],
+        [0.0, 0.0, 1.0, 2.0, -1.0, 0.0, 0.0, 3.0, 0.0, -1.0, 0.0, 8.0],
+        [0.0, 0.0, 1.0, 1.0, -1.0, 0.0, 0.0, 2.0, 0.0, -1.0, 0.0, 7.0],
+        [1.0, 0.0, 0.0, 3.0, 0.0, 1.0, 0.0, 2.0, 0.0, 0.0, 1.0, 6.0],
+        [0.0, 0.0, 1.0, 3.0, -1.0, 0.0, 0.0, 3.0, 0.0, -1.0, 0.0, 7.0],
+        [0.0, 0.0, 1.0, 1.0, -1.0, 0.0, 0.0, 3.0, 0.0, -1.0, 0.0, 7.0],
+        [1.0, 0.0, 0.0, 3.0, 0.0, 0.0, 1.0, 4.0, 0.0, -1.0, 0.0, 6.0],
+        [1.0, 0.0, 0.0, 4.0, 0.0, 0.0, 1.0, 4.0, 0.0, -1.0, 0.0, 6.0],
     ];
     let arrays2: Vec<[f64; 12]> = vec![
-        [1.0, 0.0, 0.0, 3.0,   0.0, 0.0, 1.0, 2.0,  0.0, -1.0, 0.0, 6.0],
-        [1.0, 0.0, 0.0, 4.0,   0.0, 1.0, 0.0, 3.0,  0.0, 0.0, 1.0, 6.0],
-        [0.0, 0.0, 1.0, 2.0,  -1.0, 0.0, 0.0, 2.0,  0.0, -1.0, 0.0, 7.0],
-        [1.0, 0.0, 0.0, 3.0,   0.0, 1.0, 0.0, 3.0,  0.0, 0.0, 1.0, 7.0],
-        [1.0, 0.0, 0.0, 2.0,   0.0, 1.0, 0.0, 3.0,  0.0, 0.0, 1.0, 7.0],
-        [1.0, 0.0, 0.0, 1.0,   0.0, 1.0, 0.0, 3.0,  0.0, 0.0, 1.0, 7.0],
-        [1.0, 0.0, 0.0, 3.0,   0.0, 1.0, 0.0, 4.0,  0.0, 0.0, 1.0, 7.0],
-        [1.0, 0.0, 0.0, 3.0,   0.0, 1.0, 0.0, 5.0,  0.0, 0.0, 1.0, 6.0],
-        [0.0, 0.0, 1.0, 3.0,  -1.0, 0.0, 0.0, 4.0,  0.0, -1.0, 0.0, 6.0],
+        [1.0, 0.0, 0.0, 3.0, 0.0, 0.0, 1.0, 2.0, 0.0, -1.0, 0.0, 6.0],
+        [1.0, 0.0, 0.0, 4.0, 0.0, 1.0, 0.0, 3.0, 0.0, 0.0, 1.0, 6.0],
+        [0.0, 0.0, 1.0, 2.0, -1.0, 0.0, 0.0, 2.0, 0.0, -1.0, 0.0, 7.0],
+        [1.0, 0.0, 0.0, 3.0, 0.0, 1.0, 0.0, 3.0, 0.0, 0.0, 1.0, 7.0],
+        [1.0, 0.0, 0.0, 2.0, 0.0, 1.0, 0.0, 3.0, 0.0, 0.0, 1.0, 7.0],
+        [1.0, 0.0, 0.0, 1.0, 0.0, 1.0, 0.0, 3.0, 0.0, 0.0, 1.0, 7.0],
+        [1.0, 0.0, 0.0, 3.0, 0.0, 1.0, 0.0, 4.0, 0.0, 0.0, 1.0, 7.0],
+        [1.0, 0.0, 0.0, 3.0, 0.0, 1.0, 0.0, 5.0, 0.0, 0.0, 1.0, 6.0],
+        [0.0, 0.0, 1.0, 3.0, -1.0, 0.0, 0.0, 4.0, 0.0, -1.0, 0.0, 6.0],
     ];
 
     let make_mat = |array: &[f64; 12]| -> Mat3x4 {
@@ -172,9 +188,15 @@ fn test_cpp_complex_cylinders() {
     }
     m1 = m1.union(&m2);
 
-    assert!(m1.matches_tri_normals(), "Cylinders: should match tri normals");
-    assert!(m1.num_degenerate_tris() <= 12,
-        "Cylinders: {} degenerate tris, expected <= 12", m1.num_degenerate_tris());
+    assert!(
+        m1.matches_tri_normals(),
+        "Cylinders: should match tri normals"
+    );
+    assert!(
+        m1.num_degenerate_tris() <= 12,
+        "Cylinders: {} degenerate tris, expected <= 12",
+        m1.num_degenerate_tris()
+    );
 }
 
 /// C++ TEST(BooleanComplex, Close) — intersecting near-coincident spheres
@@ -194,11 +216,15 @@ fn test_cpp_complex_close() {
     let tol = 0.004;
     assert!(
         (result.volume() - (4.0 / 3.0) * pi * r * r * r).abs() < tol * r * r * r,
-        "Close volume: {} expected ~{}", result.volume(), (4.0 / 3.0) * pi * r * r * r
+        "Close volume: {} expected ~{}",
+        result.volume(),
+        (4.0 / 3.0) * pi * r * r * r
     );
     assert!(
         (result.surface_area() - 4.0 * pi * r * r).abs() < tol * r * r,
-        "Close area: {} expected ~{}", result.surface_area(), 4.0 * pi * r * r
+        "Close area: {} expected ~{}",
+        result.surface_area(),
+        4.0 * pi * r * r
     );
 }
 
@@ -212,20 +238,23 @@ fn test_cpp_complex_lazy_collider() {
     let ele4 = ele1.union(&ele2).mirror(Vec3::new(0.0, 0.0, 1.0));
     assert!(
         (ele4.volume() - 418839.0).abs() < 2.0,
-        "LazyCollider ele4 volume: {} expected ~418839", ele4.volume()
+        "LazyCollider ele4 volume: {} expected ~418839",
+        ele4.volume()
     );
 
     let r1 = ele4.difference(&ele2.translate(Vec3::new(0.0, 0.0, -20.0)));
     assert!(
         (r1.volume() - 362577.0).abs() < 2.0,
-        "LazyCollider r1 volume: {} expected ~362577", r1.volume()
+        "LazyCollider r1 volume: {} expected ~362577",
+        r1.volume()
     );
 
     let ele3 = Manifold::cylinder(60.0, 40.0, -1.0, 0).mirror(Vec3::new(0.0, 0.0, 1.0));
     let r2 = ele4.translate(Vec3::new(0.0, 0.0, 1.0)).difference(&ele3);
     assert!(
         (r2.volume() - 145656.0).abs() < 2.0,
-        "LazyCollider r2 volume: {} expected ~145656", r2.volume()
+        "LazyCollider r2 volume: {} expected ~145656",
+        r2.volume()
     );
 }
 
@@ -249,13 +278,21 @@ fn test_cpp_perturb2() {
             let v_in1 = cube_gl.tri_verts[3 * tri + v1] as usize;
             if v_in1 > v_in0 {
                 prism_tris.extend_from_slice(&[
-                    2 * v0 as u32, 2 * v1 as u32, 2 * v1 as u32 + 1,
-                    2 * v0 as u32, 2 * v1 as u32 + 1, 2 * v0 as u32 + 1,
+                    2 * v0 as u32,
+                    2 * v1 as u32,
+                    2 * v1 as u32 + 1,
+                    2 * v0 as u32,
+                    2 * v1 as u32 + 1,
+                    2 * v0 as u32 + 1,
                 ]);
             } else {
                 prism_tris.extend_from_slice(&[
-                    2 * v0 as u32, 2 * v1 as u32, 2 * v0 as u32 + 1,
-                    2 * v1 as u32, 2 * v1 as u32 + 1, 2 * v0 as u32 + 1,
+                    2 * v0 as u32,
+                    2 * v1 as u32,
+                    2 * v0 as u32 + 1,
+                    2 * v1 as u32,
+                    2 * v1 as u32 + 1,
+                    2 * v0 as u32 + 1,
                 ]);
             }
             let np = cube_gl.num_prop as usize;
@@ -275,9 +312,22 @@ fn test_cpp_perturb2() {
     }
 
     assert_eq!(result.num_degenerate_tris(), 0);
-    assert_eq!(result.num_vert(), 8, "Perturb2: {} verts expected 8", result.num_vert());
-    assert!((result.volume() - 64.0).abs() < 1e-4, "Perturb2 volume: {} expected 64", result.volume());
-    assert!((result.surface_area() - 96.0).abs() < 1e-4, "Perturb2 area: {} expected 96", result.surface_area());
+    assert_eq!(
+        result.num_vert(),
+        8,
+        "Perturb2: {} verts expected 8",
+        result.num_vert()
+    );
+    assert!(
+        (result.volume() - 64.0).abs() < 1e-4,
+        "Perturb2 volume: {} expected 64",
+        result.volume()
+    );
+    assert!(
+        (result.surface_area() - 96.0).abs() < 1e-4,
+        "Perturb2 area: {} expected 96",
+        result.surface_area()
+    );
 }
 
 /// C++ TEST(Boolean, Perturb3) — nasty gear pattern
@@ -300,31 +350,53 @@ fn test_cpp_perturb3() {
 
     assert_eq!(nasty_gear.status(), Error::NoError);
     assert!(!nasty_gear.is_empty());
-    assert_eq!(nasty_gear.genus(), 1, "Perturb3 genus: {} expected 1", nasty_gear.genus());
-    assert!((nasty_gear.volume() - expected_volume).abs() < 1e-5,
-        "Perturb3 volume: {} expected {}", nasty_gear.volume(), expected_volume);
-    assert!((nasty_gear.surface_area() - 26.972).abs() < 1e-3,
-        "Perturb3 area: {} expected 26.972", nasty_gear.surface_area());
+    assert_eq!(
+        nasty_gear.genus(),
+        1,
+        "Perturb3 genus: {} expected 1",
+        nasty_gear.genus()
+    );
+    assert!(
+        (nasty_gear.volume() - expected_volume).abs() < 1e-5,
+        "Perturb3 volume: {} expected {}",
+        nasty_gear.volume(),
+        expected_volume
+    );
+    assert!(
+        (nasty_gear.surface_area() - 26.972).abs() < 1e-3,
+        "Perturb3 area: {} expected 26.972",
+        nasty_gear.surface_area()
+    );
 }
 
 /// C++ TEST(Boolean, MeshGLRoundTrip) — boolean result preserves mesh runs through MeshGL
 #[test]
 fn test_cpp_meshgl_round_trip() {
     let cube = Manifold::cube(Vec3::splat(2.0), false);
-    assert!(cube.original_id() >= 0, "Cube should have positive originalID");
+    assert!(
+        cube.original_id() >= 0,
+        "Cube should have positive originalID"
+    );
     let _original = cube.get_mesh_gl(0);
 
     let result = cube.clone() + cube.translate(Vec3::new(1.0, 1.0, 0.0));
 
-    assert!(result.original_id() < 0, "Boolean result should have negative originalID");
+    assert!(
+        result.original_id() < 0,
+        "Boolean result should have negative originalID"
+    );
     // Result should have ~18 verts, 32 tris (two overlapping cubes)
     assert!(result.num_vert() > 0);
     assert!(result.num_tri() > 0);
 
     let in_gl = result.get_mesh_gl(0);
     // Boolean of 2 meshes → 2 runs
-    assert_eq!(in_gl.run_original_id.len(), 2,
-        "MeshGLRoundTrip: expected 2 runs, got {}", in_gl.run_original_id.len());
+    assert_eq!(
+        in_gl.run_original_id.len(),
+        2,
+        "MeshGLRoundTrip: expected 2 runs, got {}",
+        in_gl.run_original_id.len()
+    );
 
     // Reconstruct from MeshGL
     let result2 = Manifold::from_mesh_gl(&in_gl);
@@ -333,8 +405,12 @@ fn test_cpp_meshgl_round_trip() {
     assert!(result2.num_tri() > 0);
 
     let out_gl = result2.get_mesh_gl(0);
-    assert_eq!(out_gl.run_original_id.len(), 2,
-        "MeshGLRoundTrip: roundtrip should preserve 2 runs, got {}", out_gl.run_original_id.len());
+    assert_eq!(
+        out_gl.run_original_id.len(),
+        2,
+        "MeshGLRoundTrip: roundtrip should preserve 2 runs, got {}",
+        out_gl.run_original_id.len()
+    );
 }
 
 /// C++ TEST(BooleanComplex, CraycloudBool) — subtract complements, simplify to empty
@@ -344,11 +420,16 @@ fn test_cpp_complex_craycloud() {
     let m2 = read_test_obj("Cray_right.obj");
     let res = m1 - m2;
     assert_eq!(res.status(), Error::NoError);
-    assert!(!res.is_empty(), "CraycloudBool: difference should not be empty");
+    assert!(
+        !res.is_empty(),
+        "CraycloudBool: difference should not be empty"
+    );
     let simplified = res.as_original().simplify(0.0);
-    assert!(simplified.is_empty(),
+    assert!(
+        simplified.is_empty(),
         "CraycloudBool: AsOriginal().Simplify() should produce empty mesh, got {} tris",
-        simplified.num_tri());
+        simplified.num_tri()
+    );
 }
 
 /// C++ TEST(BooleanComplex, BooleanVolumes) — volume arithmetic with non-overlapping cubes
@@ -361,17 +442,50 @@ fn test_cpp_complex_boolean_volumes() {
     let m7 = Manifold::cube(Vec3::new(7.0, 1.0, 1.0), false);
 
     let eps = 1e-4;
-    assert!(((m1.clone() ^ m2.clone()).volume() - 0.0).abs() < eps, "m1^m2");
-    assert!(((m1.clone() + m2.clone() + m4.clone()).volume() - 7.0).abs() < eps, "m1+m2+m4");
-    assert!(((m1.clone() + m2.clone() - m4.clone()).volume() - 3.0).abs() < eps, "m1+m2-m4");
-    assert!(((m1.clone() + (m2.clone() ^ m4.clone())).volume() - 1.0).abs() < eps, "m1+(m2^m4)");
-    assert!(((m7.clone() ^ m4.clone()).volume() - 4.0).abs() < eps, "m7^m4");
-    assert!(((m7.clone() ^ m3.clone() ^ m1.clone()).volume() - 1.0).abs() < eps, "m7^m3^m1");
-    assert!(((m7.clone() ^ (m1.clone() + m2.clone())).volume() - 3.0).abs() < eps, "m7^(m1+m2)");
-    assert!(((m7.clone() - m4.clone()).volume() - 3.0).abs() < eps, "m7-m4");
-    assert!(((m7.clone() - m4.clone() - m2.clone()).volume() - 1.0).abs() < eps, "m7-m4-m2");
-    assert!(((m7.clone() - (m7.clone() - m1.clone())).volume() - 1.0).abs() < eps, "m7-(m7-m1)");
-    assert!(((m7.clone() - (m1.clone() + m2.clone())).volume() - 4.0).abs() < eps, "m7-(m1+m2)");
+    assert!(
+        ((m1.clone() ^ m2.clone()).volume() - 0.0).abs() < eps,
+        "m1^m2"
+    );
+    assert!(
+        ((m1.clone() + m2.clone() + m4.clone()).volume() - 7.0).abs() < eps,
+        "m1+m2+m4"
+    );
+    assert!(
+        ((m1.clone() + m2.clone() - m4.clone()).volume() - 3.0).abs() < eps,
+        "m1+m2-m4"
+    );
+    assert!(
+        ((m1.clone() + (m2.clone() ^ m4.clone())).volume() - 1.0).abs() < eps,
+        "m1+(m2^m4)"
+    );
+    assert!(
+        ((m7.clone() ^ m4.clone()).volume() - 4.0).abs() < eps,
+        "m7^m4"
+    );
+    assert!(
+        ((m7.clone() ^ m3.clone() ^ m1.clone()).volume() - 1.0).abs() < eps,
+        "m7^m3^m1"
+    );
+    assert!(
+        ((m7.clone() ^ (m1.clone() + m2.clone())).volume() - 3.0).abs() < eps,
+        "m7^(m1+m2)"
+    );
+    assert!(
+        ((m7.clone() - m4.clone()).volume() - 3.0).abs() < eps,
+        "m7-m4"
+    );
+    assert!(
+        ((m7.clone() - m4.clone() - m2.clone()).volume() - 1.0).abs() < eps,
+        "m7-m4-m2"
+    );
+    assert!(
+        ((m7.clone() - (m7.clone() - m1.clone())).volume() - 1.0).abs() < eps,
+        "m7-(m7-m1)"
+    );
+    assert!(
+        ((m7.clone() - (m1.clone() + m2.clone())).volume() - 4.0).abs() < eps,
+        "m7-(m1+m2)"
+    );
 }
 
 /// C++ TEST(BooleanComplex, Spiral) — recursive spiral of cubes
@@ -389,7 +503,12 @@ fn test_cpp_complex_spiral() {
         }
     }
     let result = spiral(120, 25.0, 2.0, d);
-    assert_eq!(result.genus(), -120, "Spiral genus should be -120, got {}", result.genus());
+    assert_eq!(
+        result.genus(),
+        -120,
+        "Spiral genus should be -120, got {}",
+        result.genus()
+    );
 }
 
 /// C++ TEST(Manifold, OpenscadCrash) — OBJ that previously crashed openscad
@@ -400,9 +519,17 @@ fn test_cpp_complex_spiral() {
 #[test]
 fn test_cpp_openscad_crash() {
     let m = read_test_obj("openscad-nonmanifold-crash.obj");
-    assert!(!m.is_empty(), "OBJ should load as non-empty manifold, status={:?}", m.status());
+    assert!(
+        !m.is_empty(),
+        "OBJ should load as non-empty manifold, status={:?}",
+        m.status()
+    );
     let m2 = m.clone() + m.translate(Vec3::new(0.0, 0.6, 0.0));
-    assert!(!m2.is_empty(), "Boolean union should not be empty, status={:?}", m2.status());
+    assert!(
+        !m2.is_empty(),
+        "Boolean union should not be empty, status={:?}",
+        m2.status()
+    );
 }
 
 /// C++ TEST(Manifold, MeshGLRoundTrip) — MeshGL round-trip preserves original ID
@@ -416,20 +543,21 @@ fn test_cpp_meshgl_round_trip2() {
 
     assert_eq!(in_gl.run_original_id.len(), 1, "Input should have 1 run");
     assert_eq!(out_gl.run_original_id.len(), 1, "Output should have 1 run");
-    assert_eq!(out_gl.run_original_id[0], in_gl.run_original_id[0],
-        "Original ID should be preserved through round-trip");
+    assert_eq!(
+        out_gl.run_original_id[0], in_gl.run_original_id[0],
+        "Original ID should be preserved through round-trip"
+    );
 }
 
 /// C++ TEST(BooleanComplex, Sphere) — sphere difference with position colors
 #[test]
 fn test_cpp_complex_sphere_boolean() {
     // Simplified version without WithPositionColors/RelatedGL
-    let sphere = Manifold::sphere(1.0, 12)
-        .set_properties(3, |new_prop, pos, _old| {
-            new_prop[0] = pos.x;
-            new_prop[1] = pos.y;
-            new_prop[2] = pos.z;
-        });
+    let sphere = Manifold::sphere(1.0, 12).set_properties(3, |new_prop, pos, _old| {
+        new_prop[0] = pos.x;
+        new_prop[1] = pos.y;
+        new_prop[2] = pos.z;
+    });
     let sphere2 = sphere.translate(Vec3::splat(0.5));
     let result = sphere.clone() - sphere2;
 
@@ -454,16 +582,35 @@ fn test_cpp_complex_mesh_relation() {
     let gyroid2 = gyroid.translate(Vec3::splat(2.0));
 
     assert!(!gyroid.is_empty(), "MeshRelation: gyroid not empty");
-    assert!(gyroid.matches_tri_normals(), "MeshRelation: matches_tri_normals");
-    assert!(gyroid.num_degenerate_tris() <= 0, "MeshRelation: num_degenerate_tris <= 0");
+    assert!(
+        gyroid.matches_tri_normals(),
+        "MeshRelation: matches_tri_normals"
+    );
+    assert!(
+        gyroid.num_degenerate_tris() <= 0,
+        "MeshRelation: num_degenerate_tris <= 0"
+    );
 
     let result = gyroid.union(&gyroid2).refine_to_length(0.1);
-    assert!(result.matches_tri_normals(), "MeshRelation: result matches_tri_normals");
-    assert!(result.num_degenerate_tris() <= 12, "MeshRelation: num_degenerate_tris <= 12");
+    assert!(
+        result.matches_tri_normals(),
+        "MeshRelation: result matches_tri_normals"
+    );
+    assert!(
+        result.num_degenerate_tris() <= 12,
+        "MeshRelation: num_degenerate_tris <= 12"
+    );
     assert_eq!(result.decompose().len(), 1, "MeshRelation: 1 component");
-    assert!((result.volume() - 226.0).abs() < 1.0, "MeshRelation: vol={}", result.volume());
-    assert!((result.surface_area() - 387.0).abs() < 1.0,
-        "MeshRelation: sa={}", result.surface_area());
+    assert!(
+        (result.volume() - 226.0).abs() < 1.0,
+        "MeshRelation: vol={}",
+        result.volume()
+    );
+    assert!(
+        (result.surface_area() - 387.0).abs() < 1.0,
+        "MeshRelation: sa={}",
+        result.surface_area()
+    );
 
     super::related_gl(&result, &[&gyroid_gl]);
 }
@@ -501,18 +648,28 @@ fn test_cpp_complex_sweep() {
         angle - whole * k_two_pi
     };
 
-    let partial_revolve = |start_angle: f64, end_angle: f64, n_segments_per_rotation: i32| -> Manifold {
-        let pos_end = min_pos_angle(end_angle);
-        let total = if start_angle < 0.0 && end_angle < 0.0 && start_angle < end_angle {
-            end_angle - start_angle
-        } else {
-            pos_end - start_angle
-        };
-        let mut n_segments = (total / k_two_pi * n_segments_per_rotation as f64 + 1.0).ceil() as i32;
-        if n_segments < 2 { n_segments = 2; }
-        let angle_step = total / (n_segments - 1) as f64;
-        let n_segments_f = (n_segments - 1) as f64;
-        Manifold::extrude(&profile_polys, n_segments_f, n_segments - 2, 0.0, Vec2::new(1.0, 1.0))
+    let partial_revolve =
+        |start_angle: f64, end_angle: f64, n_segments_per_rotation: i32| -> Manifold {
+            let pos_end = min_pos_angle(end_angle);
+            let total = if start_angle < 0.0 && end_angle < 0.0 && start_angle < end_angle {
+                end_angle - start_angle
+            } else {
+                pos_end - start_angle
+            };
+            let mut n_segments =
+                (total / k_two_pi * n_segments_per_rotation as f64 + 1.0).ceil() as i32;
+            if n_segments < 2 {
+                n_segments = 2;
+            }
+            let angle_step = total / (n_segments - 1) as f64;
+            let n_segments_f = (n_segments - 1) as f64;
+            Manifold::extrude(
+                &profile_polys,
+                n_segments_f,
+                n_segments - 2,
+                0.0,
+                Vec2::new(1.0, 1.0),
+            )
             .warp(move |v: &mut Vec3| {
                 let z_index = n_segments_f - v.z;
                 let angle = z_index * angle_step + start_angle;
@@ -522,7 +679,7 @@ fn test_cpp_complex_sweep() {
                 v.y = old_x * angle.sin();
                 v.x = old_x * angle.cos();
             })
-    };
+        };
 
     let det = |a: Vec2, b: Vec2| -> f64 { a.x * b.y - a.y * b.x };
 
@@ -533,8 +690,8 @@ fn test_cpp_complex_sweep() {
         let determinant = det(v1, v2);
         let start_angle = v1.x.atan2(-v1.y);
         let end_angle = (-v2.x).atan2(v2.y);
-        let round = partial_revolve(start_angle, end_angle, 20)
-            .translate(Vec3::new(p2.x, p2.y, 0.0));
+        let round =
+            partial_revolve(start_angle, end_angle, 20).translate(Vec3::new(p2.x, p2.y, 0.0));
         let distance = (diff.x * diff.x + diff.y * diff.y).sqrt();
         let angle = diff.y.atan2(diff.x);
         let extrusion = Manifold::extrude(&profile_polys, distance, 0, 0.0, Vec2::new(1.0, 1.0))
@@ -542,7 +699,11 @@ fn test_cpp_complex_sweep() {
             .translate(Vec3::new(distance, 0.0, 0.0))
             .rotate(0.0, 0.0, angle * 180.0 / PI)
             .translate(Vec3::new(p1.x, p1.y, 0.0));
-        if determinant < 0.0 { vec![round, extrusion] } else { vec![extrusion] }
+        if determinant < 0.0 {
+            vec![round, extrusion]
+        } else {
+            vec![extrusion]
+        }
     };
 
     // Exact C++ path_points, scaled by 0.9
@@ -638,7 +799,8 @@ fn test_cpp_complex_sweep() {
         (0.40594743344375905, 37.36664006036318),
         (0.1397973410299913, 37.434752779117005),
     ];
-    let path_points: Vec<Vec2> = path_points_raw.iter()
+    let path_points: Vec<Vec2> = path_points_raw
+        .iter()
         .map(|&(x, y)| Vec2::new(x, y) * 0.9)
         .collect();
 
@@ -654,8 +816,11 @@ fn test_cpp_complex_sweep() {
     }
 
     let shape = Manifold::batch_boolean(&primitives, crate::types::OpType::Add);
-    assert!((shape.volume() - 3757.0).abs() < 1.0,
-        "Sweep: vol={}, expected ~3757", shape.volume());
+    assert!(
+        (shape.volume() - 3757.0).abs() < 1.0,
+        "Sweep: vol={}, expected ~3757",
+        shape.volume()
+    );
 }
 
 /// C++ TEST(BooleanComplex, InterpolatedNormals) — subtract two textured,
@@ -669,7 +834,9 @@ fn test_cpp_interpolated_normals() {
     let mut a = MeshGL::default();
     a.num_prop = 8;
     a.vert_properties = cpp_inline_array(&src, "a.vertProperties = ", 0)
-        .into_iter().map(|v| v as f32).collect();
+        .into_iter()
+        .map(|v| v as f32)
+        .collect();
     a.tri_verts = cpp_inline_array_u32(&src, "a.triVerts = ", 0);
     a.merge_from_vert = cpp_inline_array_u32(&src, "a.mergeFromVert = ", 0);
     a.merge_to_vert = cpp_inline_array_u32(&src, "a.mergeToVert = ", 0);
@@ -677,7 +844,9 @@ fn test_cpp_interpolated_normals() {
     let mut b = MeshGL::default();
     b.num_prop = 8;
     b.vert_properties = cpp_inline_array(&src, "b.vertProperties = ", 0)
-        .into_iter().map(|v| v as f32).collect();
+        .into_iter()
+        .map(|v| v as f32)
+        .collect();
     b.tri_verts = cpp_inline_array_u32(&src, "b.triVerts = ", 0);
     b.merge_from_vert = cpp_inline_array_u32(&src, "b.mergeFromVert = ", 0);
     b.merge_to_vert = cpp_inline_array_u32(&src, "b.mergeToVert = ", 0);
@@ -699,7 +868,9 @@ fn ring_mesh(src: &str, occurrence: usize) -> MeshGL {
     let mut m = MeshGL::default();
     m.num_prop = 3;
     m.vert_properties = cpp_inline_array(src, "m.vertProperties = ", occurrence)
-        .into_iter().map(|v| v as f32).collect();
+        .into_iter()
+        .map(|v| v as f32)
+        .collect();
     m.tri_verts = cpp_inline_array_u32(src, "m.triVerts = ", occurrence);
     m.run_index = cpp_inline_array_u32(src, "m.runIndex = ", occurrence);
     m.run_original_id = cpp_inline_array_u32(src, "m.runOriginalID = ", occurrence);
@@ -718,5 +889,9 @@ fn test_cpp_ring() {
     let result = arg0.clone() - arg1.clone();
     assert_eq!(arg0.status(), crate::types::Error::NoError, "arg0 status");
     assert_eq!(arg1.status(), crate::types::Error::NoError, "arg1 status");
-    assert_eq!(result.status(), crate::types::Error::NoError, "result status");
+    assert_eq!(
+        result.status(),
+        crate::types::Error::NoError,
+        "result status"
+    );
 }

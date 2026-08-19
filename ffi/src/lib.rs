@@ -258,7 +258,9 @@ pub extern "C" fn manifold_rs_set_boolean_engine(engine: i32) -> i32 {
         1 => BooleanEngine::Robust,
         2 => BooleanEngine::Auto,
         other => {
-            set_last_error(format!("manifold_rs_set_boolean_engine: unknown engine {other}"));
+            set_last_error(format!(
+                "manifold_rs_set_boolean_engine: unknown engine {other}"
+            ));
             return -1;
         }
     };
@@ -466,7 +468,9 @@ pub unsafe extern "C" fn manifold_rs_batch_boolean_ct(
             return ptr::null_mut();
         }
         if !length_fits::<*const ManifoldRs>(count) {
-            set_last_error(format!("manifold_rs_batch_boolean: implausible count {count}"));
+            set_last_error(format!(
+                "manifold_rs_batch_boolean: implausible count {count}"
+            ));
             return ptr::null_mut();
         }
 
@@ -487,7 +491,9 @@ pub unsafe extern "C" fn manifold_rs_batch_boolean_ct(
         for (i, &entry) in handles.iter().enumerate() {
             // SAFETY: caller contract; as_ref() handles the NULL case.
             let Some(handle) = (unsafe { entry.as_ref() }) else {
-                set_last_error(format!("manifold_rs_batch_boolean: null manifold at index {i}"));
+                set_last_error(format!(
+                    "manifold_rs_batch_boolean: null manifold at index {i}"
+                ));
                 return ptr::null_mut();
             };
             inputs.push(&handle.inner);
@@ -599,10 +605,20 @@ macro_rules! mesh_array_accessor {
 // sibling module that also needs it (`meshgl64`).
 pub(crate) use mesh_array_accessor;
 
-mesh_array_accessor!(manifold_rs_meshgl_vert_properties, MeshGlRs, vert_properties, f32);
+mesh_array_accessor!(
+    manifold_rs_meshgl_vert_properties,
+    MeshGlRs,
+    vert_properties,
+    f32
+);
 mesh_array_accessor!(manifold_rs_meshgl_tri_verts, MeshGlRs, tri_verts, u32);
 mesh_array_accessor!(manifold_rs_meshgl_run_index, MeshGlRs, run_index, u32);
-mesh_array_accessor!(manifold_rs_meshgl_run_original_id, MeshGlRs, run_original_id, u32);
+mesh_array_accessor!(
+    manifold_rs_meshgl_run_original_id,
+    MeshGlRs,
+    run_original_id,
+    u32
+);
 mesh_array_accessor!(manifold_rs_meshgl_face_id, MeshGlRs, face_id, u32);
 
 /// Release a mesh handle, invalidating every pointer previously returned by the

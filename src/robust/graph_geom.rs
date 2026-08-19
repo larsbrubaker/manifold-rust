@@ -8,7 +8,7 @@
 // `is_degenerate` through the `intersection_graph` re-exports). The exact
 // predicates themselves live in robust/exact/{approx,predicates}.rs.
 
-use super::exact::backend::{rat_is_zero, rat_zero, rat_one, Rational};
+use super::exact::backend::{rat_is_zero, rat_one, rat_zero, Rational};
 
 use crate::linalg::Vec3;
 use crate::types::Box;

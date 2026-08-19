@@ -105,7 +105,9 @@ fn discover(root: &str) -> Vec<(u64, std::path::PathBuf)> {
     };
     for repo in repos.flatten() {
         let meshes = repo.path().join("meshes");
-        let Ok(entries) = std::fs::read_dir(&meshes) else { continue };
+        let Ok(entries) = std::fs::read_dir(&meshes) else {
+            continue;
+        };
         for f in entries.flatten() {
             let name = f.file_name().to_string_lossy().to_string();
             if let Some(stem) = name.strip_suffix(".stl.zip") {
@@ -168,7 +170,11 @@ fn import_stl_bytes(data: &[u8]) -> Manifold {
             max[k] = max[k].max(v);
         }
     }
-    let c = [(min[0] + max[0]) / 2.0, (min[1] + max[1]) / 2.0, (min[2] + max[2]) / 2.0];
+    let c = [
+        (min[0] + max[0]) / 2.0,
+        (min[1] + max[1]) / 2.0,
+        (min[2] + max[2]) / 2.0,
+    ];
     let side = (max[0] - min[0]).max(max[1] - min[1]).max(max[2] - min[2]);
     let s = if side > 0.0 { 2.0 / side } else { 1.0 };
     for i in 0..nv {
@@ -311,7 +317,9 @@ fn process_mesh(mesh_id: u64, path: &std::path::Path, timeout: Duration) -> Row 
     }
     row.imported = true;
 
-    let b = a.rotate(30.0, 45.0, 60.0).translate(Vec3::new(0.3, 0.0, 0.0));
+    let b = a
+        .rotate(30.0, 45.0, 60.0)
+        .translate(Vec3::new(0.3, 0.0, 0.0));
     let robust = run_pass(&a, &b, BooleanEngine::Robust, timeout);
     let exact = if row.manifold {
         Some(run_pass(&a, &b, BooleanEngine::Exact, timeout))
@@ -340,12 +348,14 @@ fn process_mesh(mesh_id: u64, path: &std::path::Path, timeout: Duration) -> Row 
             && rel_close(e.volume, robust.volume, 1e-9)
             && rel_close(e.area, robust.area, 1e-9);
         if !ok && row.detail.is_empty() {
-            row.detail = format!(
+            row.detail =
+                format!(
                 "exact {} {}t/{}v vol {:.9} area {:.9} vs robust {} {}t/{}v vol {:.9} area {:.9}",
                 e.status, e.tris, e.verts, e.volume, e.area,
                 robust.status, robust.tris, robust.verts, robust.volume, robust.area
             );
-        } else if ok && (e.tris != robust.tris || e.verts != robust.verts) && row.detail.is_empty() {
+        } else if ok && (e.tris != robust.tris || e.verts != robust.verts) && row.detail.is_empty()
+        {
             row.detail = format!(
                 "count delta within band: {}t/{}v vs {}t/{}v",
                 e.tris, e.verts, robust.tris, robust.verts
@@ -444,7 +454,9 @@ fn main() {
         let tx = tx.clone();
         handles.push(std::thread::spawn(move || loop {
             let i = next.fetch_add(1, Ordering::Relaxed);
-            let Some((mesh_id, path)) = work.get(i) else { break };
+            let Some((mesh_id, path)) = work.get(i) else {
+                break;
+            };
             let row = process_mesh(*mesh_id, path, timeout);
             if tx.send(row).is_err() {
                 break;
@@ -521,7 +533,10 @@ fn main() {
          {n_mismatch} MISMATCHED, {n_unreasonable} UNREASONABLE, {n_import_fail} import failures",
         t_sweep.elapsed().as_secs_f64()
     );
-    println!("db: {} (compare runs with SQL over the results table)", args.db);
+    println!(
+        "db: {} (compare runs with SQL over the results table)",
+        args.db
+    );
 }
 
 /// ISO-ish local timestamp without a chrono dependency.
