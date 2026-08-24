@@ -52,7 +52,8 @@ Two things in one library:
 - Constructors and modeling: cube / sphere / cylinder, extrude, revolve, convex hull,
   Minkowski sum & difference, SDF level sets, smooth subdivision, 2D cross-sections
 - Mesh repair utilities: `repair_orientation()` for inside-out bodies,
-  `has_self_intersections()` as an exact self-scan
+  `rebuild_solid(rule)` to re-derive a solid from the winding numbers when rewinding is
+  not enough, `has_self_intersections()` as an exact self-scan
 - Cooperative **cancellation** and coarse **progress reporting** through the whole boolean
   pipeline (library → C FFI → WASM → demo)
 - Optional `parallel` feature (rayon) — results stay **bit-identical** to the sequential
