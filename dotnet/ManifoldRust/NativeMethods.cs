@@ -53,6 +53,16 @@ namespace ManifoldRust
 		[ModuleInitializer]
 		internal static void Initialize()
 		{
+			// The browser has no dynamic loading: manifold_rs is linked into the wasm
+			// module and the P/Invokes are satisfied from mono's static pinvoke table
+			// before any resolver would be consulted. Installing one there is at best
+			// dead weight and at worst a failure, since every probe below ends in a
+			// NativeLibrary call that cannot succeed.
+			if (OperatingSystem.IsBrowser())
+			{
+				return;
+			}
+
 			NativeLibrary.SetDllImportResolver(typeof(NativeMethods).Assembly, Resolve);
 		}
 #pragma warning restore CA2255

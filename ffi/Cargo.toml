@@ -10,7 +10,19 @@ publish = false
 # The shared library is named manifold_rs so consumers load manifold_rs.dll /
 # libmanifold_rs.so rather than a name that collides with the C++ manifoldc.
 name = "manifold_rs"
-crate-type = ["cdylib"]
+# staticlib is for wasm32-unknown-emscripten, where there is no dynamic loading:
+# the host (mono-wasm) links libmanifold_rs.a into the final module and resolves
+# the P/Invokes from its static pinvoke table. cdylib stays the default for the
+# desktop platforms.
+crate-type = ["cdylib", "staticlib"]
 
 [dependencies]
-manifold-rust = { path = "..", features = ["parallel"] }
+manifold-rust = { path = ".." }
+
+[features]
+# On by default so every existing `cargo build -p manifold-ffi` keeps the rayon
+# engine it has always had. Browser builds turn it off (--no-default-features):
+# emscripten without -pthread has no worker threads, so rayon's pool cannot be
+# created.
+default = ["parallel"]
+parallel = ["manifold-rust/parallel"]
