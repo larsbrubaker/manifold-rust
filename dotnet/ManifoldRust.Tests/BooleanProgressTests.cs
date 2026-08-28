@@ -20,6 +20,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
 using TUnit.Assertions;
@@ -102,6 +103,56 @@ namespace ManifoldRust.Tests
 			await Assert.That(fromWatched.VertProperties.SequenceEqual(fromPlain.VertProperties)).IsTrue();
 			await Assert.That(fromWatched.TriVerts.SequenceEqual(fromPlain.TriVerts)).IsTrue();
 			await Assert.That(fromWatched.RunIndex.SequenceEqual(fromPlain.RunIndex)).IsTrue();
+		}
+
+		[Test]
+		public async Task ProgressArrivesThroughTheIntPtrDeclaredImport()
+		{
+			// Regression guard for the mono-wasm marshalling fix. The interpreter's
+			// type_to_c has no FNPTR arm, so a P/Invoke declaring a function-pointer
+			// *parameter* aborts the runtime in the browser -
+			// manifold_rs_boolean_progress_rule therefore declares its progress
+			// callback as IntPtr, which is the same thing at the ABI level. This test
+			// is the desktop half of the proof: the callback must still reach the sink
+			// through that declaration, and the geometry must still be right.
+			using Manifold a = TestMeshes.CubeManifold(0, 0, 0, 1);
+			using Manifold b = TestMeshes.CubeManifold(0.5f, 0.25f, 0.25f, 1);
+
+			Collector collector = new Collector();
+			using Manifold union = Manifold.Union(a, b, BooleanEngine.Robust, WindingRule.Positive, collector);
+
+			await Assert.That(union.Status).IsEqualTo(ManifoldStatus.NoError);
+
+			// The callback really fired, and with a phase name read back out of the
+			// native table rather than an empty placeholder.
+			List<(string Phase, double? Fraction)> events = collector.Snapshot();
+			await Assert.That(events.Count).IsGreaterThan(0);
+			await Assert.That(events[0].Phase).IsNotNullOrEmpty();
+
+			// 1 + 1 minus the 0.5 x 0.75 x 0.75 overlap. Asserted against the closed
+			// form rather than against a second boolean, so a call that silently did
+			// nothing could not satisfy both halves of this test at once.
+			await Assert.That(TestMeshes.SignedVolume(union.GetMeshGL())).IsEqualTo(1.71875).Within(1e-6);
+		}
+
+		[Test]
+		public async Task TheProgressParameterOfTheImportIsDeclaredAsIntPtr()
+		{
+			// The declaration itself is the fix, and on desktop both spellings marshal
+			// correctly - so no behavioural test can catch a "cleanup" that puts the
+			// delegate* type back. This one can: mono-wasm's interpreter has no FNPTR
+			// arm in type_to_c, so a function-pointer *parameter* aborts the runtime
+			// there, and every browser CSG boolean goes through this import. If this
+			// test fails, the browser build is broken even though the desktop suite is
+			// still green.
+			MethodInfo? import = typeof(NativeMethods).GetMethod(
+				"manifold_rs_boolean_progress_rule",
+				BindingFlags.NonPublic | BindingFlags.Static);
+			await Assert.That(import).IsNotNull();
+
+			ParameterInfo progress = import!.GetParameters().Single(p => p.Name == "progress");
+			await Assert.That(progress.ParameterType).IsEqualTo(typeof(IntPtr));
+			await Assert.That(progress.ParameterType.IsFunctionPointer).IsFalse();
 		}
 
 		[Test]

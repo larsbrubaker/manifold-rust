@@ -334,7 +334,11 @@ namespace ManifoldRust
 					throw new ObjectDisposedException(nameof(Manifold));
 				}
 
-				delegate* unmanaged[Cdecl]<uint, double, void*, void> callback = null;
+				// Held as IntPtr rather than as the function-pointer type it really is,
+				// because that is how the import declares it - see
+				// NativeMethods.manifold_rs_boolean_progress_rule for the mono-wasm
+				// reason. IntPtr.Zero is the same NULL the ABI reads as "no callback".
+				IntPtr callback = IntPtr.Zero;
 				void* user = null;
 				if (progress is not null)
 				{
@@ -344,7 +348,7 @@ namespace ManifoldRust
 					ProgressPhases.Preload();
 					bridge = new ProgressBridge(progress);
 					bridgeHandle = GCHandle.Alloc(bridge);
-					callback = ProgressBridge.Callback;
+					callback = (IntPtr)ProgressBridge.Callback;
 					user = (void*)GCHandle.ToIntPtr(bridgeHandle);
 				}
 

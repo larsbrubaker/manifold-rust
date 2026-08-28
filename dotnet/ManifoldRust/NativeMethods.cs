@@ -236,6 +236,17 @@ namespace ManifoldRust
 		// Only the _rule form is declared: manifold_rs_boolean_progress is
 		// implemented natively by forwarding here with the positive rule, so
 		// declaring both would be two names for one call.
+		//
+		// The progress parameter is typed IntPtr rather than
+		// delegate* unmanaged[Cdecl]<uint, double, void*, void>, which is what it
+		// actually is. The two are identical at the ABI level - a code address in a
+		// pointer-sized slot - but mono-wasm's interpreter cannot marshal the
+		// declared form: its type_to_c has no FNPTR arm, so a P/Invoke with a
+		// function-pointer *parameter* aborts the runtime rather than calling
+		// through. Every browser CSG boolean reaches this export, so the ABI-neutral
+		// spelling is the one that has to be used here. Return values and
+		// [UnmanagedCallersOnly] callbacks are unaffected; this is only about
+		// parameters.
 		[LibraryImport(LibraryName)]
 		[UnmanagedCallConv(CallConvs = new[] { typeof(CallConvCdecl) })]
 		internal static partial IntPtr manifold_rs_boolean_progress_rule(
@@ -245,7 +256,7 @@ namespace ManifoldRust
 			int engine,
 			int windingRule,
 			IntPtr token,
-			delegate* unmanaged[Cdecl]<uint, double, void*, void> progress,
+			IntPtr progress,
 			void* user);
 
 		[LibraryImport(LibraryName)]
