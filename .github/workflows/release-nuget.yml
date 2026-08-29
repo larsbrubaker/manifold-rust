@@ -19,6 +19,9 @@ on:
     tags:
       - 'nuget-v*'
 
+# The floor for every job. The publishing job raises its own - it needs
+# id-token: write to authenticate to nuget.org - and nothing else in this
+# workflow should be able to mint a token.
 permissions:
   contents: read
 
@@ -284,6 +287,16 @@ jobs:
     name: pack and publish
     needs: [version, native, native-browser-wasm]
     runs-on: ubuntu-latest
+    # id-token lets this job mint the OIDC token nuget.org exchanges for a
+    # publishing key - without it NuGet/login below has nothing to present.
+    # Naming permissions at all replaces the workflow-level block wholesale, so
+    # contents: read has to be repeated here or actions/checkout loses the read
+    # it needs. Both are stated rather than inherited for the same reason a
+    # release should be readable in one place: this is the only job in the file
+    # that can publish anything.
+    permissions:
+      id-token: write
+      contents: read
     env:
       PACKAGE_VERSION: ${{ needs.version.outputs.package-version }}
     steps:
@@ -348,10 +361,12 @@ jobs:
 
       # The csproj's own EnsureNativeIsPacked checks that each native exists
       # before packing; this checks that packing then put it in the package, and
-      # is the only check for build/ManifoldRust.props. browser-wasm needs both
-      # halves and neither one fails loudly on its own: the archive alone is
-      # inert, because nothing probes a wasm .a, and the props alone points a
-      # consumer's link at a file the package does not carry.
+      # is the only check for the props. browser-wasm needs every one of those
+      # pieces and none of them fails loudly on its own: the archive alone is
+      # inert, because nothing probes a wasm .a; the props alone points a
+      # consumer's link at a file the package does not carry; and build/ alone
+      # reaches only projects that reference this package directly, which the
+      # application that has to link the archive usually does not.
       - name: Check the package carries what it claims
         run: |
           set -eu
@@ -363,7 +378,8 @@ jobs:
             runtimes/osx-arm64/native/libmanifold_rs.dylib \
             runtimes/osx-x64/native/libmanifold_rs.dylib \
             runtimes/browser-wasm/native/manifold_rs.a \
-            build/ManifoldRust.props
+            build/ManifoldRust.props \
+            buildTransitive/ManifoldRust.props
           do
             if ! unzip -l "$package" "$entry" > /dev/null; then
               echo "::error::$package does not contain $entry, so the platform or the props it stands for is missing from this release."
@@ -380,22 +396,38 @@ jobs:
           path: nupkgs/*.nupkg
           if-no-files-found: error
 
+      # There is no publishing credential in this repository. nuget.org carries a
+      # Trusted Publishing policy naming this owner, this repository and this
+      # workflow file, and this step presents the job's GitHub OIDC token to it in
+      # exchange for an API key that lives minutes and can push only ManifoldRust.
+      # Nothing to store, nothing to leak from a fork, nothing to rotate here -
+      # rotating or revoking is done by editing that policy on nuget.org, and a
+      # workflow renamed or moved stops matching it and stops being able to
+      # publish, which is the point.
+      #
+      # Pinned to a commit rather than v1 for the same reason the emsdk clone is:
+      # a tag is mutable, and this is the one step in the release that holds a
+      # credential. 8d19675 is what v1 and v1.2.0 both pointed at when this was
+      # written.
+      - name: Exchange the job's OIDC token for a publishing key
+        id: nuget-login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1.2.0
+        with:
+          user: larsbrubaker
+
       # The key goes in as a command-line argument because `dotnet nuget push`
       # offers no environment-variable equivalent: --api-key is the only input,
       # and the alternative - writing it into NuGet.Config with an apikey entry -
-      # puts the secret on disk, which is strictly worse. The argument is
-      # therefore briefly visible in this container's /proc, which is acceptable
-      # only because a GitHub-hosted runner is single-tenant and destroyed after
-      # the job. Revisit this before ever running the release on a self-hosted or
-      # shared runner.
+      # puts it on disk, which is strictly worse. The argument is therefore
+      # briefly visible in this container's /proc, which is acceptable because a
+      # GitHub-hosted runner is single-tenant and destroyed after the job, and
+      # because what would be seen there now expires on its own. Revisit before
+      # ever running the release on a self-hosted or shared runner.
       - name: Publish to nuget.org
         env:
-          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+          NUGET_API_KEY: ${{ steps.nuget-login.outputs.NUGET_API_KEY }}
         run: |
-          if [ -z "${NUGET_API_KEY:-}" ]; then
-            echo "::error::The NUGET_API_KEY secret is not set on this repository."
-            exit 1
-          fi
+          set -eu
           dotnet nuget push "nupkgs/ManifoldRust.$PACKAGE_VERSION.nupkg" \
             --api-key "$NUGET_API_KEY" \
             --source https://api.nuget.org/v3/index.json

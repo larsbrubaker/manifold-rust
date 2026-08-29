@@ -361,13 +361,35 @@ a pushed tag of the form `nuget-v<version>`:
 2. Commit, then tag: `git tag nuget-v0.2.0 && git push origin nuget-v0.2.0`.
 3. CI, in order: checks that the tag version matches the csproj version; runs
    the full Rust and .NET test suites **at the tagged commit**; builds
-   `manifold_rs` for every runtime identifier; packs; pushes to nuget.org with
-   the `NUGET_API_KEY` repository secret.
+   `manifold_rs` for every runtime identifier; packs; pushes to nuget.org.
 
 The version check is its own first job, so a mismatched tag costs a few seconds
 rather than five cargo builds — or a yanked package. The tests are re-run at the
 tag rather than trusted from the branch, so a release from code that does not
 pass is not possible.
+
+### Publishing credentials — there aren't any
+
+There is no `NUGET_API_KEY` secret in this repository and nothing to rotate in
+GitHub. nuget.org carries a **Trusted Publishing** policy for `ManifoldRust`
+naming the owner, the repository `larsbrubaker/manifold-rust` and the workflow
+file `release-nuget.yml`. The publishing job asks GitHub for an OIDC token —
+which is why it, and only it, declares `permissions: id-token: write` — and
+`NuGet/login` exchanges that token for an API key that lasts minutes and can
+push only this package.
+
+What follows from that, and is easy to trip over:
+
+- **Renaming or moving `release-nuget.yml` breaks publishing**, silently as far
+  as the file is concerned: the policy matches on the workflow's path. Update
+  the policy on nuget.org first.
+- **Rotation and revocation happen on nuget.org**, by editing or deleting that
+  policy — not by touching GitHub secrets, of which there are none.
+- **A fork cannot publish.** The policy names this repository, and an OIDC token
+  minted anywhere else does not match it.
+- The action is pinned to a commit rather than to `v1`, because it is the one
+  step in the release that handles a credential and a tag can be moved. Bumping
+  it is a deliberate edit, not something a mutable tag does on its own.
 
 Adding a platform means editing two files: a matrix leg in the workflow *and* a
 `ManifoldRustNative*` property, `None` item and `EnsureNativeIsPacked` check in
