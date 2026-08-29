@@ -190,11 +190,19 @@ jobs:
       # checked. Bumping EMSDK_VERSION means bumping this too - the job says which
       # one disagreed.
       EMSDK_COMMIT: e10826f9196bb0e704014af2252ef58fb4ba261b
-      # Outside the checkout, so neither the toolchain nor the staged archive can
-      # be mistaken for a source file by anything that walks the working tree.
-      EMSDK_DIR: ${{ runner.temp }}/emsdk
-      ARCHIVE_DIR: ${{ runner.temp }}/browser-wasm-staging
     steps:
+      # Both live outside the checkout, so neither the toolchain nor the staged
+      # archive can be mistaken for a source file by anything that walks the
+      # working tree. They are set here rather than in the job's env because the
+      # runner context - and $RUNNER_TEMP with it - does not exist until a step
+      # runs; a job-level env that referenced it is a workflow validation error,
+      # which fails the run before any job starts.
+      - name: Resolve the toolchain and staging paths
+        run: |
+          set -eu
+          echo "EMSDK_DIR=$RUNNER_TEMP/emsdk" >> "$GITHUB_ENV"
+          echo "ARCHIVE_DIR=$RUNNER_TEMP/browser-wasm-staging" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
         with:
           submodules: recursive
@@ -260,6 +268,11 @@ jobs:
       - name: Check the archive names only features the consumer can parse
         run: python3 .github/scripts/rewrite-wasm-target-features.py --check "$ARCHIVE_DIR/manifold_rs.a"
 
+      # ARCHIVE_DIR reaches this expression through GITHUB_ENV, written by the
+      # first step: a with: cannot read a shell variable, but a value put into
+      # GITHUB_ENV is in the env context of every later step. If it were somehow
+      # empty the path would not match a file and if-no-files-found fails the job,
+      # which is the outcome to want here.
       - name: Upload the native
         uses: actions/upload-artifact@v4
         with:
