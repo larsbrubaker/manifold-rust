@@ -4,10 +4,10 @@
 #
 # Job order is deliberate, cheapest gate first:
 #
-#   version ─┬─> test-rust   ─┬─> native (4 platforms) ──> pack ──> push
-#            └─> test-dotnet ─┘
+#   version ─┬─> test-rust   ─┬─> native (4 platforms) ─┬─> pack ──> push
+#            └─> test-dotnet ─┘   native-browser-wasm ──┘
 #
-# `version` rejects a tag that disagrees with the csproj before four cargo
+# `version` rejects a tag that disagrees with the csproj before five cargo
 # builds have been paid for. The test jobs then run the whole suite *at the
 # tagged commit*, so a release cannot be published from code that does not pass:
 # the branch having been green earlier is a different claim. Only then are the
@@ -40,7 +40,7 @@ jobs:
 
       # The tag is the release's only input, so it has to agree with the version
       # the package will actually carry. Nothing else runs until it does: a typo
-      # costs seconds rather than four cargo builds, or worse, a yanked package.
+      # costs seconds rather than five cargo builds, or worse, a yanked package.
       - name: Check the tag against the package version
         id: check
         run: |
@@ -168,9 +168,108 @@ jobs:
           path: target/${{ matrix.target }}/release/${{ matrix.library }}
           if-no-files-found: error
 
+  # Not a leg of the matrix above. browser-wasm builds a static archive rather
+  # than a shared library, from a different cargo invocation, with a toolchain
+  # none of the others need and a post-build rewrite none of the others want -
+  # folding it in would make every step of that job conditional.
+  native-browser-wasm:
+    name: native browser-wasm
+    needs: [test-rust, test-dotnet]
+    runs-on: ubuntu-latest
+    env:
+      # Matches the Emscripten the .NET wasm-tools workload ships, which is what
+      # consumers link with. The pin is for reproducibility rather than
+      # correctness: the target_features rewrite below is what actually decouples
+      # this build's toolchain from the consumer's, and a staticlib is archived by
+      # rustc's own LLVM without emcc linking anything. Emscripten is on PATH
+      # because rustc wants a linker driver for the target to exist.
+      EMSDK_VERSION: 3.1.56
+      # The commit refs/tags/3.1.56 pointed at when this job was written. A tag is
+      # mutable and this job runs on the release path, next to the publish
+      # credential, so the tag is what is fetched and the commit is what is
+      # checked. Bumping EMSDK_VERSION means bumping this too - the job says which
+      # one disagreed.
+      EMSDK_COMMIT: e10826f9196bb0e704014af2252ef58fb4ba261b
+      # Outside the checkout, so neither the toolchain nor the staged archive can
+      # be mistaken for a source file by anything that walks the working tree.
+      EMSDK_DIR: ${{ runner.temp }}/emsdk
+      ARCHIVE_DIR: ${{ runner.temp }}/browser-wasm-staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-emscripten
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: wasm32-unknown-emscripten
+
+      - name: Install Emscripten
+        run: |
+          set -eu
+          git clone --depth 1 --branch "$EMSDK_VERSION" https://github.com/emscripten-core/emsdk.git "$EMSDK_DIR"
+          cloned="$(git -C "$EMSDK_DIR" rev-parse HEAD)"
+          if [ "$cloned" != "$EMSDK_COMMIT" ]; then
+            echo "::error::emsdk tag $EMSDK_VERSION is at $cloned, but this workflow pinned $EMSDK_COMMIT. The tag moved, or the pin is stale - check which before releasing."
+            exit 1
+          fi
+          "$EMSDK_DIR/emsdk" install "$EMSDK_VERSION"
+          "$EMSDK_DIR/emsdk" activate "$EMSDK_VERSION"
+
+      # Every part of this command line matters. cargo rustc rather than cargo
+      # build, because manifold-ffi's default crate type is cdylib, whose
+      # Emscripten link runs emcc and fails with "undefined symbol: main"; a
+      # static archive needs no link of its own, which leaves the only link to
+      # the consumer's, where it belongs. --no-default-features drops the rayon
+      # engine, which cannot build a thread pool in a browser without pthreads.
+      #
+      # emsdk_env.sh is sourced without -u: it reads variables it has not
+      # necessarily set.
+      - name: Build the static archive
+        run: |
+          set -e
+          . "$EMSDK_DIR/emsdk_env.sh"
+          cargo rustc -p manifold-ffi --no-default-features --release \
+            --target wasm32-unknown-emscripten --crate-type staticlib
+
+      # The rename is load bearing: mono-wasm derives its P/Invoke module names
+      # from the file names of the native inputs it links, so
+      # DllImport("manifold_rs") resolves only against an archive called
+      # manifold_rs.a. The rewrite drops the two feature names rustc's LLVM emits
+      # that the consumer's older Binaryen rejects - the script explains at
+      # length why the section is rewritten rather than removed.
+      - name: Stage and rewrite the archive
+        run: |
+          set -e
+          . "$EMSDK_DIR/emsdk_env.sh"
+          mkdir -p "$ARCHIVE_DIR"
+          cp target/wasm32-unknown-emscripten/release/libmanifold_rs.a "$ARCHIVE_DIR/manifold_rs.a"
+          python3 .github/scripts/rewrite-wasm-target-features.py "$ARCHIVE_DIR/manifold_rs.a"
+
+      # An allowlist, not a re-run of the rewrite: this fails on any feature name
+      # the archive has never been shipped with, which is the case the rewrite
+      # itself cannot catch. dtolnay/rust-toolchain@stable is unpinned on purpose,
+      # so the rustc that builds a future release may emit a name nobody has seen
+      # - and that reaches the consumer as an unexplainable "Unknown option
+      # --enable-<something>" from their own build, long after this workflow went
+      # green. Cheaper to stop the release and look.
+      - name: Check the archive names only features the consumer can parse
+        run: python3 .github/scripts/rewrite-wasm-target-features.py --check "$ARCHIVE_DIR/manifold_rs.a"
+
+      - name: Upload the native
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-browser-wasm
+          path: ${{ env.ARCHIVE_DIR }}/manifold_rs.a
+          if-no-files-found: error
+
   pack:
     name: pack and publish
-    needs: [version, native]
+    needs: [version, native, native-browser-wasm]
     runs-on: ubuntu-latest
     env:
       PACKAGE_VERSION: ${{ needs.version.outputs.package-version }}
@@ -208,8 +307,8 @@ jobs:
           done
           find "$staging" -type f -printf '%p (%s bytes)\n'
 
-      # The csproj packs a hard-coded set of runtime identifiers, so a new matrix
-      # leg would build and stage a native that pack silently ignores - a package
+      # The csproj packs a hard-coded set of runtime identifiers, so a new build
+      # job would stage a native that pack silently ignores - a package
       # claiming a platform it does not carry. Compare the two sets and fail
       # loudly. The expected set is read out of the csproj rather than repeated
       # here, so there is still only one list to maintain.
@@ -233,6 +332,31 @@ jobs:
       - name: Pack
         working-directory: dotnet
         run: dotnet pack ManifoldRust/ManifoldRust.csproj -c Release -p:ManifoldRustRequireAllNatives=true -o ../nupkgs
+
+      # The csproj's own EnsureNativeIsPacked checks that each native exists
+      # before packing; this checks that packing then put it in the package, and
+      # is the only check for build/ManifoldRust.props. browser-wasm needs both
+      # halves and neither one fails loudly on its own: the archive alone is
+      # inert, because nothing probes a wasm .a, and the props alone points a
+      # consumer's link at a file the package does not carry.
+      - name: Check the package carries what it claims
+        run: |
+          set -eu
+          package="nupkgs/ManifoldRust.$PACKAGE_VERSION.nupkg"
+          unzip -l "$package"
+          for entry in \
+            runtimes/win-x64/native/manifold_rs.dll \
+            runtimes/linux-x64/native/libmanifold_rs.so \
+            runtimes/osx-arm64/native/libmanifold_rs.dylib \
+            runtimes/osx-x64/native/libmanifold_rs.dylib \
+            runtimes/browser-wasm/native/manifold_rs.a \
+            build/ManifoldRust.props
+          do
+            if ! unzip -l "$package" "$entry" > /dev/null; then
+              echo "::error::$package does not contain $entry, so the platform or the props it stands for is missing from this release."
+              exit 1
+            fi
+          done
 
       # Kept whether or not the push succeeds: if nuget.org rejects the upload
       # the artifact is what makes the failure diagnosable.

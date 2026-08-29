@@ -1,0 +1,93 @@
+<Project>
+
+  <!--
+    Copyright 2026 Lars Brubaker. Licensed under the Apache License, Version 2.0.
+
+    Packed to build/ManifoldRust.props, which NuGet imports into every project that
+    references the package. Everything in it is inert unless the project is building for
+    browser-wasm.
+
+    Why a props file is needed at all: on desktop the runtime probes
+    runtimes/<rid>/native and loads manifold_rs.dll / .so / .dylib with no help from
+    anyone. A browser has no dynamic loading, so the wasm build of manifold_rs is a static
+    archive that has to be on mono-wasm's emcc link line. Nothing puts it there
+    automatically, so the package asks for it here.
+  -->
+
+  <PropertyGroup>
+    <!--
+      RuntimeIdentifier is readable this early: Microsoft.NET.Sdk.WebAssembly's Sdk.props
+      defaults it to browser-wasm before it imports the inner SDK whose Common.props pulls
+      in NuGet's generated imports, and a `-r browser-wasm` on the command line is a global
+      property, so it is set either way. A project that instead assigns RuntimeIdentifier
+      in its own body is the one case this cannot see - set ManifoldRustLinkBrowserWasm
+      directly there.
+
+      It is also the opt-out: ManifoldRustLinkBrowserWasm=false skips the link entirely,
+      which is what to do when consuming a locally packed package that was built without
+      the browser-wasm leg. Without the archive the DllImports are unbacked and the first
+      CSG call throws, so the resulting app is only useful if it never does CSG.
+    -->
+    <ManifoldRustLinkBrowserWasm Condition="'$(ManifoldRustLinkBrowserWasm)' == '' and '$(RuntimeIdentifier)' == 'browser-wasm'">true</ManifoldRustLinkBrowserWasm>
+    <ManifoldRustLinkBrowserWasm Condition="'$(ManifoldRustLinkBrowserWasm)' == ''">false</ManifoldRustLinkBrowserWasm>
+
+    <!--
+      The file NAME is load bearing: mono-wasm builds its P/Invoke module table from the
+      file names of the native inputs it links (_WasmPInvokeModules in
+      WasmApp.Common.targets), so DllImport("manifold_rs") resolves only if the archive on
+      the link line is literally manifold_rs.a. The release pipeline renames cargo's
+      libmanifold_rs.a on the way into the package for exactly this reason.
+
+      Overridable so a consumer can link an archive built from a local checkout without
+      having to repack.
+    -->
+    <ManifoldRustWasmArchive Condition="'$(ManifoldRustWasmArchive)' == ''">$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '..', 'runtimes', 'browser-wasm', 'native', 'manifold_rs.a'))</ManifoldRustWasmArchive>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(ManifoldRustLinkBrowserWasm)' == 'true' and Exists('$(ManifoldRustWasmArchive)')">
+    <!-- WasmBuildNative is deliberately not set: the SDK turns it on by itself once there
+         is a NativeFileReference to link (_SetWasmBuildNativeDefaults), and a project that
+         has explicitly turned it off should keep the failure it asked for.
+
+         Guarded on Exists by the ItemGroup above, because a package packed without the
+         browser-wasm leg - which a local pack on a machine that never built the archive
+         produces, with only a warning - would otherwise hand the SDK a path to nothing and
+         fail somewhere in the native build with no hint as to why. The target at the bottom
+         of this file turns that into a sentence instead. -->
+    <NativeFileReference Include="$(ManifoldRustWasmArchive)" />
+
+    <!--
+      The SDK's post-link wasm-opt run hard-codes simd, exception handling and bulk memory
+      because that is what its own C sources need. rustc emits sign extension, saturating
+      float-to-int, multivalue returns, mutable globals and reference types as well, so
+      under that narrower set the linked module stops validating ("all used features should
+      be allowed") and wasm-opt fails - after a link that succeeded, which is what makes it
+      confusing.
+
+      These describe features of the archive, so they belong with it. Duplicates are
+      harmless: wasm-opt accepts a flag it was already given.
+    -->
+    <WasmOptConfigurationFlags Include="--enable-nontrapping-float-to-int" />
+    <WasmOptConfigurationFlags Include="--enable-sign-ext" />
+    <WasmOptConfigurationFlags Include="--enable-multivalue" />
+    <WasmOptConfigurationFlags Include="--enable-mutable-globals" />
+    <WasmOptConfigurationFlags Include="--enable-reference-types" />
+  </ItemGroup>
+
+  <!--
+    The one case the ItemGroup above silently does nothing: a browser build that wants the
+    link, from a package that does not carry the archive. Rather than let it succeed into an
+    application whose first CSG call throws DllNotFound-shaped nonsense from inside a wasm
+    module, say so at build time and name the way out.
+
+    A target rather than an evaluation-time check because MSBuild cannot raise an error
+    during evaluation; BeforeTargets Build so it fires whatever the SDK decides to do about
+    the native build.
+  -->
+  <Target Name="_ManifoldRustCheckBrowserWasmArchive"
+          Condition="'$(ManifoldRustLinkBrowserWasm)' == 'true' and !Exists('$(ManifoldRustWasmArchive)')"
+          BeforeTargets="Build">
+    <Error Text="ManifoldRust does not contain the browser-wasm archive this project needs to link: '$(ManifoldRustWasmArchive)' does not exist. The published package carries it; a package packed locally without a wasm build of manifold_rs does not. Either use a package that has it, point -p:ManifoldRustWasmArchive= at an archive built from a manifold-rust checkout, or build without CSG by setting -p:ManifoldRustLinkBrowserWasm=false - which leaves the manifold_rs entry points unbacked, so the first boolean operation will throw." />
+  </Target>
+
+</Project>

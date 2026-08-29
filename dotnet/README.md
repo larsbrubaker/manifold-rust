@@ -65,6 +65,42 @@ The package carries natives for `win-x64`, `linux-x64`, `osx-arm64` and
 `osx-x64` under `runtimes/<rid>/native/`, which step 3 above picks up with no
 configuration. Any other runtime identifier needs one of the overrides.
 
+### browser-wasm
+
+A browser has no dynamic loading, so none of the four steps above apply — the
+resolver stands down under `OperatingSystem.IsBrowser()`. The wasm build is a
+static archive, `runtimes/browser-wasm/native/manifold_rs.a`, that has to be on
+mono-wasm's emcc link line instead, which is what `build/ManifoldRust.props`
+does: it adds the archive as a `NativeFileReference` and widens
+`WasmOptConfigurationFlags` to cover the features rustc emits and the SDK's own
+post-link `wasm-opt` run does not enable. That happens for any project the SDK
+is building for `browser-wasm`, and does nothing at all for anyone else.
+
+It is packed to both `build/` and `buildTransitive/`, which matters more than it
+looks: NuGet imports `build/` only into projects that reference the package
+*directly*, and the consumer that needs the link is usually the application at
+the end of a chain — app → some geometry library → `ManifoldRust`. With
+`build/` alone that application imports nothing, links nothing, and fails at its
+first CSG call with no build-time hint that anything was missing.
+
+Three consequences worth knowing:
+
+- Linking it turns on `WasmBuildNative`, so the wasm module is relinked with
+  emcc and the build takes correspondingly longer. Measured on the 10.0.400 SDK
+  that happens on a plain `dotnet build` as well as on `dotnet publish` —
+  publish only defers the build-time pass to its own nested one.
+  `-p:ManifoldRustLinkBrowserWasm=false` opts out; the `DllImport`s are then
+  unbacked and the first CSG call throws, which is the right failure for a build
+  that asked not to link it.
+- If the package was packed without the browser-wasm leg — a local `dotnet pack`
+  on a machine that never built the archive does exactly that, with only a
+  warning — the build fails with a message naming that opt-out, rather than
+  somewhere inside the native build.
+- The file name `manifold_rs.a` is load bearing. mono-wasm derives its P/Invoke
+  module names from the file names it links, so `DllImport("manifold_rs")`
+  resolves only against an archive named exactly that — cargo's own
+  `libmanifold_rs.a` would not do.
+
 ## Version handshake
 
 Because the native library can be redirected — that is the whole point of
@@ -329,7 +365,7 @@ a pushed tag of the form `nuget-v<version>`:
    the `NUGET_API_KEY` repository secret.
 
 The version check is its own first job, so a mismatched tag costs a few seconds
-rather than four cargo builds — or a yanked package. The tests are re-run at the
+rather than five cargo builds — or a yanked package. The tests are re-run at the
 tag rather than trusted from the branch, so a release from code that does not
 pass is not possible.
 
@@ -339,7 +375,36 @@ the csproj. Forgetting the second half would produce a package quietly missing
 that platform, so the pack job fails on any staged runtime identifier the csproj
 does not pack. A release also packs with `ManifoldRustRequireAllNatives=true`,
 which turns the "missing platform" warnings into errors: every platform ships,
-or none does.
+or none does. Finally, the pack job unzips the package it just built and fails
+if any of those natives — or `build/ManifoldRust.props` — is not in it.
+
+`browser-wasm` is built by its own job rather than a matrix leg: it produces a
+static archive from a different cargo invocation, needs an Emscripten on `PATH`,
+and gets `.github/scripts/rewrite-wasm-target-features.py` run over it
+afterwards. That script drops the two feature names rustc's LLVM records that
+the Emscripten in the .NET wasm-tools workload cannot parse; without it a
+consumer's build dies in `wasm-opt` with `Unknown option
+'--enable-bulk-memory-opt'` *after* a link that succeeded. The script's header
+explains the whole failure, and it can be run by hand over any local wasm
+archive — with `--check` to assert an archive is fit to ship without modifying
+it. That check is an allowlist: it fails on any feature name this pipeline has
+not shipped before, not just the two known-bad ones, because
+`rust-toolchain@stable` is unpinned and the next rustc is free to invent a third.
+
+Two follow-ups deliberately left for a later release, recorded here so they are
+not rediscovered from scratch:
+
+- **`runtimes/browser-wasm/nativeassets/` instead of `native/`.** SkiaSharp uses
+  `nativeassets/` for exactly this kind of link-only wasm archive, so NuGet does
+  not also treat it as a copy-to-output runtime asset. Ours is copied to the
+  output directory for a RID-targeted build, which costs a copy but does not
+  reach the publish payload — not worth the churn mid-release, worth doing when
+  the layout is next touched.
+- **Dropping the emsdk from this job.** A staticlib is archived by rustc's own
+  LLVM and nothing links, so `llvm-tools` plus an `llvm-objcopy` may be all this
+  job needs, which would cut the emsdk clone and install out of the release path
+  entirely. Test it *before* the next release rather than during one: the failure
+  mode if rustc does want a linker driver is a red release run.
 
 To pack locally, refresh the staged native first — the csproj packs from
 `ManifoldRust/native-staging/<rid>/`, not from `target/release`, because a cargo

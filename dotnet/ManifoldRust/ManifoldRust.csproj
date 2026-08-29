@@ -80,6 +80,15 @@
     <ManifoldRustNativeOsxArm64 Condition="'$(ManifoldRustNativeOsxArm64)' == ''">$(MSBuildProjectDirectory)\native-staging\osx-arm64\libmanifold_rs.dylib</ManifoldRustNativeOsxArm64>
     <ManifoldRustNativeOsx64 Condition="'$(ManifoldRustNativeOsx64)' == ''">$(MSBuildProjectDirectory)\native-staging\osx-x64\libmanifold_rs.dylib</ManifoldRustNativeOsx64>
 
+    <!-- browser-wasm is the odd one: a static archive rather than a shared library, and a
+         link input rather than something the runtime probes for - see build\ManifoldRust.props.
+         It is named manifold_rs.a rather than cargo's libmanifold_rs.a because mono-wasm
+         derives its P/Invoke module names from the file names it links, and it has had the
+         target_features surgery in .github/scripts/rewrite-wasm-target-features.py applied.
+         Both are the release workflow's job; a hand-built copy that skipped either produces
+         a package that fails in the consumer's link rather than here. -->
+    <ManifoldRustNativeBrowserWasm Condition="'$(ManifoldRustNativeBrowserWasm)' == ''">$(MSBuildProjectDirectory)\native-staging\browser-wasm\manifold_rs.a</ManifoldRustNativeBrowserWasm>
+
     <!-- Set by the release workflow. A published package missing a platform it
          claims to support is a support burden that surfaces months later as a
          DllNotFoundException on someone else's machine, so a release refuses to
@@ -92,7 +101,7 @@
          consumer gets the native with no configuration at all. Conditional so a
          plain build still succeeds without a native present, and so a pack on a
          developer machine produces a win-x64-only package instead of failing;
-         the release workflow is what supplies all four - see EnsureNativeIsPacked
+         the release workflow is what supplies them all - see EnsureNativeIsPacked
          below for which are required. -->
     <None Include="$(ManifoldRustNativeWin64)"
           Condition="Exists('$(ManifoldRustNativeWin64)')"
@@ -114,6 +123,41 @@
           Pack="true"
           PackagePath="runtimes/osx-x64/native"
           Visible="false" />
+
+    <!-- Same runtimes/<rid>/native layout as the rest, for consistency and so the release
+         workflow's staged-versus-packed check covers it, but nothing probes it: a wasm
+         archive is only ever a link input, which is what build\ManifoldRust.props makes it. -->
+    <None Include="$(ManifoldRustNativeBrowserWasm)"
+          Condition="Exists('$(ManifoldRustNativeBrowserWasm)')"
+          Pack="true"
+          PackagePath="runtimes/browser-wasm/native"
+          Visible="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The same file in both folders, because NuGet treats them differently and this
+         package needs both. build/ is imported only into a project that references the
+         package directly; buildTransitive/ is imported into projects that reach it through
+         another reference too. The consumer that matters is exactly that second shape - an
+         application whose wasm module has to carry the archive, referencing a library that
+         references this package - and for it a build/-only props is never imported at all:
+         no NativeFileReference, no link, no error, and a browser app that throws at its
+         first CSG call.
+
+         Both folders sit at the same depth under the package root, so the archive path the
+         props computes relative to itself is the same either way.
+
+         Packed unconditionally - the file does nothing at all off browser-wasm - so that a
+         package built on a machine without the wasm leg still behaves exactly like a
+         released one for every desktop consumer. -->
+    <None Include="build\ManifoldRust.props"
+          Pack="true"
+          PackagePath="build"
+          Visible="false" />
+    <None Include="build\ManifoldRust.props"
+          Pack="true"
+          PackagePath="buildTransitive"
+          Visible="false" />
   </ItemGroup>
 
   <!-- Publishing a package without its native is silent and useless: consumers
@@ -123,8 +167,8 @@
        was not built. The rest are fatal only under ManifoldRustRequireAllNatives
        - a local pack is a legitimate reason to be missing them.
 
-       This target only knows about the four runtime identifiers spelled out
-       above. Adding a build for a fifth means adding it here too, which the
+       This target only knows about the runtime identifiers spelled out
+       above. Adding a build for another means adding it here too, which the
        release workflow enforces by refusing to stage a runtime identifier this
        file does not mention. -->
   <Target Name="EnsureNativeIsPacked" BeforeTargets="GenerateNuspec">
@@ -142,6 +186,13 @@
     <Error Condition="'$(ManifoldRustRequireAllNatives)' == 'true' AND !Exists('$(ManifoldRustNativeOsx64)')"
            ContinueOnError="ErrorAndContinue"
            Text="The osx-x64 native is missing and ManifoldRustRequireAllNatives is set, so this release would ship without runtimes/osx-x64/native/libmanifold_rs.dylib. Expected at '$(ManifoldRustNativeOsx64)'." />
+    <!-- Missing this one is worse than a DllNotFoundException at the first call: without
+         the archive the wasm link has nothing behind manifold_rs, and build\ManifoldRust.props
+         then points a NativeFileReference at a file the package does not carry, so every
+         browser consumer fails at build. -->
+    <Error Condition="'$(ManifoldRustRequireAllNatives)' == 'true' AND !Exists('$(ManifoldRustNativeBrowserWasm)')"
+           ContinueOnError="ErrorAndContinue"
+           Text="The browser-wasm native is missing and ManifoldRustRequireAllNatives is set, so this release would ship without runtimes/browser-wasm/native/manifold_rs.a. Expected at '$(ManifoldRustNativeBrowserWasm)'." />
 
     <Warning Condition="'$(ManifoldRustRequireAllNatives)' != 'true' AND !Exists('$(ManifoldRustNativeLinux64)')"
              Text="The linux-x64 native is missing; the package will not carry runtimes/linux-x64/native/libmanifold_rs.so. Expected at '$(ManifoldRustNativeLinux64)'." />
@@ -149,6 +200,8 @@
              Text="The osx-arm64 native is missing; the package will not carry runtimes/osx-arm64/native/libmanifold_rs.dylib. Expected at '$(ManifoldRustNativeOsxArm64)'." />
     <Warning Condition="'$(ManifoldRustRequireAllNatives)' != 'true' AND !Exists('$(ManifoldRustNativeOsx64)')"
              Text="The osx-x64 native is missing; the package will not carry runtimes/osx-x64/native/libmanifold_rs.dylib. Expected at '$(ManifoldRustNativeOsx64)'." />
+    <Warning Condition="'$(ManifoldRustRequireAllNatives)' != 'true' AND !Exists('$(ManifoldRustNativeBrowserWasm)')"
+             Text="The browser-wasm native is missing; the package will not carry runtimes/browser-wasm/native/manifold_rs.a, and a browser consumer will have to set ManifoldRustLinkBrowserWasm=false. Expected at '$(ManifoldRustNativeBrowserWasm)'." />
   </Target>
 
 </Project>
