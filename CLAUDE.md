@@ -16,7 +16,13 @@ we fix it on our side. Every deliberate divergence must be documented in
 `docs/CPP_DIVERGENCES.md` (what differs, why, and the evidence), so
 trace-diff debugging sessions against the reference know what to expect.
 Divergence for convenience is still forbidden — only accuracy, real bug
-fixes, or measured improvements qualify.
+fixes, or measured improvements qualify. One further category is
+*disclosed* rather than justified: an inherited divergence — an output
+shape this port already shipped that we would resolve toward the C++ on
+the merits but cannot change unilaterally, because a downstream consumer
+(manifold-sharp) verifies against this tree bit-for-bit. These are
+documented debt with a named harmonization path, never a way to skip the
+bar above.
 
 ## Test-First Bug Fixing (Critical Practice)
 
