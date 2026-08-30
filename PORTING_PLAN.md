@@ -43,6 +43,23 @@ When the submodule bump to v3.5.2 is committed, update the reference-target line
 All substantive v3.5.0 deltas are now ported or confirmed N/A. What's left is
 optional/peripheral:
 
+### Needs investigation
+- **`refine`'s finishing tail runs in a different order than C++ `Impl::Refine`**
+  (`smoothing.cpp:1120-1128`). The C++ clears tangents, then branches — with tangents,
+  `SetNormalsAndCoplanar` + `CalculateBBox`; without, `CalculateVertNormals` — and only
+  *then* calls `SortGeometry`, with no `SetEpsilon` anywhere. Our `manifold_smooth.rs`
+  tail instead runs `calculate_bbox` + `set_epsilon` unconditionally and computes normals
+  *after* `sort_geometry`. On the **tangent-free** leg this is bit-free: vertex normals are
+  recomputed from the same geometry either side of what is only a Morton relabelling, so
+  the values land identically (this is the leg `subdivision::subdivide_impl` uses, and its
+  output is verified against the native library). The **`had_tangents`** leg is the open
+  question: running `set_normals_and_coplanar` after the sort rather than before it can
+  group faces into different `coplanar_id` sets, since the flood-fill walks faces in
+  storage order. Nothing currently asserts those groupings, which is why this has gone
+  unnoticed. Investigate and reconcile **coordinated with manifold-sharp**, whose
+  `FinishRefine` transcribes our order and whose oracle lane compares meshes with no slack
+  — changing it on one side alone breaks the other.
+
 ### Likely N/A — confirm before skipping
 - Import/Export fixes + topological 3MF sort (#1705, #1685, #1692) — no 3MF in Rust. But
   #1685 "improve import transformation" may fix the non-manifold OBJ load behind the

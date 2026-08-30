@@ -555,6 +555,19 @@ impl ManifoldImpl {
 
 /// Simple midpoint subdivision: each triangle is split into 4 by inserting
 /// edge midpoints. This is a convenience wrapper that uses uniform n=2 divisions.
+///
+/// Each level ends with the same finishing tail `Manifold::refine` runs for the
+/// tangent-free case, because this performs the same operation. Running only
+/// part of it hands back an impl that lies about itself: `subdivide` appends
+/// vertices and faces, so what a short tail leaves behind is a collider built
+/// over the *pre*-subdivision faces, a `vert_normal` list shorter than
+/// `vert_pos`, and — if the caller's mesh had them — tangents that no longer
+/// describe the halfedges. `boolean3_kernels::shadow01` reads `vert_normal` per
+/// vertex as its symbolic-perturbation direction and indexes off the end.
+///
+/// The C++ has no counterpart to this function: there, `Impl::Subdivide` has
+/// exactly two callers, `Manifold::Sphere` and `Impl::Refine`, and both follow
+/// it with a full finish including `sort_geometry`.
 pub fn subdivide_impl(mesh: &ManifoldImpl, levels: usize) -> ManifoldImpl {
     if levels == 0 || mesh.is_empty() {
         return mesh.clone();
@@ -563,8 +576,31 @@ pub fn subdivide_impl(mesh: &ManifoldImpl, levels: usize) -> ManifoldImpl {
     let mut current = mesh.clone();
     for _ in 0..levels {
         current.subdivide(&|_vec, _t0, _t1| 1, false);
+
+        // Subdivision multiplied the halfedges, so any tangents the caller's
+        // mesh carried now describe nothing. They must go before sort_geometry,
+        // which gathers one tangent per new halfedge out of the old array.
+        current.halfedge_tangent.clear();
         current.calculate_bbox();
         current.set_epsilon(-1.0, false);
+
+        // sort_geometry is what rebuilds the face collider, and it has to
+        // reorder to do it: Collider's radix tree requires ascending Morton
+        // codes. Vertex normals are then recomputed rather than permuted,
+        // because sort_verts only permutes vert_normal when its length already
+        // equals the vertex count — a stale list is left exactly as stale.
+        //
+        // The bbox → epsilon → sort order above is not this crate's invention:
+        // it is verbatim C++ Manifold::Sphere's own post-Subdivide finish
+        // (constructors.cpp:187-191, CalculateBBox → SetEpsilon → SortGeometry),
+        // which is the closest thing the reference has to this function. Our
+        // `refine` runs the same order and is the in-crate secondary reference;
+        // note that C++ Impl::Refine does not (see PORTING_PLAN.md).
+        current.sort_geometry();
+        crate::face_op::calculate_vert_normals(&mut current);
+
+        // The subdivided mesh is no longer the original it was cloned from.
+        current.mesh_relation.original_id = -1;
     }
 
     current

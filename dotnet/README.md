@@ -8,6 +8,11 @@ result.
 only adds .NET lifetime and error handling on top of it; when the two disagree,
 the header is right.
 
+If you need the library without a native dependency — on browser-wasm, say —
+[manifold-sharp](https://github.com/larsbrubaker/manifold-sharp) is a pure C#
+port of manifold-rust, bit-exact with it on identical inputs. Its oracle test
+lane runs against this binding and compares the two row for row.
+
 ## Build and test
 
 The native library is produced by cargo, not by MSBuild, so build it first:

@@ -1,5 +1,7 @@
 use super::*;
-use crate::linalg::Mat3x4;
+use crate::linalg::{Mat3x4, Vec3};
+use crate::manifold::Manifold;
+use crate::types::Error;
 
 #[test]
 fn test_subdivide_cube_once() {
@@ -54,6 +56,100 @@ fn test_partition_asymmetric() {
             sum
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Regression: subdivide_impl must run the whole of refine's finishing tail.
+//
+// It used to run two of its six steps, calculate_bbox and set_epsilon, leaving
+// behind a collider built over the pre-subdivision faces, a vert_normal list
+// shorter than vert_pos, and any tangents the input carried still sized to the
+// old halfedges. subdivide appends vertices and faces, so all three are stale by
+// construction, and the boolean reads vert_normal per vertex.
+// ---------------------------------------------------------------------------
+
+/// The symptom: `subdivide_impl` must hand back a mesh a boolean can consume.
+fn subdivided_cube_is_usable_in_a_boolean(levels: usize, expected_tri: usize) {
+    let cube = ManifoldImpl::cube(&Mat3x4::identity());
+    let subdivided = Manifold::from_impl(subdivide_impl(&cube, levels));
+    let bore = Manifold::cube(Vec3::new(0.5, 0.5, 4.0), true).translate(Vec3::new(0.5, 0.5, 0.5));
+
+    let drilled = subdivided.difference(&bore);
+
+    assert_eq!(drilled.status(), Error::NoError);
+    assert_eq!(drilled.num_tri(), expected_tri);
+    // The subdivided cube is still the unit cube, so volume and area are the
+    // subdivision-independent answer: 1 minus the 0.25 bore, and the six faces
+    // minus the two 0.25 holes plus the four 0.5x1 bore walls.
+    assert_eq!(drilled.volume(), 0.75);
+    assert_eq!(drilled.surface_area(), 7.5);
+}
+
+#[test]
+fn test_subdivided_cube_is_usable_in_a_boolean_one_level() {
+    subdivided_cube_is_usable_in_a_boolean(1, 64);
+}
+
+#[test]
+fn test_subdivided_cube_is_usable_in_a_boolean_two_levels() {
+    subdivided_cube_is_usable_in_a_boolean(2, 176);
+}
+
+/// Root cause 1: subdivision appends faces, so the collider the pre-subdivision
+/// mesh carried describes triangles that no longer exist. Before the repair the
+/// cube's 12 leaves stood against 48 faces and 45 of them found nothing.
+#[test]
+fn test_subdivided_cube_collider_matches_its_own_faces() {
+    for levels in 1..=2 {
+        let m = subdivide_impl(&ManifoldImpl::cube(&Mat3x4::identity()), levels);
+        assert_eq!(
+            crate::sort::collider_self_misses(&m),
+            0,
+            "every face must overlap its own leaf box in the cached collider (levels={})",
+            levels
+        );
+    }
+}
+
+/// Root cause 2: the boolean reads `vert_normal` per vertex as its symbolic
+/// perturbation direction (`boolean3_kernels::shadow01`), so a vertex list that
+/// outgrew its normals indexes off the end. This is the half a bare
+/// `sort_geometry` does not repair — `sort_verts` permutes `vert_normal` only
+/// when its length already equals the vertex count, so a stale list stays stale.
+#[test]
+fn test_subdivided_cube_has_a_normal_for_every_vertex() {
+    for levels in 1..=2 {
+        let m = subdivide_impl(&ManifoldImpl::cube(&Mat3x4::identity()), levels);
+        assert_eq!(
+            m.vert_normal.len(),
+            m.num_vert(),
+            "shadow01 indexes vert_normal by vertex (levels={})",
+            levels
+        );
+    }
+}
+
+/// Root cause 3: subdivision multiplies the halfedges, so tangents the input
+/// carried no longer describe them. Left in place, `gather_faces` copies one
+/// tangent per *new* halfedge out of the old array and indexes past its end —
+/// which is what would turn the collider repair into a panic on a smoothed mesh.
+#[test]
+fn test_subdivide_drops_tangents_it_can_no_longer_describe() {
+    let smooth = Manifold::smooth(&Manifold::tetrahedron().get_mesh_gl(-1), &[]);
+    let smooth = smooth.as_impl();
+    assert_eq!(
+        smooth.halfedge_tangent.len(),
+        smooth.halfedge.len(),
+        "the fixture must actually carry tangents for this to test anything"
+    );
+
+    let m = subdivide_impl(smooth, 1);
+
+    assert_eq!(
+        m.halfedge_tangent.len(),
+        0,
+        "tangents that no longer match the halfedge count must be dropped, not kept"
+    );
 }
 
 #[test]

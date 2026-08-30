@@ -313,6 +313,40 @@ pub fn sort_geometry(mesh: &mut ManifoldImpl) {
     );
 }
 
+/// Counts faces whose true bounding box cannot find its own leaf in the mesh's
+/// cached collider.
+///
+/// A box always overlaps itself, so on a closed mesh with more than one face
+/// this is zero exactly when the collider was built from the geometry the mesh
+/// currently holds. Anything above zero means the impl is lying about itself:
+/// some site moved or added geometry without re-running `sort_geometry`, and the
+/// booleans that query this collider will silently miss real intersections
+/// before failing somewhere else entirely.
+///
+/// **It reports false misses, so only assert on it for meshes that avoid both
+/// cases.** Neither is a collider fault:
+/// - Faces with an unpaired halfedge — soup, or anything mid-`remove_degenerates`
+///   — get no box from `get_face_box_morton` (it returns `K_NO_CODE` and leaves
+///   the default empty box), and `collisions_with_boxes` skips empty queries.
+///   Every such face counts as a miss.
+/// - A mesh of 0 or 1 faces builds a collider with no internal nodes, and the
+///   query returns immediately. Its one face counts as a miss.
+///
+/// Test-only — production code never asks, because every site that changes
+/// geometry is supposed to finish with `sort_geometry`.
+#[cfg(test)]
+pub(crate) fn collider_self_misses(mesh: &ManifoldImpl) -> usize {
+    let (face_box, _) = get_face_box_morton(mesh);
+    let mut found_itself = vec![false; face_box.len()];
+    mesh.collider
+        .collisions_with_boxes(&face_box, false, |query_idx, leaf_idx| {
+            if query_idx == leaf_idx {
+                found_itself[query_idx] = true;
+            }
+        });
+    found_itself.iter().filter(|found| !**found).count()
+}
+
 // -----------------------------------------------------------------------
 // Tests
 // -----------------------------------------------------------------------

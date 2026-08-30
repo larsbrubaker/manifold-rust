@@ -400,6 +400,34 @@ pub fn cylinder(
             v.z -= height / 2.0;
         }
         m.calculate_bbox();
+
+        // extrude finished with sort_geometry, which is where the face BVH is
+        // built, so moving the vertices left the cached collider describing the
+        // pre-shift positions — a half-height out in Z. Every boolean against a
+        // centered cylinder then queried leaf boxes that could not overlap
+        // either cap fan, missed those intersections, and tripped pair_up's
+        // non-manifold assert. C++ v3.5.2 (constructors.cpp:155-157) has no such
+        // defect because it centers with `cylinder.Translate(...).AsOriginal()`,
+        // and Impl::Transform maintains the collider; centering in place here
+        // dropped that maintenance with it.
+        //
+        // Re-sorting is a repair rather than a change: Morton codes are computed
+        // relative to the bbox and a pure translation moves the bbox with the
+        // points, so the sort finds the order the mesh already has. Positions,
+        // halfedges and triangle indices come out bit-identical; only the cached
+        // BVH moves, from wrong to right. set_epsilon is deliberately NOT re-run,
+        // so epsilon stays exactly the value the un-centered mesh carried.
+        //
+        // What this deliberately does NOT do is adopt the C++'s output semantics.
+        // Centering in place leaves originalID at extrude's, keeps the -0.0 that
+        // cosd/sind put in x and y, and holds epsilon one ULP off what
+        // Impl::Transform would compute (its spectral norm for a translation
+        // comes back 0.9999999999999998, not 1.0). Those differences predate the
+        // collider repair above and are retained on purpose — see
+        // docs/CPP_DIVERGENCES.md entry 2, which also records that the cone
+        // branch below models AsOriginal faithfully and so disagrees with this
+        // one about originalID. Do not reconcile either half in isolation.
+        m.sort_geometry();
     }
     m
 }
@@ -420,6 +448,8 @@ fn lerp2(a: Vec2, b: Vec2, t: f64) -> Vec2 {
 mod tests {
     use super::*;
     use crate::linalg::Vec2;
+    use crate::manifold::Manifold;
+    use crate::types::Error;
 
     fn unit_square() -> Polygons {
         vec![vec![
@@ -499,6 +529,74 @@ mod tests {
         // Cone: radius_high = 0
         let m = cylinder(1.0, 1.0, 0.0, 8, false);
         assert!(m.is_2_manifold(), "cone cylinder is not 2-manifold");
+    }
+
+    // -------------------------------------------------------------------
+    // Regression: the centered cylinder's cached collider.
+    //
+    // `cylinder`'s `center` branch edits vert_pos in place and used to refresh
+    // only the bbox, leaving the face BVH `extrude`'s sort_geometry had built
+    // describing the pre-shift positions. Every boolean against such a cylinder
+    // queried a collider a half-height out in Z, missed the intersections
+    // against both cap fans, and tripped pair_up's non-manifold assert.
+    // -------------------------------------------------------------------
+
+    /// Drilling an axis-aligned bore through a centered cube is about the most
+    /// ordinary thing this API is asked for, and it threw.
+    #[test]
+    fn centered_cylinder_is_usable_in_a_boolean() {
+        let cube = Manifold::cube(Vec3::new(2.0, 2.0, 2.0), true);
+        let bore = Manifold::cylinder_centered(4.0, 0.4, 0.4, 64, true);
+
+        let drilled = cube.difference(&bore);
+
+        assert_eq!(drilled.status(), Error::NoError);
+        assert_eq!(
+            drilled.num_tri(),
+            272,
+            "the same subtraction reached through a transform produces 272 triangles"
+        );
+    }
+
+    /// The cone branch is built on top of the centered cylinder — its first step
+    /// is `cylinder(h, radius_high, 0, n, true)` — so a stale collider there is
+    /// carried through `transform` into the cone.
+    #[test]
+    fn centered_cone_is_usable_in_a_boolean() {
+        let cube = Manifold::cube(Vec3::new(2.0, 2.0, 2.0), true);
+        let cone = Manifold::cylinder_centered(4.0, 0.0, 0.4, 64, true);
+
+        // The cone reaches the boolean through `transform`, which maps the
+        // collider's boxes rather than rebuilding them — so it faithfully
+        // carries forward whatever the inner centered cylinder handed it, stale
+        // or not. Assert the collider directly here too: without it nothing
+        // guards that gate, and the boolean below could start passing again for
+        // an unrelated reason while the cone still shipped a wrong BVH.
+        assert_eq!(
+            crate::sort::collider_self_misses(cone.as_impl()),
+            0,
+            "the cone's collider must survive the transform intact"
+        );
+
+        let drilled = cube.difference(&cone);
+
+        assert_eq!(drilled.status(), Error::NoError);
+        assert!(drilled.num_tri() > 0);
+    }
+
+    /// The root cause, pinned directly: a constructor must not hand back an impl
+    /// whose cached collider disagrees with its own vertex positions. With the
+    /// stale collider the bottom cap's true box sat at z = -2 while its leaf box
+    /// sat at z = 0, so it found nothing.
+    #[test]
+    fn centered_cylinder_collider_matches_its_vertex_positions() {
+        let m = cylinder(4.0, 0.4, 0.4, 64, true);
+
+        assert_eq!(
+            crate::sort::collider_self_misses(&m),
+            0,
+            "every face must overlap its own leaf box in the cached collider"
+        );
     }
 
     #[test]

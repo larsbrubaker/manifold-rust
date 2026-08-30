@@ -139,12 +139,25 @@ There is a double-precision path (`FromMesh64` / `GetMeshGL64`), a robust import
 [`dotnet/README.md`](dotnet/README.md); the ABI itself is described in
 [`ffi/manifold_rs.h`](ffi/manifold_rs.h).
 
+### manifold-sharp — the same library, in C#
+
+The `ManifoldRust` package above is a P/Invoke binding: it loads this Rust cdylib and calls
+into it. [manifold-sharp](https://github.com/larsbrubaker/manifold-sharp) is the other
+thing you might want — a complete pure C# **port** of manifold-rust, with no native library
+at all, so it runs anywhere .NET runs, browser-wasm included. It is bit-exact with this
+crate on identical inputs, and it lives as a submodule of
+[agg-sharp](https://github.com/MatterHackers/agg-sharp).
+
+The two projects check each other: manifold-sharp's oracle test lane runs the same
+operations through its port *and* through this library via the binding, then compares the
+exported meshes row for row with no slack.
+
 ## State of the project
 
 - **Port: complete.** All 18 phases of the C++ engine (v3.5.0) are implemented and every
-  C++ test is ported or covered — 686 tests passing, 0 failing (the handful of `#[ignore]`d
-  tests are debug-build-speed only and pass in release). Details in
-  [PORTING_PLAN.md](PORTING_PLAN.md).
+  C++ test is ported or covered — 721 tests passing, 0 failing in a debug run, and 730
+  passing with nothing ignored in release (the 9 `#[ignore]`d tests are debug-build-speed
+  only). Details in [PORTING_PLAN.md](PORTING_PLAN.md).
 - **Performance: at parity with the sequential C++ build.** Sphere-minus-sphere at 2 M
   input triangles: 2.61 s (C++) vs 2.57 s (Rust); a 7 999-sphere grid union: 13.5 s vs
   14.5 s — identical triangle counts throughout, peak memory within ~10%. The `parallel`
@@ -152,8 +165,11 @@ There is a double-precision path (`FromMesh64` / `GetMeshGL64`), a robust import
   `cargo run --release --example perf_test` and `--example large_scene_test`.
 - **Robust engine: corpus-validated**, with the current numbers, open items and the
   referee tooling in [docs/ROBUST_ENGINE_STATUS.md](docs/ROBUST_ENGINE_STATUS.md).
-- **Deliberate divergences from C++** (accuracy fixes, each with evidence) are catalogued
-  in [docs/CPP_DIVERGENCES.md](docs/CPP_DIVERGENCES.md).
+- **Deliberate divergences from C++** are catalogued in
+  [docs/CPP_DIVERGENCES.md](docs/CPP_DIVERGENCES.md), in two kinds: accuracy fixes we
+  stand behind, and inherited output shapes we would resolve toward the C++ but cannot
+  change unilaterally without breaking a downstream port that verifies against this tree
+  bit-for-bit. The second kind is disclosed with what a coordinated fix would take.
 
 Known limits, honestly:
 
