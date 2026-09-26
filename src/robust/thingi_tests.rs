@@ -572,3 +572,14 @@ fn thingi_1147177_import_counts() {
     assert_eq!(m.num_tri(), 6424);
     assert_eq!(m.genus(), 4);
 }
+
+/// Thingi10K #939888 imports with the counts manifold-sharp pins
+/// (StlFixturesTests); like #1147177 its count moved (860/1716 -> 861/1718)
+/// when `dedupe_edges` stopped repairing stale duplicate entries.
+#[test]
+fn thingi_939888_import_counts() {
+    let m = import_stl_like_demo(TENTACLE_939888);
+    assert_eq!(m.status(), Error::NoError);
+    assert_eq!(m.num_vert(), 861);
+    assert_eq!(m.num_tri(), 1718);
+}

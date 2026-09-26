@@ -154,12 +154,13 @@ would not catch.
 
 **What is observably different:** Thingi10K #1147177 through the demo import
 goes from 3201 verts / 6418 tris / genus 5 / volume 0.047535 to 3206 / 6424 /
-genus 4 / 0.047563, with no corner moved. manifold-sharp made the same fix
+genus 4 / 0.047563, with no corner moved. Thingi10K #939888 goes from 860 / 1716
+to 861 / 1718. manifold-sharp made the same fix
 (its `docs/RUST_DIVERGENCES.md` entry 7) and pins the same counts, so the two
 ports agree.
 
 **Evidence:** `edge_op::tests::test_dedupe_edges_never_moves_a_triangle_corner`
 on `src/testdata/dedupe-stale-duplicate.txt` (the 852-triangle fixture shared
 with manifold-sharp's `DedupeEdgesRegressionTests`): 16 corners moved before the
-fix, 0 after; `robust::thingi_tests::thingi_1147177_import_counts` pins the new
-counts.
+fix, 0 after; `robust::thingi_tests::thingi_1147177_import_counts` and
+`thingi_939888_import_counts` pin the new counts.
