@@ -872,9 +872,44 @@ pub fn dedupe_edges(mesh: &mut ManifoldImpl) {
             break;
         }
         for &dup in &duplicates {
+            // Deliberate divergence (docs/CPP_DIVERGENCES.md): the C++ repairs
+            // every entry collected at the top of the pass. An earlier repair
+            // in the same pass can leave a later entry no longer duplicated,
+            // and dedupe_edge on that stale entry copies the position of a
+            // vertex that is not the orbit's own into the new vertex it
+            // relabels the orbit to, so triangle corners move and solid
+            // disappears. The outer loop collects again, so skipping loses
+            // nothing a later pass would not catch.
+            if !is_still_duplicated(mesh, dup) {
+                continue;
+            }
             dedupe_edge(mesh, dup);
         }
     }
+}
+
+/// Whether another halfedge leaving `edge`'s start vertex still ends at the
+/// same vertex — i.e. whether the edge is still a duplicate right now.
+fn is_still_duplicated(mesh: &ManifoldImpl, edge: usize) -> bool {
+    let end_vert = mesh.halfedge[edge].end_vert;
+    if mesh.halfedge[edge].start_vert < 0 || end_vert < 0 {
+        return false;
+    }
+    let mut current = edge;
+    for _ in 0..=mesh.halfedge.len() {
+        let pair = mesh.halfedge[current].paired_halfedge;
+        if pair < 0 {
+            return false;
+        }
+        current = next_halfedge(pair) as usize;
+        if current == edge {
+            return false;
+        }
+        if mesh.halfedge[current].end_vert == end_vert {
+            return true;
+        }
+    }
+    false
 }
 
 // -----------------------------------------------------------------------

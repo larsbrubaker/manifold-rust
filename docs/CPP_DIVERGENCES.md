@@ -7,7 +7,7 @@ justified it. Trace-diff debugging against the C++ must expect these.
 Two kinds of entry live here, and they are not the same claim:
 
 - **Justified divergence** — an accuracy fix, a real bug fix in the C++, or a
-  measured improvement. CLAUDE.md's three qualifying reasons. Entry 1.
+  measured improvement. CLAUDE.md's three qualifying reasons. Entries 1 and 3.
 - **Inherited divergence, documented and scheduled for coordinated
   harmonization** — an output shape this port already shipped, which we would
   resolve toward the C++ on the merits but cannot change unilaterally, because a
@@ -135,3 +135,31 @@ differences, 0 value differences); the C++ sources cited above;
 and `centered_cylinder_is_usable_in_a_boolean`, which pin the cache repair that
 this entry's semantics were preserved *through*; and manifold-sharp's 34/34
 oracle lane run against this tree's cdylib.
+
+## 3. `dedupe_edges` skips duplicate entries an earlier repair already resolved (2026-09-26)
+
+**What differs:** `edge_op::dedupe_edges` checks each collected duplicate is
+still a duplicate (`is_still_duplicated`: another halfedge leaving its start
+vertex still ends at its end vertex) before calling `dedupe_edge` on it. The C++
+(`src/edge_op.cpp`, `DedupeEdges`) collects every duplicated edge once per pass
+and repairs each entry with no re-check.
+
+**Why:** a real bug in the C++. An earlier repair in the same pass rewires the
+neighbourhood, so a later entry can be stale; repairing it copies the position
+of a vertex that is not the orbit's own into the new vertex it relabels the
+orbit to, so triangle corners jump and solid disappears — an exact union of two
+`NoError` operands lost 2.3e-5 of one of them, reported `NoError`. The outer
+loop re-collects each pass, so skipping a stale entry loses nothing a later pass
+would not catch.
+
+**What is observably different:** Thingi10K #1147177 through the demo import
+goes from 3201 verts / 6418 tris / genus 5 / volume 0.047535 to 3206 / 6424 /
+genus 4 / 0.047563, with no corner moved. manifold-sharp made the same fix
+(its `docs/RUST_DIVERGENCES.md` entry 7) and pins the same counts, so the two
+ports agree.
+
+**Evidence:** `edge_op::tests::test_dedupe_edges_never_moves_a_triangle_corner`
+on `src/testdata/dedupe-stale-duplicate.txt` (the 852-triangle fixture shared
+with manifold-sharp's `DedupeEdgesRegressionTests`): 16 corners moved before the
+fix, 0 after; `robust::thingi_tests::thingi_1147177_import_counts` pins the new
+counts.
