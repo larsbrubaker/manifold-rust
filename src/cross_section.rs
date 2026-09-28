@@ -143,8 +143,10 @@ impl CrossSection {
         )
     }
 
+    /// Net enclosed area: the sum of signed contour areas, so CCW outers add
+    /// and CW holes subtract, matching C++ `CrossSection::Area`.
     pub fn area(&self) -> f64 {
-        self.polygons.iter().map(|p| signed_area(p).abs()).sum()
+        self.polygons.iter().map(|p| signed_area(p)).sum()
     }
 
     pub fn bounds(&self) -> Rect {
@@ -583,6 +585,21 @@ mod tests {
         let a = CrossSection::square(1.0);
         let b = a.offset(0.25);
         assert!(b.area() > a.area());
+    }
+
+    /// A 10x10 square minus an inner 4x4 square yields an outer contour and a
+    /// hole; the hole's area is subtracted, giving 100 - 16 = 84.
+    #[test]
+    fn test_cross_section_area_subtracts_holes() {
+        let outer = CrossSection::square(10.0);
+        let hole = CrossSection::square(4.0).translate(Vec2::new(3.0, 3.0));
+        let ring = outer.difference(&hole);
+        assert_eq!(
+            ring.num_contour(),
+            2,
+            "difference should yield outer + hole"
+        );
+        assert_eq!(ring.area(), 84.0);
     }
 
     /// C++ TEST(CrossSection, Square) — cube from extrusion matches cube
