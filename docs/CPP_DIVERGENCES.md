@@ -310,11 +310,14 @@ rotation of the cycle can differ.
 the straddling triangles in a `std::unordered_set<int>` and starts each contour
 at `*tris.begin()`. That iteration order is unspecified by the standard (MSVC,
 libstdc++ and libc++ each give their own), so the C++ start vertex is a property
-of the toolchain, not of the algorithm. This port collects into a
-`std::collections::HashSet<usize>`, whose default `RandomState` hasher makes the
-start vertex vary from process to process as well. When several contours exist,
-the order of the contours follows the same set iteration and is equally
-unpinned. Everything downstream of the public API is unaffected in shape:
+of the toolchain, not of the algorithm. When several contours exist, the order
+of the contours follows the same set iteration. This port runs the same loop
+over a `std::collections::BTreeSet<usize>`, so `begin()` is the lowest-indexed
+untraced triangle: the start vertex and the contour order are deterministic
+(ascending triangle index) and reproducible across processes and platforms,
+but may still differ from any particular C++ toolchain's order. (Until
+2026-09-29 the port used a `HashSet` with the default `RandomState` hasher, so
+both varied from process to process.) Everything downstream of the public API is unaffected in shape:
 `Manifold::slice` wraps the contours in a `FillRule::Positive` union
 (`CrossSection::new`), as every C++ caller does.
 
@@ -325,8 +328,12 @@ interpolation was corrected to `la::lerp(below, above, a)` =
 `below * (1 - a) + above * a` (it was `below + a * (above - below)`, which
 differed by one ULP in 10 of 24 coordinates). The MSVC build starts that contour
 at a different triangle than this port does; the cycles agree bit-for-bit.
-manifold-sharp needs no change for the start vertex, but must twin the `lerp`
-form to keep its raw slice bit-equal.
+`cross_section::ctor_tests::test_raw_slice_contour_order_is_deterministic`
+pins the contour order and start vertices of a three-sphere raw slice; it
+failed on every run against the `HashSet` version. manifold-sharp must twin
+both the `lerp` form and the ascending-triangle-index start (a sorted set, or
+the minimum remaining index) to keep its raw slice bit-equal, cycle rotation
+and contour order included.
 
 ## 8. `CrossSection` hull: order of `+0.0` / `-0.0` ties (2026-09-29) — implementation-defined in the C++
 
@@ -338,9 +345,11 @@ coordinate. Nothing else: `hull_points` / `hull_cross_sections`
 
 **Why:** C++ sorts the points with `std::sort` and `V2Lesser`, under which
 `(0.0, y)` and `(-0.0, y)` are equivalent; `std::sort` is not stable and its
-permutation of equivalent elements is left to the library (MSVC uses insertion
-sort below 32 elements and introsort above). This port sorts with the stable
-`slice::sort_by` on the same comparator. The `CCW(.., 0.0)` backtrack then
+permutation of equivalent elements is left to the library. MSVC's `std::sort`
+uses insertion sort below 32 elements, which is stable, and introsort above, so
+against MSVC the tie order (and therefore this divergence) can only show for
+inputs of 32 or more points; other libraries' small-input paths differ. This
+port sorts with the stable `slice::sort_by` on the same comparator. The `CCW(.., 0.0)` backtrack then
 keeps one of the tied points per chain (the later one in the lower chain, the
 earlier one in the upper), so the kept zero's sign follows the library's
 permutation. No other input is affected, because equivalent

@@ -605,8 +605,13 @@ impl ManifoldImpl {
         // Query the cached face BVH (C++ Slice uses collider_).
         let collider = &self.collider;
 
-        // Find all triangles that straddle the slice plane
-        let mut tris: std::collections::HashSet<usize> = std::collections::HashSet::new();
+        // Find all triangles that straddle the slice plane. C++ holds them in
+        // a `std::unordered_set<int>` and starts each contour at
+        // `*tris.begin()`, whose order is implementation-defined. A BTreeSet
+        // keeps the same algorithm with a pinned, documented order: each
+        // contour starts at the lowest-indexed untraced triangle
+        // (docs/CPP_DIVERGENCES.md entry 7).
+        let mut tris: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
         let query = vec![BBox::from_points(plane.min, plane.max)];
         collider.collisions_with_boxes(&query, false, |_query_idx, tri| {
             let mut min_z = f64::INFINITY;
@@ -624,7 +629,9 @@ impl ManifoldImpl {
         // Trace polygon loops through intersected triangles
         let mut polys: Polygons = Vec::new();
         while !tris.is_empty() {
-            let start_tri = *tris.iter().next().unwrap();
+            let Some(&start_tri) = tris.first() else {
+                break;
+            };
             let mut poly: SimplePolygon = Vec::new();
 
             // Find the edge where the slice enters (above→below transition)

@@ -264,3 +264,25 @@ fn test_raw_slice_matches_cpp_lerp_bits() {
     let expected: Vec<_> = want(SLICE_RAW).iter().map(|c| canonical_cycle(c)).collect();
     assert_eq!(got, expected);
 }
+
+/// `Impl::slice` starts each contour at the lowest-indexed straddling
+/// triangle not yet traced (the port's documented stand-in for C++'s
+/// implementation-defined `*unordered_set::begin()`), so the raw slice of a
+/// multi-contour mesh is pinned: contour order and start vertex included.
+#[test]
+fn test_raw_slice_contour_order_is_deterministic() {
+    let a = Manifold::sphere(1.0, 8);
+    let b = Manifold::sphere(1.0, 8).translate(crate::linalg::Vec3::new(3.0, 0.0, 0.0));
+    let c = Manifold::sphere(1.0, 8).translate(crate::linalg::Vec3::new(-3.0, 1.0, 0.0));
+    let m = Manifold::compose(&[a, b, c]);
+    let got = bits(&m.as_impl().slice(0.3));
+    let summary: Vec<(usize, (u64, u64))> = got.iter().map(|c| (c.len(), c[0])).collect();
+    assert_eq!(
+        summary,
+        vec![
+            (12, (0xc008000000000000, 0x3fbfcfc51f2f8570)),
+            (12, (0x3c91a62633145c07, 0xbfec06075c1a0f52)),
+            (12, (0x4008000000000000, 0xbfec06075c1a0f52)),
+        ]
+    );
+}

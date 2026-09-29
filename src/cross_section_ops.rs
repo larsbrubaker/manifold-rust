@@ -175,9 +175,10 @@ impl CrossSection {
 
     pub fn minkowski_sum(&self, other: &Self) -> Self {
         let mut result = Vec::new();
+        let others = to_paths(&other.paths());
         for a in to_paths(&self.paths()) {
-            for b in to_paths(&other.paths()) {
-                result.extend(minkowski_sum_d(&a, &b, true, PRECISION));
+            for b in &others {
+                result.extend(minkowski_sum_d(&a, b, true, PRECISION));
             }
         }
         Self::from_raw(from_paths(&result))
