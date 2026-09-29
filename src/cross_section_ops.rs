@@ -34,7 +34,7 @@ use crate::types::{OpType, Quality, Rect};
 
 impl CrossSection {
     pub fn union(&self, other: &Self) -> Self {
-        Self::new(from_paths(&union_d(
+        Self::from_raw(from_paths(&union_d(
             &to_paths(&self.polygons),
             &to_paths(&other.polygons),
             FillRule::Positive,
@@ -43,7 +43,7 @@ impl CrossSection {
     }
 
     pub fn intersection(&self, other: &Self) -> Self {
-        Self::new(from_paths(&intersect_d(
+        Self::from_raw(from_paths(&intersect_d(
             &to_paths(&self.polygons),
             &to_paths(&other.polygons),
             FillRule::Positive,
@@ -52,7 +52,7 @@ impl CrossSection {
     }
 
     pub fn difference(&self, other: &Self) -> Self {
-        Self::new(from_paths(&difference_d(
+        Self::from_raw(from_paths(&difference_d(
             &to_paths(&self.polygons),
             &to_paths(&other.polygons),
             FillRule::Positive,
@@ -83,7 +83,7 @@ impl CrossSection {
         comps
             .iter()
             .rev()
-            .map(|poly| Self::new(from_paths(poly)))
+            .map(|poly| Self::from_raw(from_paths(poly)))
             .collect()
     }
 
@@ -117,7 +117,7 @@ impl CrossSection {
                 area.abs() > size.x.max(size.y) * epsilon
             })
             .collect();
-        Self::new(from_paths(&simplify_paths(&filtered, epsilon, true)))
+        Self::from_raw(from_paths(&simplify_paths(&filtered, epsilon, true)))
     }
 
     /// Offset with the C++ `CrossSection::Offset` defaults: Round joins,
@@ -158,7 +158,7 @@ impl CrossSection {
         } else {
             0.0
         };
-        Self::new(from_paths(&inflate_paths_d(
+        Self::from_raw(from_paths(&inflate_paths_d(
             &to_paths(&self.polygons),
             delta,
             jt,
@@ -176,7 +176,7 @@ impl CrossSection {
                 result.extend(minkowski_sum_d(&a, &b, true, PRECISION));
             }
         }
-        Self::new(from_paths(&result))
+        Self::from_raw(from_paths(&result))
     }
 
     /// Move every vertex through `f`, then re-union. Mirrors C++
@@ -193,7 +193,7 @@ impl CrossSection {
                 p.y = v.y;
             }
         }
-        Self::new(from_paths(&union_subjects_d(
+        Self::from_raw(from_paths(&union_subjects_d(
             &paths,
             FillRule::Positive,
             PRECISION,
@@ -224,13 +224,13 @@ impl CrossSection {
                     PRECISION,
                 );
             }
-            return Self::new(from_paths(&res));
+            return Self::from_raw(from_paths(&res));
         }
         let mut clips = PathsD::new();
         for s in &sections[1..] {
             clips.extend(to_paths(&s.polygons));
         }
-        Self::new(from_paths(&boolean_op_d(
+        Self::from_raw(from_paths(&boolean_op_d(
             cliptype_of_op(op),
             FillRule::Positive,
             &subjs,
@@ -291,7 +291,7 @@ impl CrossSection {
         if hull.len() < 3 {
             return Self::default();
         }
-        Self::new(vec![hull])
+        Self::from_raw(vec![hull])
     }
 
     /// Batch union of the sections. Mirrors C++ `CrossSection::Compose`,

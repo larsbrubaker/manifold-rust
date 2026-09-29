@@ -24,11 +24,11 @@
 // cross_section_tests.rs. Manifold::slice / project (manifold.rs) and the
 // extrude/revolve constructors (constructors.rs) consume CrossSections.
 
-use clipper2_rust::{union_d, FillRule, PathD, PathsD, Point};
+use clipper2_rust::{union_subjects_d, FillRule, PathD, PathsD, Point};
 
 use crate::linalg::Vec2;
 use crate::math;
-use crate::types::{Polygons, Rect};
+use crate::types::{cosd, sind, Polygons, Quality, Rect};
 
 /// Decimal places Clipper2 keeps when scaling to integer coordinates; mirrors
 /// `precision_` in C++ cross_section.cpp, passed to every Clipper2 call.
@@ -84,33 +84,36 @@ fn path_area(path: &PathD) -> f64 {
 }
 
 impl CrossSection {
-    pub fn new(polygons: Polygons) -> Self {
+    /// Wrap already-clean contours without a union. Mirrors the C++ private
+    /// `CrossSection(std::shared_ptr<const PathImpl>)` constructor that every
+    /// Clipper2 result, transform, hull and primitive goes through.
+    pub(crate) fn from_raw(polygons: Polygons) -> Self {
         Self { polygons }
     }
 
-    /// Create a CrossSection from polygons, normalizing via Clipper2 Union.
-    /// Mirrors C++ CrossSection(Polygons, FillRule) constructor with its
-    /// default FillRule::Positive, which runs the polygons through C2::Union
-    /// to merge overlapping regions.
-    pub fn from_polygons_fill(polygons: Polygons) -> Self {
-        if polygons.is_empty() {
-            return Self::default();
-        }
-        let paths = to_paths(&polygons);
-        let empty = PathsD::new();
-        let result = union_d(&paths, &empty, FillRule::Positive, PRECISION);
-        Self {
-            polygons: from_paths(&result),
-        }
+    /// Create a CrossSection from contours. Mirrors C++
+    /// `CrossSection(const Polygons&, FillRule = Positive)`, which always runs
+    /// `C2::Union` so overlapping contours merge, self-intersections resolve
+    /// and coordinates snap to Clipper2's grid at `precision_`.
+    pub fn new(polygons: Polygons) -> Self {
+        Self::from_raw(from_paths(&union_subjects_d(
+            &to_paths(&polygons),
+            FillRule::Positive,
+            PRECISION,
+        )))
     }
 
-    /// Create a CrossSection from a Rect (axis-aligned rectangle).
-    /// Matches C++ CrossSection(Rect) constructor.
+    /// Same as [`CrossSection::new`]: the C++ Polygons constructor with its
+    /// default FillRule::Positive.
+    pub fn from_polygons_fill(polygons: Polygons) -> Self {
+        Self::new(polygons)
+    }
+
+    /// Create a CrossSection from a Rect's four corners, counter-clockwise
+    /// from `min`. Matches C++ `CrossSection(const Rect&)`, which neither
+    /// unions nor checks for an empty (inverted) Rect.
     pub fn from_rect(rect: &Rect) -> Self {
-        if rect.is_empty() {
-            return Self::default();
-        }
-        Self::new(vec![vec![
+        Self::from_raw(vec![vec![
             Vec2::new(rect.min.x, rect.min.y),
             Vec2::new(rect.max.x, rect.min.y),
             Vec2::new(rect.max.x, rect.max.y),
@@ -118,50 +121,64 @@ impl CrossSection {
         ]])
     }
 
+    /// A `size` x `size` square in the first quadrant touching the origin:
+    /// C++ `Square(vec2(size), false)`.
     pub fn square(size: f64) -> Self {
-        if size <= 0.0 {
-            return Self { polygons: vec![] };
-        }
-        Self::new(vec![vec![
-            Vec2::new(0.0, 0.0),
-            Vec2::new(size, 0.0),
-            Vec2::new(size, size),
-            Vec2::new(0.0, size),
-        ]])
+        Self::square_vec2(Vec2::new(size, size), false)
     }
 
     /// Create a rectangle of size (w, h), optionally centered at origin.
-    /// Matches C++ CrossSection::Square(vec2, center).
+    /// Matches C++ `CrossSection::Square(vec2, center)`: empty only when a
+    /// dimension is negative or the size vector has zero length (so a
+    /// zero-height rectangle is one degenerate contour); centered corners
+    /// start at (+w/2, +h/2) and run counter-clockwise.
     pub fn square_vec2(size: Vec2, center: bool) -> Self {
-        let (w, h) = (size.x, size.y);
-        if w <= 0.0 || h <= 0.0 {
-            return Self { polygons: vec![] };
+        if size.x < 0.0 || size.y < 0.0 || (size.x * size.x + size.y * size.y).sqrt() == 0.0 {
+            return Self::default();
         }
-        let (x0, y0, x1, y1) = if center {
-            (-w / 2.0, -h / 2.0, w / 2.0, h / 2.0)
+        let p = if center {
+            let w = size.x / 2.0;
+            let h = size.y / 2.0;
+            vec![
+                Vec2::new(w, h),
+                Vec2::new(-w, h),
+                Vec2::new(-w, -h),
+                Vec2::new(w, -h),
+            ]
         } else {
-            (0.0, 0.0, w, h)
+            let (x, y) = (size.x, size.y);
+            vec![
+                Vec2::new(0.0, 0.0),
+                Vec2::new(x, 0.0),
+                Vec2::new(x, y),
+                Vec2::new(0.0, y),
+            ]
         };
-        Self::new(vec![vec![
-            Vec2::new(x0, y0),
-            Vec2::new(x1, y0),
-            Vec2::new(x1, y1),
-            Vec2::new(x0, y1),
-        ]])
+        Self::from_raw(vec![p])
     }
 
+    /// A circle of `n` vertices starting on +x. Matches C++
+    /// `CrossSection::Circle`: `n` is `segments` when above 2, otherwise
+    /// `Quality::GetCircularSegments(radius)`, and vertex `i` sits at
+    /// `radius * (cosd(360/n * i), sind(360/n * i))`, which is exact on the
+    /// axes.
     pub fn circle(radius: f64, segments: i32) -> Self {
         if radius <= 0.0 {
-            return Self { polygons: vec![] };
+            return Self::default();
         }
-        let segments = segments.max(3) as usize;
-        let poly = (0..segments)
+        let n = if segments > 2 {
+            segments
+        } else {
+            Quality::get_circular_segments(radius)
+        };
+        let d_phi = 360.0 / n as f64;
+        let poly = (0..n)
             .map(|i| {
-                let a = (i as f64 / segments as f64) * std::f64::consts::TAU;
-                Vec2::new(radius * math::cos(a), radius * math::sin(a))
+                let phi = d_phi * i as f64;
+                Vec2::new(radius * cosd(phi), radius * sind(phi))
             })
             .collect();
-        Self::new(vec![poly])
+        Self::from_raw(vec![poly])
     }
 
     pub fn to_polygons(&self) -> Polygons {
@@ -169,7 +186,7 @@ impl CrossSection {
     }
 
     pub fn translate(&self, v: Vec2) -> Self {
-        Self::new(
+        Self::from_raw(
             self.polygons
                 .iter()
                 .map(|poly| poly.iter().map(|p| *p + v).collect())
@@ -196,7 +213,7 @@ impl CrossSection {
     }
 
     pub fn scale(&self, v: Vec2) -> Self {
-        Self::new(
+        Self::from_raw(
             self.polygons
                 .iter()
                 .map(|poly| {
@@ -212,7 +229,7 @@ impl CrossSection {
         let rad = degrees.to_radians();
         let c = math::cos(rad);
         let s = math::sin(rad);
-        Self::new(
+        Self::from_raw(
             self.polygons
                 .iter()
                 .map(|poly| {
@@ -238,7 +255,7 @@ impl CrossSection {
         let r01 = -2.0 * nx * ny;
         let r10 = -2.0 * nx * ny;
         let r11 = 1.0 - 2.0 * ny * ny;
-        Self::new(
+        Self::from_raw(
             self.polygons
                 .iter()
                 .map(|poly| {
@@ -277,11 +294,7 @@ impl CrossSection {
         };
         let path: PathD = polygon.iter().map(|v| Point::new(v.x, v.y)).collect();
         let paths = PathsD::from(vec![path]);
-        let empty = PathsD::new();
-        let result = union_d(&paths, &empty, fr, PRECISION);
-        Self {
-            polygons: from_paths(&result),
-        }
+        Self::from_raw(from_paths(&union_subjects_d(&paths, fr, PRECISION)))
     }
 }
 
@@ -291,3 +304,7 @@ mod ops;
 #[cfg(test)]
 #[path = "cross_section_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "cross_section_ctor_tests.rs"]
+mod ctor_tests;

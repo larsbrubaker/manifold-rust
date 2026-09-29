@@ -356,23 +356,25 @@ impl Manifold {
     }
 
     /// Slice this manifold at the given Z height, returning the cross-section
-    /// as a CrossSection. Mirrors C++ `Manifold::Slice`.
+    /// as a CrossSection. C++ `Manifold::Slice` returns raw `Polygons`; this
+    /// is C++ `CrossSection(m.Slice(height))`, the Positive-union Polygons
+    /// constructor every C++ caller wraps them in.
     pub fn slice(&self, height: f64) -> CrossSection {
         if self.imp.is_soup || self.is_empty() {
-            return CrossSection::new(vec![]);
+            return CrossSection::default();
         }
-        let polys = self.imp.slice(height);
-        CrossSection::new(polys)
+        CrossSection::new(self.imp.slice(height))
     }
 
     /// Project this manifold onto the XY plane, returning the silhouette
-    /// as a CrossSection. Mirrors C++ `Manifold::Project`.
+    /// as a CrossSection. C++ `Manifold::Project` returns raw, often
+    /// self-overlapping `Polygons`; this is C++ `CrossSection(m.Project())`,
+    /// the Positive-union Polygons constructor its docs recommend.
     pub fn project(&self) -> CrossSection {
         if self.imp.is_soup || self.is_empty() {
-            return CrossSection::new(vec![]);
+            return CrossSection::default();
         }
-        let polys = self.imp.project();
-        CrossSection::from_polygons_fill(polys)
+        CrossSection::new(self.imp.project())
     }
 
     /// Apply batch boolean operations on a list of manifolds.

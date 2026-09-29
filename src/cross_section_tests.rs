@@ -106,7 +106,10 @@ fn test_cross_section_area_matches_clipper2_bits() {
     assert_eq!(cs.area().to_bits(), 0x4008fb2d94a5b1f1);
     let mut even = cs.to_polygons();
     even[0].pop();
-    assert_eq!(CrossSection::new(even).area().to_bits(), 0x4008f42c81cc8074);
+    assert_eq!(
+        CrossSection::from_raw(even).area().to_bits(),
+        0x4008f42c81cc8074
+    );
 }
 
 /// C++ runs every Clipper2 op at `precision_ = 8` decimal places. ClipperD
@@ -117,7 +120,7 @@ fn test_cross_section_area_matches_clipper2_bits() {
 fn test_cross_section_union_keeps_eighth_decimal() {
     let x = 1.000_000_12;
     let snapped = 1.0 + 2f64.powi(-23);
-    let a = CrossSection::new(vec![vec![
+    let a = CrossSection::from_raw(vec![vec![
         Vec2::new(0.0, 0.0),
         Vec2::new(x, 0.0),
         Vec2::new(x, 1.0),
@@ -133,7 +136,7 @@ fn test_cross_section_union_keeps_eighth_decimal() {
 /// defaults to Positive, so a clockwise (negative) contour fills nothing.
 #[test]
 fn test_cross_section_booleans_use_positive_fill() {
-    let cw = CrossSection::new(vec![vec![
+    let cw = CrossSection::from_raw(vec![vec![
         Vec2::new(0.0, 0.0),
         Vec2::new(0.0, 1.0),
         Vec2::new(1.0, 1.0),
@@ -387,7 +390,7 @@ fn test_batch_boolean_single_section_is_unchanged() {
 /// the compiled C++ reference (its pairwise fold gives c1/c2 swapped).
 #[test]
 fn test_batch_subtract_is_one_boolean_op() {
-    let tri = |p: [(f64, f64); 3]| CrossSection::new(polys(&[&p]));
+    let tri = |p: [(f64, f64); 3]| CrossSection::from_raw(polys(&[&p]));
     let secs = [
         CrossSection::square(8.0).translate(Vec2::new(1.0, 1.0)),
         tri([
