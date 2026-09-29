@@ -277,3 +277,38 @@ fn test_decompose_short_circuits_below_two_contours() {
     };
     assert_eq!(bits(&comps[0].to_polygons()), bits(&circ.to_polygons()));
 }
+
+/// C++ `Simplify` unions into a PolyTree and `flatten`s it, pushing each
+/// node's descendants before the node itself, so holes precede their
+/// outline. Expected contours from the compiled C++ reference.
+#[test]
+fn test_simplify_flattens_polytree_like_cpp() {
+    let ring = CrossSection::square(10.0)
+        .difference(&CrossSection::square(4.0).translate(Vec2::new(3.0, 3.0)));
+    assert_eq!(
+        ring.simplify(1e-6).to_polygons(),
+        polys(&[
+            &[(3.0, 7.0), (7.0, 7.0), (7.0, 3.0), (3.0, 3.0)],
+            &[(10.0, 10.0), (0.0, 10.0), (0.0, 0.0), (10.0, 0.0)],
+        ])
+    );
+    let ring = |outer: f64, inner: f64| {
+        CrossSection::square_vec2(Vec2::new(outer, outer), true)
+            .difference(&CrossSection::square_vec2(Vec2::new(inner, inner), true))
+    };
+    let nest = ring(10.0, 8.0)
+        .union(&ring(4.0, 2.0))
+        .union(&CrossSection::square(1.0).translate(Vec2::new(20.0, 0.0)));
+    let sq = |h: f64| [(h, h), (-h, h), (-h, -h), (h, -h)];
+    let hole = |h: f64| [(-h, h), (h, h), (h, -h), (-h, -h)];
+    assert_eq!(
+        nest.simplify(1e-6).to_polygons(),
+        polys(&[
+            &hole(1.0),
+            &sq(2.0),
+            &hole(4.0),
+            &sq(5.0),
+            &[(21.0, 1.0), (20.0, 1.0), (20.0, 0.0), (21.0, 0.0)],
+        ])
+    );
+}

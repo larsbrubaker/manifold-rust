@@ -29,7 +29,7 @@ use clipper2_rust::{
 use super::{from_paths, path_area, to_paths, CrossSection, PRECISION};
 use crate::linalg::Vec2;
 use crate::math;
-use crate::types::{OpType, Quality};
+use crate::types::{OpType, Quality, Rect};
 
 impl CrossSection {
     pub fn union(&self, other: &Self) -> Self {
@@ -86,44 +86,37 @@ impl CrossSection {
             .collect()
     }
 
-    /// Simplify contours by removing near-collinear vertices.
-    /// Mirrors C++ CrossSection::Simplify(epsilon=1e-6): normalizes via union,
-    /// filters tiny polygons, then applies SimplifyPaths with epsilon.
+    /// Remove vertices closer than `epsilon` to the line through their
+    /// neighbours. Mirrors C++ `CrossSection::Simplify`: a Positive union
+    /// into a Clipper2 PolyTree, flattened as C++ `flatten` does (each node's
+    /// descendants before the node, so holes precede their outline), contours
+    /// dropped when `|Area| <= max(box width, box height) * epsilon`, then
+    /// `SimplifyPaths` on the closed survivors.
     pub fn simplify(&self, epsilon: f64) -> Self {
-        if self.polygons.is_empty() {
-            return Self::default();
-        }
-        // Normalize via union (removes overlaps/inversions).
-        let paths = to_paths(&self.polygons);
-        let unified = union_d(&paths, &PathsD::new(), FillRule::Positive, PRECISION);
-        // Filter out contours smaller than epsilon (area vs bounding box).
-        let filtered: PathsD = unified
+        let mut tree = PolyTreeD::new();
+        boolean_op_tree_d(
+            ClipType::Union,
+            FillRule::Positive,
+            &to_paths(&self.polygons),
+            &PathsD::new(),
+            &mut tree,
+            PRECISION,
+        );
+        let mut polys = PathsD::new();
+        flatten(&tree, 0, &mut polys);
+        let filtered: PathsD = polys
             .into_iter()
             .filter(|poly| {
-                let a = path_area(poly).abs();
-                // Compute bounding box max extent
-                let (mut min_x, mut min_y) = (f64::MAX, f64::MAX);
-                let (mut max_x, mut max_y) = (f64::MIN, f64::MIN);
-                for p in poly {
-                    if p.x < min_x {
-                        min_x = p.x;
-                    }
-                    if p.x > max_x {
-                        max_x = p.x;
-                    }
-                    if p.y < min_y {
-                        min_y = p.y;
-                    }
-                    if p.y > max_y {
-                        max_y = p.y;
-                    }
+                let area = path_area(poly);
+                let mut bx = Rect::new();
+                for vert in poly {
+                    bx.union_point(Vec2::new(vert.x, vert.y));
                 }
-                let max_size = (max_x - min_x).max(max_y - min_y);
-                a > max_size * epsilon
+                let size = bx.size();
+                area.abs() > size.x.max(size.y) * epsilon
             })
             .collect();
-        let simplified = simplify_paths(&filtered, epsilon, true);
-        Self::new(from_paths(&simplified))
+        Self::new(from_paths(&simplify_paths(&filtered, epsilon, true)))
     }
 
     /// Offset with the C++ `CrossSection::Offset` defaults: Round joins,
@@ -323,5 +316,15 @@ fn decompose_outlines(tree: &PolyTreeD, node: usize, polys: &mut Vec<PathsD>) {
             poly.push(tree.nodes[hole].polygon().clone());
         }
         polys.push(poly);
+    }
+}
+
+/// C++ `flatten` (cross_section.cpp:153-164): for each child of `node`,
+/// its whole subtree first, then the child's own contour. Iterating the
+/// siblings replaces the C++'s index recursion with the same visit order.
+fn flatten(tree: &PolyTreeD, node: usize, polys: &mut PathsD) {
+    for &child in tree.nodes[node].children() {
+        flatten(tree, child, polys);
+        polys.push(tree.nodes[child].polygon().clone());
     }
 }
