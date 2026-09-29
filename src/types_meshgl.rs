@@ -152,16 +152,19 @@ impl<P: MeshPrecision, I: MeshIndex> MeshGLP<P, I> {
     }
 }
 
-impl MeshGLP<f32, u32> {
+impl<P: MeshPrecision, I: MeshIndex> MeshGLP<P, I> {
     /// Merges coincident vertices based on position within tolerance.
-    /// Uses BVH collision detection to find open edges, then groups
-    /// coincident vertices via union-find. Returns true if new merges
-    /// were found, false if the mesh was already fully merged.
+    /// Port of the C++ `MergeMeshGLP` template (src/sort.cpp), shared by
+    /// `MeshGL::Merge` and `MeshGL64::Merge`. Open halfedges are found with a
+    /// counted multiset, their start vertices are boxed and Morton-sorted,
+    /// and coincident pairs from the BVH are grouped via union-find. Returns
+    /// false (leaving the merge vectors untouched) if the mesh has no open
+    /// edges, true otherwise.
     pub fn merge(&mut self) -> bool {
         use crate::collider::Collider;
         use crate::disjoint_sets::DisjointSets;
         use crate::sort::morton_code;
-        use std::collections::BTreeSet;
+        use std::collections::BTreeMap;
 
         let num_vert = self.num_vert();
         let num_tri = self.num_tri();
@@ -169,23 +172,30 @@ impl MeshGLP<f32, u32> {
         // Build initial merge map from existing merge vectors
         let mut merge_map: Vec<usize> = (0..num_vert).collect();
         for i in 0..self.merge_from_vert.len() {
-            merge_map[self.merge_from_vert[i] as usize] = self.merge_to_vert[i] as usize;
+            merge_map[self.merge_from_vert[i].to_u64() as usize] =
+                self.merge_to_vert[i].to_u64() as usize;
         }
 
-        // Find open (non-manifold) edges
+        // Open halfedges as (start, end) pairs in a counted multiset, standing
+        // in for C++'s std::multiset<std::pair<int,int>>: a halfedge adds one
+        // copy of itself unless a copy of its reverse is present, in which
+        // case exactly one copy of the reverse is erased. Keeping the counts
+        // (rather than a set) means a halfedge listed twice survives a single
+        // reverse match, as it does in the C++.
         let next = [1usize, 2, 0];
-        let mut open_edges: BTreeSet<(usize, usize)> = BTreeSet::new();
+        let mut open_edges: BTreeMap<(usize, usize), usize> = BTreeMap::new();
         for tri in 0..num_tri {
             for i in 0..3 {
-                let a = merge_map[self.tri_verts[3 * tri + next[i]] as usize];
-                let b = merge_map[self.tri_verts[3 * tri + i] as usize];
-                let edge = (a, b);
-                // Look for the reverse edge
-                let rev = (b, a);
-                if open_edges.contains(&rev) {
-                    open_edges.remove(&rev);
-                } else {
-                    open_edges.insert(edge);
+                let start = merge_map[self.tri_verts[3 * tri + i].to_u64() as usize];
+                let end = merge_map[self.tri_verts[3 * tri + next[i]].to_u64() as usize];
+                match open_edges.get_mut(&(end, start)) {
+                    Some(count) => {
+                        *count -= 1;
+                        if *count == 0 {
+                            open_edges.remove(&(end, start));
+                        }
+                    }
+                    None => *open_edges.entry((start, end)).or_insert(0) += 1,
                 }
             }
         }
@@ -194,44 +204,52 @@ impl MeshGLP<f32, u32> {
             return false;
         }
 
-        // Collect unique open vertices — only the START vertex of each open
-        // halfedge, matching C++ which stores (start,end) and takes edge.first=start.
-        // Our BTreeSet stores (end,start) so we take edge.1 (= b = start vertex).
-        let open_verts: Vec<usize> = {
-            let mut vset = std::collections::BTreeSet::new();
-            for (_a, b) in &open_edges {
-                vset.insert(*b);
+        // One entry per open halfedge (duplicates kept), in multiset order:
+        // ascending (start, end), equal pairs adjacent. The entry is the
+        // halfedge's start vertex, as C++ takes edge.first.
+        let mut open_verts: Vec<usize> = Vec::new();
+        for (&(start, _end), &count) in &open_edges {
+            for _ in 0..count {
+                open_verts.push(start);
             }
-            vset.into_iter().collect()
-        };
+        }
         let num_open = open_verts.len();
 
         // Compute bounding box
         let mut bbox = Box::default();
         for v in 0..num_vert {
             let pos = self.get_vert_pos(v);
-            let p = Vec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64);
+            let p = Vec3::new(pos[0].to_f64(), pos[1].to_f64(), pos[2].to_f64());
             bbox.union_point(p);
         }
 
-        let tolerance = f64::max(self.tolerance as f64, f32::EPSILON as f64 * bbox.scale());
+        // std::max(tolerance, eps * scale): float epsilon for the f32
+        // instantiation, kPrecision for f64, as in the C++ template.
+        let eps = if P::IS_SINGLE {
+            f32::EPSILON as f64
+        } else {
+            crate::types::K_PRECISION
+        };
+        let floor = eps * bbox.scale();
+        let mesh_tol = self.tolerance.to_f64();
+        let tolerance = if mesh_tol < floor { floor } else { mesh_tol };
 
         // Build BVH boxes and morton codes for open vertices
+        let half_tol = tolerance / 2.0;
         let mut vert_box: Vec<Box> = Vec::with_capacity(num_open);
         let mut vert_morton: Vec<u32> = Vec::with_capacity(num_open);
         for &v in &open_verts {
             let pos = self.get_vert_pos(v);
-            let center = Vec3::new(pos[0] as f64, pos[1] as f64, pos[2] as f64);
-            let half_tol = tolerance / 2.0;
-            let bx = Box::from_points(
-                center - Vec3::new(half_tol, half_tol, half_tol),
-                center + Vec3::new(half_tol, half_tol, half_tol),
-            );
-            vert_box.push(bx);
+            let center = Vec3::new(pos[0].to_f64(), pos[1].to_f64(), pos[2].to_f64());
+            vert_box.push(Box {
+                min: center - Vec3::new(half_tol, half_tol, half_tol),
+                max: center + Vec3::new(half_tol, half_tol, half_tol),
+            });
             vert_morton.push(morton_code(center, &bbox));
         }
 
-        // Sort by morton code
+        // Stable sort by morton code (C++ stable_sort), so duplicate entries
+        // of one vertex stay adjacent in multiset order.
         let mut order: Vec<usize> = (0..num_open).collect();
         order.sort_by_key(|&i| vert_morton[i]);
 
@@ -243,13 +261,16 @@ impl MeshGLP<f32, u32> {
         let collider = Collider::new(sorted_box.clone(), sorted_morton);
         let uf = DisjointSets::new(num_vert as u32);
 
-        collider.collisions_with_boxes(&sorted_box, false, |a, b| {
+        collider.collisions_with_boxes(&sorted_box, true, |a, b| {
             uf.unite(sorted_verts[a] as u32, sorted_verts[b] as u32);
         });
 
         // Also merge from existing merge vectors
         for i in 0..self.merge_from_vert.len() {
-            uf.unite(self.merge_from_vert[i], self.merge_to_vert[i]);
+            uf.unite(
+                self.merge_from_vert[i].to_u64() as u32,
+                self.merge_to_vert[i].to_u64() as u32,
+            );
         }
 
         // Rebuild merge vectors
@@ -258,14 +279,16 @@ impl MeshGLP<f32, u32> {
         for v in 0..num_vert {
             let merge_to = uf.find(v as u32) as usize;
             if merge_to != v {
-                self.merge_from_vert.push(v as u32);
-                self.merge_to_vert.push(merge_to as u32);
+                self.merge_from_vert.push(I::from_usize(v));
+                self.merge_to_vert.push(I::from_usize(merge_to));
             }
         }
 
         true
     }
+}
 
+impl MeshGLP<f32, u32> {
     /// True if triangle run `run` is on the backside (e.g. from a subtraction).
     /// run_flags is a bitmask (#1718): bit 0 = backside. Informational only —
     /// the framework already orients stored normals on the standard flow.
@@ -392,3 +415,7 @@ pub type MeshGL = MeshGLP<f32, u32>;
 
 /// Double-precision, 64-bit index mesh (for huge meshes).
 pub type MeshGL64 = MeshGLP<f64, u64>;
+
+#[cfg(test)]
+#[path = "types_meshgl_merge_tests.rs"]
+mod merge_tests;

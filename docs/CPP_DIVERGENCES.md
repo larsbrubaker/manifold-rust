@@ -13,8 +13,8 @@ Two kinds of entry live here, and they are not the same claim:
   resolve toward the C++ on the merits but cannot change unilaterally, because a
   downstream consumer verifies against this tree bit-for-bit. These are
   *disclosures*, not justifications: the entry states what differs, why it
-  cannot be fixed here alone, and what a coordinated fix would take. Entries 2,
-  5 and 6.
+  cannot be fixed here alone, and what a coordinated fix would take. Entries 2
+  and 5 (entry 6 is retired).
 
 The second kind is deliberately uncomfortable to write, which is the point — it
 is a debt with a name attached, not a decision that ends the discussion. Nothing
@@ -284,48 +284,18 @@ U-shape case above, asserting the hole stays with the bar.
 scratch probe described (not checked in; it is the U-shape construction from
 `CrossSection::from_polygons_fill` rectangles and `difference`/`union`).
 
-## 6. `MeshGL::merge` dedupes open edges and open vertices (2026-09-28)
+## 6. `MeshGL::merge` dedupes open edges and open vertices (2026-09-28) — retired 2026-09-29
 
-**What differs:** `MeshGLP<f32, u32>::merge` (`src/types_meshgl.rs:160-267`)
-collects open halfedges into a `BTreeSet<(usize, usize)>` (175-191) and then
-dedupes their start vertices through a second `BTreeSet` (196-206). C++ v3.5.2
-`MergeMeshGLP` (`src/sort.cpp:62-98`) uses a `std::multiset<std::pair<int,int>>`,
-erases one matching copy per reverse halfedge, and builds `openVerts` with one
-entry per remaining open edge, duplicates kept. Like entry 5 this is neither an
-accuracy fix nor a bug fix; it is an **inherited** simplification.
-
-**What is observably different.** Two cases, both requiring input that is not
-already a clean manifold (which is exactly what `merge` exists to repair):
-
-- *Duplicate same-direction halfedges* change which edges are open, so they can
-  change which vertices merge. If a halfedge `s→e` occurs twice before its reverse
-  `e→s` arrives, the multiset holds two copies and the reverse erases one, leaving
-  `s→e` open; the set holds one and the reverse leaves nothing. Whether a
-  divergence appears depends on triangle order: if the reverse arrives between the
-  copies, both implementations leave one open. Scratch probe: a tetrahedron whose
-  face `(0,2,1)` is listed twice first, plus a separate open triangle `(4,5,6)`
-  with vertex 4 coincident with vertex 0. Ours returns `true` with no merges (only
-  4, 5, 6 are open); by the C++ source, vertices 0, 1, 2 are also open and 4
-  merges to 0 (`mergeFromVert = [4]`, `mergeToVert = [0]`). No C++ build was run
-  for this; the C++ result is traced from source.
-- *A vertex that starts two or more open halfedges* — a pinched boundary, such as
-  two open fans touching at one vertex — appears once in our `open_verts` and
-  once per edge in the C++'s, with no duplicate edge involved. The collider then
-  holds a different number of leaves, so collision pairs arrive in a different
-  order. The resulting partition (which vertices end up together) is the same,
-  but `DisjointSets::unite` is union-by-rank, so the representative written to
-  `merge_to_vert` can in principle differ. We have not constructed a case that
-  shows it.
-
-**Why it stays for now.** manifold-sharp transcribes the same two sets
-(`ManifoldSharp/MeshGL.cs`, `SortedSet<(int, int)>` and `SortedSet<int>`, with a
-comment citing the Rust `BTreeSet`), and verifies against this tree bit-for-bit.
-
-**Harmonization path:** in both trees together, replace the edge set with a
-multiset (a `BTreeMap<(usize, usize), usize>` count, erasing one per reverse
-match), iterate it in `(start, end)` order to emit one `open_verts` entry per open
-edge including repeats, and keep the stable Morton sort that follows. The probe
-above is the shared regression.
-
-**Evidence:** source reading of both implementations at the lines above; the
-scratch probe for the Rust half of the first case.
+**Retired:** `MeshGLP::merge` (`src/types_meshgl.rs`) now ports C++ v3.5.2
+`MergeMeshGLP` (`src/sort.cpp:62-180`) exactly: open halfedges live in a counted
+multiset (`BTreeMap<(start, end), count>`, erasing one copy per reverse match),
+and `open_verts` gets one entry per remaining open halfedge, duplicates kept, in
+`(start, end)` order. It is also generic now, so `MeshGL64::merge` exists, as the
+C++ template provides. Evidence: the C++ `MergeMeshGLP` compiled standalone
+against the reference headers (MSVC, `MANIFOLD_PAR=-1`) agrees with this port on
+the doubled-face probe (`from = [4]`, `to = [0]`, both precisions), on a pinched
+boundary where the old port chose a different representative (`from = [4, 5]`,
+`to = [0, 0]`; the old port gave `[0, 5] -> [4, 4]`), and on all 3000 cases of a
+randomized open-mesh sweep. Regressions: `src/types_meshgl_merge_tests.rs`.
+manifold-sharp must twin this change (its `MeshGL.cs` still uses `SortedSet`s)
+to keep bit-agreement on `Merge`.
