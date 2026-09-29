@@ -22,7 +22,8 @@ A third, narrower kind records where the C++ output is itself not pinned:
   standard-library behavior the C++ standard leaves unspecified (for example
   `std::unordered_set` iteration order), so "the C++ output" differs between
   toolchains and no single bit pattern exists to match. The entry states which
-  part of the output is affected and what is still compared exactly. Entry 7.
+  part of the output is affected and what is still compared exactly. Entries 7
+  and 8.
 
 The second kind is deliberately uncomfortable to write, which is the point — it
 is a debt with a name attached, not a decision that ends the discussion. Nothing
@@ -303,3 +304,25 @@ differed by one ULP in 10 of 24 coordinates). The MSVC build starts that contour
 at a different triangle than this port does; the cycles agree bit-for-bit.
 manifold-sharp needs no change for the start vertex, but must twin the `lerp`
 form to keep its raw slice bit-equal.
+
+## 8. `CrossSection` hull: order of `+0.0` / `-0.0` ties (2026-09-29) — implementation-defined in the C++
+
+**What differs:** potentially, the sign of a zero coordinate in a hull vertex
+when the input holds two points that differ only in the sign of a zero
+coordinate. Nothing else: `hull_points` / `hull_cross_sections`
+(`src/cross_section_ops.rs`) port C++ v3.5.2 `HullImpl`
+(`src/cross_section/cross_section.cpp:183-206`) step for step.
+
+**Why:** C++ sorts the points with `std::sort` and `V2Lesser`, under which
+`(0.0, y)` and `(-0.0, y)` are equivalent; `std::sort` is not stable and its
+permutation of equivalent elements is left to the library (MSVC uses insertion
+sort below 32 elements and introsort above). This port sorts with the stable
+`slice::sort_by` on the same comparator. The `CCW(.., 0.0)` backtrack then
+keeps one of the tied points per chain (the later one in the lower chain, the
+earlier one in the upper), so the kept zero's sign follows the library's
+permutation. No other input is affected, because equivalent
+points under `V2Lesser` are otherwise bit-identical.
+
+**Evidence:** `cross_section::tests::test_hull_matches_cpp_hull_impl` pins the
+C++ (MSVC) result bit-for-bit on degenerate (fewer than three, collinear,
+coincident), near-duplicate, underflowing-`CCW` and multi-section inputs.

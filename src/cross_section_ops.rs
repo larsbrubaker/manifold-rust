@@ -28,8 +28,11 @@ use clipper2_rust::{
     PolyTreeD,
 };
 
+use std::cmp::Ordering;
+
 use super::{from_paths, path_area, to_paths, CrossSection, PRECISION};
 use crate::linalg::Vec2;
+use crate::polygon::ccw;
 use crate::math;
 use crate::types::{OpType, Quality, Rect};
 
@@ -240,59 +243,28 @@ impl CrossSection {
         )))
     }
 
-    /// Compute convex hull of all vertices in a slice of CrossSections.
+    /// Convex hull of every vertex of `sections`, in section then contour
+    /// order. Mirrors C++ `CrossSection::Hull(const std::vector<CrossSection>&)`,
+    /// which reads each section through a by-value copy, so the inputs' own
+    /// pending transforms stay pending (hence `clone().paths()`).
     pub fn hull_cross_sections(sections: &[Self]) -> Self {
-        let points: Vec<Vec2> = sections
-            .iter()
-            .flat_map(|s| s.paths().iter().flat_map(|p| p.iter().cloned()).collect::<Vec<_>>())
-            .collect();
+        let mut points: Vec<Vec2> = Vec::new();
+        for s in sections {
+            for path in s.clone().paths().iter() {
+                points.extend_from_slice(path);
+            }
+        }
         Self::hull_points(&points)
     }
 
-    /// Compute convex hull of a set of 2D points (Andrew's monotone chain).
+    /// Convex hull of a point set. Mirrors C++ `CrossSection::Hull(SimplePolygon)`
+    /// (and `Hull(Polygons)`, which flattens its contours into one list):
+    /// the result is always exactly one contour, left degenerate as C++
+    /// `HullImpl` leaves it — empty for fewer than three points, two vertices
+    /// when every point is collinear.
     pub fn hull_points(points: &[Vec2]) -> Self {
-        if points.len() < 3 {
-            return Self::default();
-        }
-        let mut pts: Vec<Vec2> = points.to_vec();
-        pts.sort_by(|a, b| {
-            a.x.partial_cmp(&b.x)
-                .unwrap()
-                .then(a.y.partial_cmp(&b.y).unwrap())
-        });
-        pts.dedup_by(|a, b| (a.x - b.x).abs() < 1e-10 && (a.y - b.y).abs() < 1e-10);
-
-        let cross = |o: Vec2, a: Vec2, b: Vec2| -> f64 {
-            (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
-        };
-
-        let n = pts.len();
-        if n < 3 {
-            return Self::default();
-        }
-        let mut hull: Vec<Vec2> = Vec::with_capacity(2 * n);
-        // Lower hull
-        for &p in &pts {
-            while hull.len() >= 2 && cross(hull[hull.len() - 2], hull[hull.len() - 1], p) <= 0.0 {
-                hull.pop();
-            }
-            hull.push(p);
-        }
-        // Upper hull
-        let lower_len = hull.len();
-        for &p in pts.iter().rev() {
-            while hull.len() > lower_len
-                && cross(hull[hull.len() - 2], hull[hull.len() - 1], p) <= 0.0
-            {
-                hull.pop();
-            }
-            hull.push(p);
-        }
-        hull.pop(); // last point == first
-        if hull.len() < 3 {
-            return Self::default();
-        }
-        Self::from_raw(vec![hull])
+        let mut pts = points.to_vec();
+        Self::from_raw(vec![hull_impl(&mut pts)])
     }
 
     /// Batch union of the sections. Mirrors C++ `CrossSection::Compose`,
@@ -310,6 +282,60 @@ fn cliptype_of_op(op: OpType) -> ClipType {
         OpType::Subtract => ClipType::Difference,
         OpType::Intersect => ClipType::Intersection,
     }
+}
+
+/// C++ `V2Lesser`: by x, then by y. As an ordering, pairs that are neither
+/// lesser are equal (only `+0.0` / `-0.0` ties between distinct values).
+fn v2_lesser(a: &Vec2, b: &Vec2) -> Ordering {
+    let lesser = |a: &Vec2, b: &Vec2| {
+        if a.x == b.x {
+            a.y < b.y
+        } else {
+            a.x < b.x
+        }
+    };
+    if lesser(a, b) {
+        Ordering::Less
+    } else if lesser(b, a) {
+        Ordering::Greater
+    } else {
+        Ordering::Equal
+    }
+}
+
+/// C++ `HullBacktrack`: pop while the last two stack points and `pt` do not
+/// turn strictly counter-clockwise under `CCW(.., 0.0)`.
+fn hull_backtrack(pt: Vec2, stack: &mut Vec<Vec2>) {
+    let mut sz = stack.len();
+    while sz >= 2 && ccw(stack[sz - 2], stack[sz - 1], pt, 0.0) <= 0 {
+        stack.pop();
+        sz = stack.len();
+    }
+}
+
+/// C++ `HullImpl` (cross_section.cpp:183-206), Andrew's monotone chain:
+/// sorts `pts` in place with `V2Lesser`, builds the lower chain forwards and
+/// the upper chain backwards, drops each chain's last point and returns
+/// lower then upper. Fewer than three points give an empty path.
+fn hull_impl(pts: &mut [Vec2]) -> Vec<Vec2> {
+    if pts.len() < 3 {
+        return Vec::new();
+    }
+    pts.sort_by(v2_lesser);
+    let mut lower: Vec<Vec2> = Vec::new();
+    for &pt in pts.iter() {
+        hull_backtrack(pt, &mut lower);
+        lower.push(pt);
+    }
+    let mut upper: Vec<Vec2> = Vec::new();
+    for &pt in pts.iter().rev() {
+        hull_backtrack(pt, &mut upper);
+        upper.push(pt);
+    }
+    upper.pop();
+    lower.pop();
+    lower.extend(upper);
+    lower
 }
 
 /// C++ `decompose_outline` / `decompose_hole` (cross_section.cpp:126-151):

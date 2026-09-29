@@ -478,3 +478,116 @@ fn test_is_empty_and_num_contour_count_every_path_like_cpp() {
     assert_eq!(none.num_contour(), 0);
     assert_eq!(none.num_vert(), 0);
 }
+
+/// C++ `HullImpl` (cross_section.cpp:183-206): no near-duplicate removal,
+/// `CCW(..., 0.0)` backtracking, and a single contour even when degenerate
+/// (empty for fewer than three points, two vertices for collinear ones).
+/// Expected values come from the C++ reference (MSVC).
+#[test]
+fn test_hull_matches_cpp_hull_impl() {
+    type Bits = &'static [&'static [(u64, u64)]];
+    fn bits(p: &Polygons) -> Vec<Vec<(u64, u64)>> {
+        p.iter()
+            .map(|c| c.iter().map(|v| (v.x.to_bits(), v.y.to_bits())).collect())
+            .collect()
+    }
+    fn want(b: Bits) -> Vec<Vec<(u64, u64)>> {
+        b.iter().map(|c| c.to_vec()).collect()
+    }
+    // area 0x3ff0000000001198
+    const NEAR_DUP: Bits = &[
+        &[
+            (0x0000000000000000, 0x0000000000000000),
+            (0x3ff0000000000000, 0x0000000000000000),
+            (0x3ff0000000001198, 0x3ff0000000001198),
+            (0x0000000000000000, 0x3ff0000000000000),
+        ],
+    ];
+
+    // area 0x3ff0000000000000
+    const UNDERFLOW: Bits = &[
+        &[
+            (0x0000000000000000, 0x0000000000000000),
+            (0x3ff0000000000000, 0xbff0000000000000),
+            (0x4000000000000000, 0x0000000000000000),
+        ],
+    ];
+
+    // area 0x4017e064f81d2212
+    const HULL_CS: Bits = &[
+        &[
+            (0xbfeccccccccccccd, 0x3fc999999999999a),
+            (0xbfe36d6b334c0899, 0xbfe03a380018d566),
+            (0x3fb999999999999a, 0xbfe999999999999a),
+            (0x3fe9d3d199b26eff, 0xbfe03a380018d566),
+            (0x40096b31d45717ee, 0x3ff16daed770771d),
+            (0x40050fc61e7afa27, 0x3ffed8e0abc78f0b),
+            (0x3fb999999999999a, 0x3ff3333333333333),
+            (0xbfe36d6b334c0899, 0x3fed0704cce5a232),
+        ],
+    ];
+
+    // area 0x4027000000000000
+    const HULL_POLYS: Bits = &[
+        &[
+            (0x0000000000000000, 0x0000000000000000),
+            (0x4008000000000000, 0xbff0000000000000),
+            (0x4010000000000000, 0x0000000000000000),
+            (0x4014000000000000, 0x4000000000000000),
+            (0x4000000000000000, 0x4008000000000000),
+        ],
+    ];
+
+    let v = |x: f64, y: f64| Vec2::new(x, y);
+
+    let two = CrossSection::hull_points(&[v(0.0, 0.0), v(1.0, 1.0)]);
+    assert_eq!(two.to_polygons(), vec![Vec::<Vec2>::new()]);
+    assert!(!two.is_empty());
+
+    let collinear =
+        CrossSection::hull_points(&[v(0.0, 0.0), v(2.0, 0.0), v(1.0, 0.0), v(3.0, 0.0)]);
+    assert_eq!(collinear.to_polygons(), vec![vec![v(0.0, 0.0), v(3.0, 0.0)]]);
+
+    let same = CrossSection::hull_points(&[v(1.0, 1.0), v(1.0, 1.0), v(1.0, 1.0)]);
+    assert_eq!(same.to_polygons(), vec![vec![v(1.0, 1.0), v(1.0, 1.0)]]);
+
+    let near_dup = CrossSection::hull_points(&[
+        v(0.0, 0.0),
+        v(1.0, 0.0),
+        v(1.0, 1.0),
+        v(1.0 + 1e-12, 1.0 + 1e-12),
+        v(0.0, 1.0),
+        v(1e-12, 1.0),
+    ]);
+    assert_eq!(bits(&near_dup.to_polygons()), want(NEAR_DUP));
+    assert_eq!(near_dup.area().to_bits(), 0x3ff0000000001198);
+
+    // area * area * 4 underflows to 0, so CCW(.., 0.0) calls (1, 1e-200)
+    // collinear and drops it.
+    let underflow =
+        CrossSection::hull_points(&[v(0.0, 0.0), v(1.0, 1e-200), v(2.0, 0.0), v(1.0, -1.0)]);
+    assert_eq!(bits(&underflow.to_polygons()), want(UNDERFLOW));
+
+    let none = CrossSection::hull_cross_sections(&[]);
+    assert_eq!(none.to_polygons(), vec![Vec::<Vec2>::new()]);
+
+    let secs = CrossSection::hull_cross_sections(&[
+        CrossSection::circle(1.0, 8).translate(v(0.1, 0.2)),
+        CrossSection::square_vec2(v(2.0, 1.0), false)
+            .rotate(33.0)
+            .translate(v(1.5, 0.0)),
+    ]);
+    assert_eq!(bits(&secs.to_polygons()), want(HULL_CS));
+    assert_eq!(secs.area().to_bits(), 0x4017e064f81d2212);
+
+    // C++ Hull(Polygons) flattens the contours into one point list.
+    let polys = CrossSection::hull_points(&[
+        v(0.0, 0.0),
+        v(4.0, 0.0),
+        v(2.0, 3.0),
+        v(1.0, 1.0),
+        v(5.0, 2.0),
+        v(3.0, -1.0),
+    ]);
+    assert_eq!(bits(&polys.to_polygons()), want(HULL_POLYS));
+}
