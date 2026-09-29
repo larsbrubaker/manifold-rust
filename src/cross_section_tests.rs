@@ -184,3 +184,96 @@ fn test_cross_section_offset_default_segments_match_quality() {
         expected
     );
 }
+
+/// Build Polygons from coordinate-pair literals.
+fn polys(contours: &[&[(f64, f64)]]) -> Polygons {
+    contours
+        .iter()
+        .map(|c| c.iter().map(|&(x, y)| Vec2::new(x, y)).collect())
+        .collect()
+}
+
+/// The bar [0,10]x[0,2] with hole [8,9]x[0.5,1.5], unioned with a U whose
+/// bbox [7,11]x[-0.5,2.5] covers the hole's vertices while its opening
+/// embraces the bar's right end.
+fn bar_and_u() -> CrossSection {
+    let bar = CrossSection::square_vec2(Vec2::new(10.0, 2.0), false).difference(
+        &CrossSection::square_vec2(Vec2::new(1.0, 1.0), false).translate(Vec2::new(8.0, 0.5)),
+    );
+    let u = CrossSection::square_vec2(Vec2::new(4.0, 3.0), false)
+        .translate(Vec2::new(7.0, -0.5))
+        .difference(
+            &CrossSection::square_vec2(Vec2::new(3.5, 2.5), false).translate(Vec2::new(7.0, -0.25)),
+        );
+    bar.union(&u)
+}
+
+const U_OUTLINE: &[(f64, f64)] = &[
+    (11.0, 2.5),
+    (7.0, 2.5),
+    (7.0, 2.25),
+    (10.5, 2.25),
+    (10.5, -0.25),
+    (7.0, -0.25),
+    (7.0, -0.5),
+    (11.0, -0.5),
+];
+
+/// C++ `Decompose` groups holes by Clipper2's PolyTree containment, so the
+/// bar keeps its hole even though the U's bounding box also covers it.
+/// Expected contours and order from the C++ reference compiled against
+/// Clipper2 46f6391.
+#[test]
+fn test_decompose_keeps_hole_with_its_outline() {
+    let cs = bar_and_u();
+    let bar = &[(10.0, 2.0), (0.0, 2.0), (0.0, 0.0), (10.0, 0.0)][..];
+    let hole = &[(8.0, 1.5), (9.0, 1.5), (9.0, 0.5), (8.0, 0.5)][..];
+    assert_eq!(cs.to_polygons(), polys(&[U_OUTLINE, bar, hole]));
+    let comps: Vec<Polygons> = cs.decompose().iter().map(|c| c.to_polygons()).collect();
+    assert_eq!(comps, vec![polys(&[bar, hole]), polys(&[U_OUTLINE])]);
+}
+
+/// C++ emits the reversed stack of its outline/hole recursion: an island
+/// inside a hole is pushed before its enclosing outline, later siblings
+/// after. Expected order from the compiled C++ reference.
+#[test]
+fn test_decompose_order_matches_cpp() {
+    let ring = |outer: f64, inner: f64| {
+        CrossSection::square_vec2(Vec2::new(outer, outer), true)
+            .difference(&CrossSection::square_vec2(Vec2::new(inner, inner), true))
+    };
+    let nest = ring(10.0, 8.0)
+        .union(&ring(4.0, 2.0))
+        .union(&CrossSection::square(1.0).translate(Vec2::new(20.0, 0.0)));
+    let comps: Vec<Polygons> = nest.decompose().iter().map(|c| c.to_polygons()).collect();
+    let sq = |h: f64| [(h, h), (-h, h), (-h, -h), (h, -h)];
+    let hole = |h: f64| [(-h, h), (h, h), (h, -h), (-h, -h)];
+    assert_eq!(
+        comps,
+        vec![
+            polys(&[&[(21.0, 1.0), (20.0, 1.0), (20.0, 0.0), (21.0, 0.0)]]),
+            polys(&[&sq(5.0), &hole(4.0)]),
+            polys(&[&sq(2.0), &hole(1.0)]),
+        ]
+    );
+}
+
+/// C++ returns `*this` unchanged when `NumContour() < 2`: an empty section
+/// decomposes to one empty section, and a single contour is not pushed
+/// through Clipper2 (which would snap it to the 2^-27 grid).
+#[test]
+fn test_decompose_short_circuits_below_two_contours() {
+    let empty = CrossSection::default().decompose();
+    assert_eq!(empty.len(), 1);
+    assert!(empty[0].is_empty());
+    let circ = CrossSection::circle(1.0, 8).translate(Vec2::new(0.1, 0.2));
+    let comps = circ.decompose();
+    assert_eq!(comps.len(), 1);
+    let bits = |p: &Polygons| -> Vec<(u64, u64)> {
+        p.iter()
+            .flatten()
+            .map(|v| (v.x.to_bits(), v.y.to_bits()))
+            .collect()
+    };
+    assert_eq!(bits(&comps[0].to_polygons()), bits(&circ.to_polygons()));
+}

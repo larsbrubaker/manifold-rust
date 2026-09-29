@@ -13,8 +13,8 @@ Two kinds of entry live here, and they are not the same claim:
   resolve toward the C++ on the merits but cannot change unilaterally, because a
   downstream consumer verifies against this tree bit-for-bit. These are
   *disclosures*, not justifications: the entry states what differs, why it
-  cannot be fixed here alone, and what a coordinated fix would take. Entries 2
-  and 5 (entry 6 is retired).
+  cannot be fixed here alone, and what a coordinated fix would take. Entry 2
+  (entries 5 and 6 were of this kind and are retired).
 
 The second kind is deliberately uncomfortable to write, which is the point — it
 is a debt with a name attached, not a decision that ends the discussion. Nothing
@@ -229,60 +229,27 @@ the mirror and every normal outward-pointing. Plus, in the same file,
 with the prop capture removed (1536, 90, 36, 90 verts) and pass with it.
 manifold-sharp carries the same fix in its commit 674b6ce.
 
-## 5. `CrossSection::decompose` groups holes by bounding box, not by a `PolyTree` (2026-09-28)
+## 5. `CrossSection::decompose` groups holes by bounding box, not by a `PolyTree` (2026-09-28) — retired 2026-09-29
 
-**What differs:** `CrossSection::decompose` (`src/cross_section.rs:286-348`)
-normalizes through `union` with an empty section, calls every contour with
-non-negative signed area an outline, and gives each hole to the outline with the
-smallest bounding box containing the hole's *first vertex*. C++ v3.5.2
-`CrossSection::Decompose` (`src/cross_section/cross_section.cpp:475-494`, with
-`decompose_outline` / `decompose_hole` at 126-151) runs
-`C2::BooleanOp(Union, FillRule::Positive, …)` into a `C2::PolyTreeD`, whose
-parent/child links are Clipper's own containment result, and emits one section
-per outline node with exactly that node's children as holes. This is not an
-accuracy fix or a bug fix on our side — the bounding-box heuristic is a
-simplification the port shipped, and it is the less correct of the two. It is an
-**inherited** divergence: debt, not a decision.
-
-**What is observably different:**
-
-- *Hole ownership.* A bounding box is not containment. When a hole's first vertex
-  also falls in a smaller outline's box, the hole goes to the wrong component.
-  Measured with a scratch probe: a bar `[0,10]×[0,2]` with a hole `[8,9]×[0.5,1.5]`,
-  unioned with a U-shaped outline (bbox `[7,11]×[-0.5,2.5]`, area 12) whose
-  opening embraces the bar's right end. `decompose` returns the U *carrying the
-  bar's hole* and the bar as a solid rectangle with no hole; the PolyTree puts the
-  hole under the bar. (`compose` of the two components still restores the input,
-  because the union re-derives winding from all contours together — the
-  components themselves are wrong.) Islands nested inside holes are separate
-  outlines in both implementations, so they are not the failure mode on their
-  own; any hole whose first vertex a smaller, unrelated outline's box covers is.
-- *Component order.* C++ emits the reversed post-order of the tree walk (islands
-  inside a node's holes are pushed before the node, siblings after); ours follows
-  the path order Clipper's flat union output happens to have. The two existing
-  tests (`test_cpp_cross_section_decompose` in `manifold_tests/cross_section2.rs`
-  and `manifold_tests/advanced.rs`) check only counts, which agree.
-- *Short-circuit.* C++ returns a copy of `*this` unchanged when
-  `NumContour() < 2` — so an empty section decomposes to one empty section, and a
-  single contour is not re-normalized. Ours always normalizes, and returns an empty
-  `Vec` for an empty section (probe: `CrossSection::default().decompose().len()`
-  is `0`).
-
-**Why it stays for now.** manifold-sharp transcribes the same heuristic
-(`ManifoldSharp/CrossSection.cs`, `Decompose`, with the same comments) and
-verifies bit-for-bit against this tree, so fixing it here alone breaks its
-parity.
-
-**Harmonization path:** port the PolyTree grouping in both trees together.
-`clipper2-rust` 1.0.3, already a dependency, exposes `boolean_op_tree_d` and
-`PolyTreeD`, so the C++ `decompose_outline` / `decompose_hole` recursion ports
-directly — including the `NumContour() < 2` short-circuit and the reversed
-emission order — with no new dependency. The shared regression should be the
-U-shape case above, asserting the hole stays with the bar.
-
-**Evidence:** source reading of both implementations at the lines above, and the
-scratch probe described (not checked in; it is the U-shape construction from
-`CrossSection::from_polygons_fill` rectangles and `difference`/`union`).
+**Retired:** `CrossSection::decompose` (`src/cross_section_ops.rs`) now ports
+C++ v3.5.2 `CrossSection::Decompose` (`src/cross_section/cross_section.cpp:475-494`,
+with `decompose_outline` / `decompose_hole` at 126-151) exactly: the
+`NumContour() < 2` short-circuit returning the section unchanged (so an empty
+section decomposes to one empty section, and a single contour is not snapped
+through Clipper2), a `FillRule::Positive` union into `clipper2_rust::PolyTreeD`,
+and the outline/hole walk emitted in reversed push order. The bounding-box
+heuristic this entry disclosed gave the hole of a bar `[0,10]×[0,2]` (hole
+`[8,9]×[0.5,1.5]`) to a U-shaped outline (bbox `[7,11]×[-0.5,2.5]`) embracing
+the bar's end; the PolyTree keeps it with the bar. The crate's tree construction
+(`build_tree_d` / `recursive_check_owners`) appends children in the same order
+as Clipper2 46f6391's `BuildTreeD` / `RecursiveCheckOwners`. Evidence: the C++
+reference's `cross_section.cpp` compiled (MSVC, `MANIFOLD_PAR=-1`) against
+Clipper2 46f6391 agrees contour-for-contour and in component order with
+`cross_section::tests::test_decompose_keeps_hole_with_its_outline` (the U case),
+`test_decompose_order_matches_cpp` (an island inside a hole plus a separate
+square) and `test_decompose_short_circuits_below_two_contours`. manifold-sharp
+must twin this change (its `CrossSection.cs` `Decompose` still carries the
+heuristic) to keep bit-agreement on `Decompose`.
 
 ## 6. `MeshGL::merge` dedupes open edges and open vertices (2026-09-28) — retired 2026-09-29
 

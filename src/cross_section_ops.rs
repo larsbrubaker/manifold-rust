@@ -22,14 +22,14 @@
 // `polygons` field and callers keep the same `CrossSection::...` paths.
 
 use clipper2_rust::{
-    difference_d, inflate_paths_d, intersect_d, minkowski_sum_d, simplify_paths, union_d, EndType,
-    FillRule, JoinType, PathsD,
+    boolean_op_tree_d, difference_d, inflate_paths_d, intersect_d, minkowski_sum_d, simplify_paths,
+    union_d, ClipType, EndType, FillRule, JoinType, PathsD, PolyTreeD,
 };
 
-use super::{contour_area, from_paths, path_area, to_paths, CrossSection, PRECISION};
+use super::{from_paths, path_area, to_paths, CrossSection, PRECISION};
 use crate::linalg::Vec2;
 use crate::math;
-use crate::types::{OpType, Quality, Rect};
+use crate::types::{OpType, Quality};
 
 impl CrossSection {
     pub fn union(&self, other: &Self) -> Self {
@@ -58,67 +58,31 @@ impl CrossSection {
             PRECISION,
         )))
     }
-    /// Decompose into connected components. Each component maintains its
-    /// contours (outer boundary + holes).
+    /// Split into topologically disconnected components, each one outline
+    /// with zero or more holes. Mirrors C++ `CrossSection::Decompose`: fewer
+    /// than two contours return `self` unchanged; otherwise a Positive union
+    /// into a Clipper2 PolyTree, whose containment links decide which holes
+    /// belong to which outline, walked as `decompose_outline` /
+    /// `decompose_hole` do and emitted in reverse push order.
     pub fn decompose(&self) -> Vec<Self> {
-        // Simple decomposition: use clipper union to normalize, then separate
-        // non-overlapping groups by bounding box.
-        let normalized = self.union(&Self::default());
-        let polys = &normalized.polygons;
-        if polys.is_empty() {
-            return vec![];
+        if self.polygons.len() < 2 {
+            return vec![self.clone()];
         }
-
-        // Group polygons: outer polygons are CCW (positive area), holes are CW.
-        // Each outer polygon starts a new component, holes are assigned to the
-        // outer polygon whose bbox contains them.
-        let mut outers: Vec<(usize, Rect)> = Vec::new();
-        let mut holes: Vec<(usize, Vec2)> = Vec::new();
-
-        for (i, poly) in polys.iter().enumerate() {
-            if poly.len() < 3 {
-                continue;
-            }
-            let sa = contour_area(poly);
-            if sa >= 0.0 {
-                // Outer (CCW in our convention)
-                let mut r = Rect::new();
-                for &p in poly {
-                    r.union_point(p);
-                }
-                outers.push((i, r));
-            } else {
-                // Hole — use first point as representative
-                holes.push((i, poly[0]));
-            }
-        }
-
-        let mut components: Vec<Vec<usize>> = outers.iter().map(|(i, _)| vec![*i]).collect();
-
-        for (hole_idx, pt) in &holes {
-            // Find smallest outer bbox that contains this hole's representative point
-            let mut best = None;
-            let mut best_area = f64::MAX;
-            for (ci, (_, rect)) in outers.iter().enumerate() {
-                if rect.contains_point(*pt) {
-                    let a = (rect.max.x - rect.min.x) * (rect.max.y - rect.min.y);
-                    if a < best_area {
-                        best_area = a;
-                        best = Some(ci);
-                    }
-                }
-            }
-            if let Some(ci) = best {
-                components[ci].push(*hole_idx);
-            }
-        }
-
-        components
-            .into_iter()
-            .map(|indices| {
-                let component_polys = indices.into_iter().map(|i| polys[i].clone()).collect();
-                Self::new(component_polys)
-            })
+        let mut tree = PolyTreeD::new();
+        boolean_op_tree_d(
+            ClipType::Union,
+            FillRule::Positive,
+            &to_paths(&self.polygons),
+            &PathsD::new(),
+            &mut tree,
+            PRECISION,
+        );
+        let mut comps = Vec::new();
+        decompose_outlines(&tree, 0, &mut comps);
+        comps
+            .iter()
+            .rev()
+            .map(|poly| Self::new(from_paths(poly)))
             .collect()
     }
 
@@ -341,5 +305,23 @@ impl CrossSection {
             return Self::default();
         }
         Self::from_polygons_fill(all)
+    }
+}
+
+/// C++ `decompose_outline` / `decompose_hole` (cross_section.cpp:126-151):
+/// for each outline child of `node`, first recurse into every hole's own
+/// outline children (islands), then push `[outline, holes...]`. The C++
+/// recurses over sibling indices too; iterating them visits the same nodes
+/// in the same order without a stack frame per sibling.
+fn decompose_outlines(tree: &PolyTreeD, node: usize, polys: &mut Vec<PathsD>) {
+    for &outline in tree.nodes[node].children() {
+        let holes = tree.nodes[outline].children();
+        let mut poly = PathsD::with_capacity(holes.len() + 1);
+        poly.push(tree.nodes[outline].polygon().clone());
+        for &hole in holes {
+            decompose_outlines(tree, hole, polys);
+            poly.push(tree.nodes[hole].polygon().clone());
+        }
+        polys.push(poly);
     }
 }
