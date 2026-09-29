@@ -12,14 +12,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+// manifold.rs — the public `Manifold` handle: a thin, immutable wrapper over
+// `ManifoldImpl` (impl_mesh.rs) that ports the C++ `Manifold` API.
+//
+// This file owns the struct, its constructors and accessors, the geometric
+// queries, simplification, affine transforms and warps, property editing,
+// compose / decompose, and slice / project. The rest of the API lives in
+// child modules so they can reach the private `imp` field:
+// manifold_boolean.rs (booleans, plane splits, operator overloads),
+// manifold_robust.rs (robust-engine repair entry points),
+// manifold_meshgl.rs (MeshGL import/export), manifold_shape.rs (primitive
+// and extrusion constructors) and manifold_smooth.rs (normals, smoothing,
+// refinement).
+
 use crate::boolean3;
 use crate::cross_section::CrossSection;
 use crate::impl_mesh::ManifoldImpl;
-use crate::linalg::{
-    mat4_to_mat3x4, normalize, scaling_matrix, translation_matrix, Mat3, Mat3x4, Vec3,
-};
-use crate::math;
-use crate::types::{Error, OpType, RayHit};
+use crate::linalg::{mat4_to_mat3x4, scaling_matrix, translation_matrix, Mat3, Mat3x4, Vec3};
+use crate::types::{Error, RayHit};
 
 #[derive(Clone)]
 pub struct Manifold {
@@ -322,39 +332,6 @@ impl Manifold {
         }
     }
 
-    /// Split this manifold into two using a cutter manifold.
-    /// Returns (intersection, difference).
-    pub fn split(&self, cutter: &Self) -> (Self, Self) {
-        let intersection = self.intersection(cutter);
-        let difference = self.difference(cutter);
-        (intersection, difference)
-    }
-
-    /// Split this manifold by a plane defined by a normal and offset from origin.
-    /// Returns (in direction of normal, opposite direction).
-    pub fn split_by_plane(&self, normal: Vec3, origin_offset: f64) -> (Self, Self) {
-        // Per C++ #1659: errored manifolds are empty, so the is_empty()
-        // early-return below would silently drop their status — guard first.
-        if self.imp.status != Error::NoError {
-            return (self.clone(), self.clone());
-        }
-        if self.is_empty() {
-            return (Self::empty(), Self::empty());
-        }
-        let halfspace = Self::halfspace(&self.imp.bbox, normal, origin_offset);
-        self.split(&halfspace)
-    }
-
-    /// Trim this manifold by a half-space, keeping only the part in the direction
-    /// of the normal vector.
-    pub fn trim_by_plane(&self, normal: Vec3, origin_offset: f64) -> Self {
-        if self.is_empty() {
-            return Self::empty();
-        }
-        let halfspace = Self::halfspace(&self.imp.bbox, normal, origin_offset);
-        self.intersection(&halfspace)
-    }
-
     /// Slice this manifold at the given Z height, returning the cross-section
     /// as a CrossSection. C++ `Manifold::Slice` returns raw `Polygons`; this
     /// is C++ `CrossSection(m.Slice(height))`, the Positive-union Polygons
@@ -375,302 +352,6 @@ impl Manifold {
             return CrossSection::default();
         }
         CrossSection::new(self.imp.project())
-    }
-
-    /// Apply batch boolean operations on a list of manifolds.
-    pub fn batch_boolean(manifolds: &[Self], op: OpType) -> Self {
-        if manifolds.is_empty() {
-            return Self::empty();
-        }
-        let mut result = manifolds[0].clone();
-        for m in &manifolds[1..] {
-            result = result.boolean(m, op);
-        }
-        result
-    }
-
-    /// Internal helper: create a halfspace (large cube) for plane splitting.
-    fn halfspace(bbox: &crate::types::Box, normal: Vec3, origin_offset: f64) -> Self {
-        let n = normalize(normal);
-        let cutter = Self::cube(Vec3::splat(2.0), true).translate(Vec3::new(1.0, 0.0, 0.0));
-        let center = bbox.center();
-        let size_len = (bbox.size().x * bbox.size().x
-            + bbox.size().y * bbox.size().y
-            + bbox.size().z * bbox.size().z)
-            .sqrt();
-        let dist = ((center.x - n.x * origin_offset).powi(2)
-            + (center.y - n.y * origin_offset).powi(2)
-            + (center.z - n.z * origin_offset).powi(2))
-        .sqrt()
-            + 0.5 * size_len;
-        let cutter = cutter
-            .scale(Vec3::splat(dist))
-            .translate(Vec3::new(origin_offset, 0.0, 0.0));
-        let y_deg = -math::asin(n.z).to_degrees();
-        let z_deg = math::atan2(n.y, n.x).to_degrees();
-        cutter.rotate(0.0, y_deg, z_deg)
-    }
-
-    pub fn boolean(&self, other: &Self, op: OpType) -> Self {
-        self.boolean_with_engine(other, op, crate::types::BooleanConfig::default_engine())
-    }
-
-    /// True when two of this mesh's own triangles genuinely intersect —
-    /// they cross, they overlap, or they are coincident surface — rather
-    /// than merely sharing edges and vertices as every closed mesh does.
-    ///
-    /// Topologically manifold meshes can still be self-intersecting; those
-    /// inputs break the exact boolean engine's assumptions, so
-    /// [`crate::types::BooleanEngine::Auto`] routes them to the robust
-    /// engine. A mesh carrying non-finite positions (e.g. after a warp to
-    /// NaN) answers `true`, that being the safe verdict for geometry no
-    /// exact predicate can evaluate.
-    ///
-    /// The scan is a BVH self-query with an exact narrow phase; the verdict
-    /// is cached on the impl, so repeat queries (and the booleans that
-    /// consult it) are free until the geometry changes.
-    pub fn has_self_intersections(&self) -> bool {
-        crate::robust::soup::has_self_intersections(&self.imp)
-    }
-
-    /// Repair the winding of inside-out shells so every body reads as solid
-    /// material under the robust engine's {winding >= 1} semantics.
-    ///
-    /// Connected shells whose exact winding shows them inverted relative to
-    /// their nesting are rewound: outermost shells end up winding +1 and
-    /// cavity shells stay (or become) correctly inward-wound — legitimate
-    /// voids are preserved, unlike a blanket flip of negative-signed-volume
-    /// shells. Coincident/doubled sheets are deliberately left untouched;
-    /// the robust boolean's winding-stack arithmetic already handles them.
-    ///
-    /// Works standalone (no boolean required) on both manifold and
-    /// soup-backed impls; positions, properties, and mesh relations are
-    /// untouched, only triangle winding changes. Returns `self` unchanged
-    /// when nothing needs flipping.
-    pub fn repair_orientation(&self) -> Self {
-        if self.is_empty() {
-            return self.clone();
-        }
-        let tris = crate::robust::soup::impl_to_tris(&self.imp);
-        let plan = crate::robust::repair::plan_repair(&tris);
-        if plan.is_noop() {
-            return self.clone();
-        }
-        let mut out = self.imp.clone();
-        crate::robust::repair::apply_flips(&mut out, &plan.flip);
-        // Winding-only edit, but it rewrites halfedges in place; re-deriving
-        // the verdict keeps the invalidate-on-in-place-edit rule absolute.
-        out.invalidate_self_intersects();
-        Self::from_impl(out)
-    }
-
-    /// Rebuild this mesh into a fresh, properly paired 2-manifold enclosing
-    /// the same solid region under `rule`.
-    ///
-    /// The full robust pipeline — exact intersection (including the mesh
-    /// against itself), arrangement, cell complex, winding-number
-    /// classification, reassembly — run on this one mesh. Arbitrary triangle
-    /// soup is fair game: self-intersections, T-junctions, duplicated or
-    /// coincident sheets, more than two faces on an edge, interior walls.
-    /// Every wall the winding numbers say has material on both sides
-    /// dissolves, every surviving wall is rewound from the cell labels, and
-    /// the output is re-imported with real halfedge pairing.
-    ///
-    /// What is *not* fair game is a surface with a hole in it. Winding numbers
-    /// are only defined for a closed surface, and the soup import enforces it:
-    /// [`Manifold::from_mesh_gl_robust`] balances directed edges on
-    /// position-welded vertices and rejects anything left over with
-    /// [`Error::NotClosed`], so an open or non-orientable mesh never reaches
-    /// this method — it is already an empty `Manifold` carrying that status,
-    /// and the rebuild is a no-op on it. Closed and orientable is the
-    /// admission requirement; everything past that the pipeline will fix.
-    ///
-    /// Choose between this and the cheaper repairs by what is actually wrong:
-    ///
-    ///  * [`Manifold::repair_orientation`] when only the *winding* is wrong —
-    ///    inside-out shells on geometry that is otherwise a clean manifold.
-    ///    It touches nothing but triangle orientation, so it is fast, exact,
-    ///    and preserves triangle count, properties and relations verbatim.
-    ///  * `rebuild_solid` when the *geometry* is wrong — anything that cannot
-    ///    be fixed by flipping triangles. It re-triangulates, so vertex and
-    ///    triangle counts change and properties are re-interpolated.
-    ///
-    /// [`crate::types::WindingRule::Positive`] keeps `{w >= 1}`: an inverted body is not
-    /// material and disappears. [`crate::types::WindingRule::Nonzero`] keeps `{w != 0}`,
-    /// which reads an inside-out body as solid and rewinds it — the right
-    /// choice for scans and CAD exports whose shells are wound arbitrarily.
-    ///
-    /// Empty input returns empty. A cancelled run returns an empty mesh with
-    /// [`Error::Cancelled`]; other pipeline failures surface through
-    /// [`Manifold::status`] as usual.
-    pub fn rebuild_solid(&self, rule: crate::types::WindingRule) -> Self {
-        self.rebuild_solid_with_token(rule, None)
-    }
-
-    /// [`Manifold::rebuild_solid`] with cooperative cancellation. Soup
-    /// rebuilds are as expensive as a boolean against a partner, so anything
-    /// interactive wants this form.
-    pub fn rebuild_solid_with_token(
-        &self,
-        rule: crate::types::WindingRule,
-        token: Option<&crate::cancel::CancelToken>,
-    ) -> Self {
-        if self.is_empty() {
-            return self.clone();
-        }
-        Self::from_impl(crate::robust::rebuild_with_rule(
-            &self.imp, rule, token, None,
-        ))
-    }
-
-    /// [`Manifold::boolean`] with an explicit engine choice, overriding the
-    /// process-global default set via
-    /// [`crate::types::BooleanConfig::set_default_engine`].
-    pub fn boolean_with_engine(
-        &self,
-        other: &Self,
-        op: OpType,
-        engine: crate::types::BooleanEngine,
-    ) -> Self {
-        Self::from_impl(boolean3::boolean_dispatch(
-            &self.imp, &other.imp, op, engine, None,
-        ))
-    }
-
-    /// [`Manifold::boolean_with_engine`] with cooperative cancellation.
-    pub fn boolean_with_engine_and_token(
-        &self,
-        other: &Self,
-        op: OpType,
-        engine: crate::types::BooleanEngine,
-        token: Option<&crate::cancel::CancelToken>,
-    ) -> Self {
-        Self::from_impl(boolean3::boolean_dispatch(
-            &self.imp, &other.imp, op, engine, token,
-        ))
-    }
-
-    /// [`Manifold::boolean_with_engine_and_token`] that also reports coarse
-    /// pipeline progress.
-    ///
-    /// Cancellation and progress travel together because callers that want one
-    /// almost always want the other (a UI showing a progress bar next to a
-    /// cancel button); pass `None` for either independently. `None` progress is
-    /// byte-for-byte the un-instrumented path — see [`crate::progress`] for the
-    /// phases reported and the throttling contract.
-    pub fn boolean_with_engine_and_progress(
-        &self,
-        other: &Self,
-        op: OpType,
-        engine: crate::types::BooleanEngine,
-        token: Option<&crate::cancel::CancelToken>,
-        progress: Option<&crate::progress::ProgressReporter>,
-    ) -> Self {
-        Self::from_impl(boolean3::boolean_dispatch_with_progress(
-            &self.imp, &other.imp, op, engine, token, progress,
-        ))
-    }
-
-    /// [`Manifold::boolean_with_engine`] with an explicit winding rule.
-    ///
-    /// [`crate::types::WindingRule::Nonzero`] treats inside-out geometry as
-    /// solid (`w != 0` rather than `w >= 1`), which keeps the inverted regions
-    /// of inconsistently wound scans instead of dropping them. The rule is a
-    /// robust-engine semantic: the exact engine ignores it, and `Auto` routes
-    /// to the robust engine whenever the rule is `Nonzero` (see
-    /// [`crate::boolean3::boolean_dispatch_full`]).
-    pub fn boolean_with_engine_and_rule(
-        &self,
-        other: &Self,
-        op: OpType,
-        engine: crate::types::BooleanEngine,
-        rule: crate::types::WindingRule,
-    ) -> Self {
-        self.boolean_with_engine_rule_and_progress(other, op, engine, rule, None, None)
-    }
-
-    /// The full per-call boolean path: engine, winding rule, cancellation, and
-    /// progress. Every other boolean entry point on `Manifold` is this one with
-    /// defaults filled in.
-    pub fn boolean_with_engine_rule_and_progress(
-        &self,
-        other: &Self,
-        op: OpType,
-        engine: crate::types::BooleanEngine,
-        rule: crate::types::WindingRule,
-        token: Option<&crate::cancel::CancelToken>,
-        progress: Option<&crate::progress::ProgressReporter>,
-    ) -> Self {
-        Self::from_impl(boolean3::boolean_dispatch_full(
-            &self.imp, &other.imp, op, engine, rule, token, progress,
-        ))
-    }
-
-    /// [`Manifold::batch_boolean`] with an explicit engine choice (pairwise
-    /// left fold, like `batch_boolean`).
-    pub fn batch_boolean_with_engine(
-        manifolds: &[Self],
-        op: OpType,
-        engine: crate::types::BooleanEngine,
-    ) -> Self {
-        if manifolds.is_empty() {
-            return Self::empty();
-        }
-        let mut result = manifolds[0].clone();
-        for m in &manifolds[1..] {
-            result = result.boolean_with_engine(m, op, engine);
-        }
-        result
-    }
-
-    pub fn union_with_engine(&self, other: &Self, engine: crate::types::BooleanEngine) -> Self {
-        self.boolean_with_engine(other, OpType::Add, engine)
-    }
-
-    pub fn difference_with_engine(
-        &self,
-        other: &Self,
-        engine: crate::types::BooleanEngine,
-    ) -> Self {
-        self.boolean_with_engine(other, OpType::Subtract, engine)
-    }
-
-    pub fn intersection_with_engine(
-        &self,
-        other: &Self,
-        engine: crate::types::BooleanEngine,
-    ) -> Self {
-        self.boolean_with_engine(other, OpType::Intersect, engine)
-    }
-
-    /// [`Manifold::boolean`] with cooperative cancellation.
-    ///
-    /// Pass `None` for the uncancellable behaviour of [`Manifold::boolean`] —
-    /// that path is unchanged and touches no atomics. With `Some(token)`, a
-    /// cancel requested from any thread (before or during the call) makes this
-    /// return an empty manifold whose [`Manifold::status`] is
-    /// [`Error::Cancelled`], mirroring the C++ `ExecutionContext` contract.
-    pub fn boolean_with_token(
-        &self,
-        other: &Self,
-        op: OpType,
-        token: Option<&crate::cancel::CancelToken>,
-    ) -> Self {
-        Self::from_impl(boolean3::boolean_with_token(
-            &self.imp, &other.imp, op, token,
-        ))
-    }
-
-    pub fn union(&self, other: &Self) -> Self {
-        self.boolean(other, OpType::Add)
-    }
-
-    pub fn difference(&self, other: &Self) -> Self {
-        self.boolean(other, OpType::Subtract)
-    }
-
-    pub fn intersection(&self, other: &Self) -> Self {
-        self.boolean(other, OpType::Intersect)
     }
 
     pub fn calculate_curvature(&self, gaussian_idx: i32, mean_idx: i32) -> Self {
@@ -841,107 +522,11 @@ impl Manifold {
     }
 }
 
-// Operator overloads: + for union, - for difference, ^ for intersection
-// Matches C++ operator+(Manifold), operator-(Manifold), operator^(Manifold)
+#[path = "manifold_boolean.rs"]
+mod boolean;
 
-impl std::ops::Add for Manifold {
-    type Output = Self;
-    fn add(self, rhs: Self) -> Self {
-        self.union(&rhs)
-    }
-}
-
-impl std::ops::Add<&Manifold> for Manifold {
-    type Output = Self;
-    fn add(self, rhs: &Self) -> Self {
-        self.union(rhs)
-    }
-}
-
-impl std::ops::Add<&Manifold> for &Manifold {
-    type Output = Manifold;
-    fn add(self, rhs: &Manifold) -> Manifold {
-        self.union(rhs)
-    }
-}
-
-impl std::ops::AddAssign for Manifold {
-    fn add_assign(&mut self, rhs: Self) {
-        *self = self.union(&rhs);
-    }
-}
-
-impl std::ops::AddAssign<&Manifold> for Manifold {
-    fn add_assign(&mut self, rhs: &Self) {
-        *self = self.union(rhs);
-    }
-}
-
-impl std::ops::Sub for Manifold {
-    type Output = Self;
-    fn sub(self, rhs: Self) -> Self {
-        self.difference(&rhs)
-    }
-}
-
-impl std::ops::Sub<&Manifold> for Manifold {
-    type Output = Self;
-    fn sub(self, rhs: &Self) -> Self {
-        self.difference(rhs)
-    }
-}
-
-impl std::ops::Sub<&Manifold> for &Manifold {
-    type Output = Manifold;
-    fn sub(self, rhs: &Manifold) -> Manifold {
-        self.difference(rhs)
-    }
-}
-
-impl std::ops::SubAssign for Manifold {
-    fn sub_assign(&mut self, rhs: Self) {
-        *self = self.difference(&rhs);
-    }
-}
-
-impl std::ops::SubAssign<&Manifold> for Manifold {
-    fn sub_assign(&mut self, rhs: &Self) {
-        *self = self.difference(rhs);
-    }
-}
-
-impl std::ops::BitXor for Manifold {
-    type Output = Self;
-    fn bitxor(self, rhs: Self) -> Self {
-        self.intersection(&rhs)
-    }
-}
-
-impl std::ops::BitXor<&Manifold> for Manifold {
-    type Output = Self;
-    fn bitxor(self, rhs: &Self) -> Self {
-        self.intersection(rhs)
-    }
-}
-
-impl std::ops::BitXor<&Manifold> for &Manifold {
-    type Output = Manifold;
-    fn bitxor(self, rhs: &Manifold) -> Manifold {
-        self.intersection(rhs)
-    }
-}
-
-impl std::ops::BitXorAssign for Manifold {
-    fn bitxor_assign(&mut self, rhs: Self) {
-        *self = self.intersection(&rhs);
-    }
-}
-
-impl std::ops::BitXorAssign<&Manifold> for Manifold {
-    fn bitxor_assign(&mut self, rhs: &Self) {
-        *self = self.intersection(rhs);
-    }
-}
+#[path = "manifold_robust.rs"]
+mod robust;
 
 #[path = "manifold_meshgl.rs"]
 mod meshgl;

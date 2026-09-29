@@ -3,7 +3,7 @@ use super::*;
 // longer imports them, so pull them in here where `use super::*` in each
 // test file can see them.
 use crate::linalg::Vec2;
-use crate::types::{MeshGL, Polygons, Rect};
+use crate::types::{MeshGL, OpType, Polygons, Rect};
 
 /// Helper: square with a square hole, offset along x
 fn square_hole(x_offset: f64) -> Polygons {
