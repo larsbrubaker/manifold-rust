@@ -7,7 +7,7 @@
 use std::collections::BTreeMap;
 
 use crate::impl_mesh::ManifoldImpl;
-use crate::linalg::{cross, dot, length2, normalize, Vec2, Vec3};
+use crate::linalg::{cross, dot, length2, lerp3, normalize, Vec2, Vec3};
 use crate::math;
 use crate::types::{next_halfedge, Halfedge, PolyVert, PolygonsIdx};
 
@@ -651,12 +651,9 @@ impl ManifoldImpl {
                 let below = self.vert_pos[up.start_vert as usize];
                 let above = self.vert_pos[up.end_vert as usize];
                 let a = (height - below.z) / (above.z - below.z);
-                // lerp: below + a * (above - below)
-                let pt = Vec2::new(
-                    below.x + a * (above.x - below.x),
-                    below.y + a * (above.y - below.y),
-                );
-                poly.push(pt);
+                // C++ `vec2(la::lerp(below, above, a))` = below*(1-a) + above*a.
+                let p = lerp3(below, above, a);
+                poly.push(Vec2::new(p.x, p.y));
 
                 let pair = up.paired_halfedge;
                 tri = pair as usize / 3;

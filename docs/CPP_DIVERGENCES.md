@@ -16,6 +16,14 @@ Two kinds of entry live here, and they are not the same claim:
   cannot be fixed here alone, and what a coordinated fix would take. Entry 2
   (entries 5 and 6 were of this kind and are retired).
 
+A third, narrower kind records where the C++ output is itself not pinned:
+
+- **Implementation-defined in the C++** — the reference's result depends on
+  standard-library behavior the C++ standard leaves unspecified (for example
+  `std::unordered_set` iteration order), so "the C++ output" differs between
+  toolchains and no single bit pattern exists to match. The entry states which
+  part of the output is affected and what is still compared exactly. Entry 7.
+
 The second kind is deliberately uncomfortable to write, which is the point — it
 is a debt with a name attached, not a decision that ends the discussion. Nothing
 belongs in either category for convenience.
@@ -266,3 +274,32 @@ boundary where the old port chose a different representative (`from = [4, 5]`,
 randomized open-mesh sweep. Regressions: `src/types_meshgl_merge_tests.rs`.
 manifold-sharp must twin this change (its `MeshGL.cs` still uses `SortedSet`s)
 to keep bit-agreement on `Merge`.
+
+## 7. `Impl::slice` contour start vertex (2026-09-29) — implementation-defined in the C++
+
+**What differs:** the first vertex of each raw contour returned by
+`ManifoldImpl::slice` (`src/face_op.rs`). Every contour is the same cyclic
+vertex sequence as the C++, bit-for-bit, in the same orientation; only the
+rotation of the cycle can differ.
+
+**Why:** C++ v3.5.2 `Manifold::Impl::Slice` (`src/face_op.cpp:370-430`) collects
+the straddling triangles in a `std::unordered_set<int>` and starts each contour
+at `*tris.begin()`. That iteration order is unspecified by the standard (MSVC,
+libstdc++ and libc++ each give their own), so the C++ start vertex is a property
+of the toolchain, not of the algorithm. This port collects into a
+`std::collections::HashSet<usize>`, whose default `RandomState` hasher makes the
+start vertex vary from process to process as well. When several contours exist,
+the order of the contours follows the same set iteration and is equally
+unpinned. Everything downstream of the public API is unaffected in shape:
+`Manifold::slice` wraps the contours in a `FillRule::Positive` union
+(`CrossSection::new`), as every C++ caller does.
+
+**Evidence:** `cross_section::ctor_tests::test_raw_slice_matches_cpp_lerp_bits`
+compares `Manifold::sphere(1.0, 8).as_impl().slice(0.3)` against the C++ (MSVC,
+`MANIFOLD_PAR=-1`, Clipper2 46f6391) as a cyclic sequence, after the crossing
+interpolation was corrected to `la::lerp(below, above, a)` =
+`below * (1 - a) + above * a` (it was `below + a * (above - below)`, which
+differed by one ULP in 10 of 24 coordinates). The MSVC build starts that contour
+at a different triangle than this port does; the cycles agree bit-for-bit.
+manifold-sharp needs no change for the start vertex, but must twin the `lerp`
+form to keep its raw slice bit-equal.

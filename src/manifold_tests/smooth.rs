@@ -599,31 +599,40 @@ fn test_cpp_smooth_sphere() {
     }
 }
 
-/// C++ TEST(Smooth, Fillet) — smoke test: Simplify+SmoothByNormals must not crash
+/// C++ TEST(Smooth, Fillet) (smooth_test.cpp:225). `cylinder.Slice(0)` is the
+/// raw C++ `Polygons`, reached here through `as_impl().slice` because the
+/// public `Manifold::slice` wraps its result in a unioned `CrossSection`.
 #[test]
 fn test_cpp_smooth_fillet() {
-    let depth = 3.0_f64;
-    let cylinder = Manifold::cylinder(40.0, 10.0, 10.0, 6).calculate_normals(0, 80.0);
-    let slice = cylinder.slice(0.0);
-    let section = CrossSection::new(slice.to_polygons()).simplify(1e-6);
+    let depth = 3.0_f32 as f64;
+    let radius = 10.0_f32 as f64;
+    let cylinder =
+        Manifold::cylinder_centered(10.0, radius, radius, 6, false).calculate_normals(0, 80.0);
     let chamfer = Manifold::extrude(
-        &section.to_polygons(),
+        &cylinder.as_impl().slice(0.0),
         depth,
         0,
         0.0,
-        crate::linalg::Vec2::new(1.2, 1.3),
+        crate::linalg::Vec2::splat(radius + depth) / radius,
     )
+    .simplify(0.0)
     .mirror(Vec3::new(0.0, 0.0, 1.0));
-    let base = Manifold::cube(Vec3::splat(40.0), true)
-        .translate(Vec3::new(0.0, 0.0, -20.0 - depth + 0.001))
-        .calculate_normals(0, 60.0);
-    let chamfered = (cylinder + chamfer).difference(&base);
-    let fillet = chamfered.simplify(0.01).smooth_by_normals(0).refine(10);
-    assert_eq!(
-        fillet.status(),
-        crate::types::Error::NoError,
-        "Fillet status={:?}",
-        fillet.status()
+    let base = Manifold::cylinder(5.0, 15.0, 15.0, 6)
+        .translate(Vec3::new(0.0, 0.0, -5.0 - depth))
+        .calculate_normals(0, 80.0);
+    let chamfered = &(&cylinder + &chamfer) + &base;
+    assert_eq!(chamfered.num_degenerate_tris(), 0);
+    let fillet = chamfered.smooth_by_normals(0).refine_to_tolerance(0.01);
+    assert_eq!(fillet.status(), crate::types::Error::NoError);
+    assert!(
+        (fillet.volume() - 7745.0).abs() <= 1.0,
+        "volume {}",
+        fillet.volume()
+    );
+    assert!(
+        (fillet.surface_area() - 2622.0).abs() <= 1.0,
+        "surface area {}",
+        fillet.surface_area()
     );
 }
 

@@ -223,3 +223,43 @@ fn test_slice_and_project_wrap_like_cpp() {
     assert_eq!(bits(&s.slice(0.3).to_polygons()), want(SLICE_CS));
     assert_eq!(bits(&s.project().to_polygons()), want(PROJ_CS));
 }
+
+/// Rotate `c` so it starts at its lexicographically smallest vertex. C++
+/// `Impl::Slice` starts each contour at `*tris.begin()` of a
+/// `std::unordered_set<int>`, whose iteration order is implementation-defined,
+/// so only the cyclic sequence of vertices is comparable across ports.
+fn canonical_cycle(c: &[(u64, u64)]) -> Vec<(u64, u64)> {
+    let start = (0..c.len()).min_by_key(|&i| c[i]).unwrap_or(0);
+    c[start..].iter().chain(c[..start].iter()).copied().collect()
+}
+
+/// C++ `Impl::Slice` interpolates each crossing with `la::lerp(below, above,
+/// a)` = `below * (1 - a) + above * a`; the raw (un-unioned) slice pins that
+/// formula bit-for-bit.
+#[test]
+fn test_raw_slice_matches_cpp_lerp_bits() {
+    const SLICE_RAW: Bits = &[&[
+        (0x3fda0e0999cb4467, 0xbfe6a09e667f3bcc),
+        (0x3fe6a09e667f3bcd, 0xbfda0e0999cb4466),
+        (0x3fec06075c1a0f52, 0x3c91a62633145c07),
+        (0x3fe6a09e667f3bcd, 0x3fda0e0999cb4467),
+        (0x3fda0e0999cb4467, 0x3fe6a09e667f3bcd),
+        (0x3c91a62633145c07, 0x3fec06075c1a0f52),
+        (0xbfda0e0999cb4466, 0x3fe6a09e667f3bcd),
+        (0xbfe6a09e667f3bcc, 0x3fda0e0999cb4467),
+        (0xbfec06075c1a0f52, 0x3c91a62633145c07),
+        (0xbfe6a09e667f3bcc, 0xbfda0e0999cb4467),
+        (0xbfda0e0999cb4467, 0xbfe6a09e667f3bcc),
+        (0x3c91a62633145c07, 0xbfec06075c1a0f52),
+    ]];
+    let s = Manifold::sphere(1.0, 8);
+    let got: Vec<_> = bits(&s.as_impl().slice(0.3))
+        .iter()
+        .map(|c| canonical_cycle(c))
+        .collect();
+    let expected: Vec<_> = want(SLICE_RAW)
+        .iter()
+        .map(|c| canonical_cycle(c))
+        .collect();
+    assert_eq!(got, expected);
+}
