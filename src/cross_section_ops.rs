@@ -22,8 +22,8 @@
 // `polygons` field and callers keep the same `CrossSection::...` paths.
 
 use clipper2_rust::{
-    boolean_op_tree_d, difference_d, inflate_paths_d, intersect_d, minkowski_sum_d, simplify_paths,
-    union_d, ClipType, EndType, FillRule, JoinType, PathsD, PolyTreeD,
+    boolean_op_d, boolean_op_tree_d, difference_d, inflate_paths_d, intersect_d, minkowski_sum_d,
+    simplify_paths, union_d, ClipType, EndType, FillRule, JoinType, PathsD, PolyTreeD,
 };
 
 use super::{from_paths, path_area, to_paths, CrossSection, PRECISION};
@@ -196,40 +196,43 @@ impl CrossSection {
         Self { polygons: polys }
     }
 
-    /// Batch boolean operation on a slice of CrossSections.
-    /// OpType::Add = union, Subtract = difference, Intersect = intersection.
+    /// Boolean over a list of sections. Mirrors C++
+    /// `CrossSection::BatchBoolean`: no sections give an empty section and
+    /// one gives that section back untouched; Intersect folds pairwise
+    /// `BooleanOp`s, while Add and Subtract run a single `BooleanOp` with the
+    /// first section as subject and every later contour as a clip (so
+    /// Subtract removes all of the tail from the head).
     pub fn batch_boolean(sections: &[Self], op: OpType) -> Self {
-        if sections.is_empty() {
-            return Self::default();
+        match sections.len() {
+            0 => return Self::default(),
+            1 => return sections[0].clone(),
+            _ => {}
         }
-        match op {
-            OpType::Add => {
-                let mut paths = PathsD::new();
-                for s in sections {
-                    for p in to_paths(&s.polygons) {
-                        paths.push(p);
-                    }
-                }
-                let empty = PathsD::new();
-                Self {
-                    polygons: from_paths(&union_d(&paths, &empty, FillRule::Positive, PRECISION)),
-                }
+        let subjs = to_paths(&sections[0].polygons);
+        if let OpType::Intersect = op {
+            let mut res = subjs;
+            for s in &sections[1..] {
+                res = boolean_op_d(
+                    ClipType::Intersection,
+                    FillRule::Positive,
+                    &res,
+                    &to_paths(&s.polygons),
+                    PRECISION,
+                );
             }
-            OpType::Subtract => {
-                let mut result = sections[0].clone();
-                for s in &sections[1..] {
-                    result = result.difference(s);
-                }
-                result
-            }
-            OpType::Intersect => {
-                let mut result = sections[0].clone();
-                for s in &sections[1..] {
-                    result = result.intersection(s);
-                }
-                result
-            }
+            return Self::new(from_paths(&res));
         }
+        let mut clips = PathsD::new();
+        for s in &sections[1..] {
+            clips.extend(to_paths(&s.polygons));
+        }
+        Self::new(from_paths(&boolean_op_d(
+            cliptype_of_op(op),
+            FillRule::Positive,
+            &subjs,
+            &clips,
+            PRECISION,
+        )))
     }
 
     /// Compute convex hull of all vertices in a slice of CrossSections.
@@ -287,17 +290,20 @@ impl CrossSection {
         Self::new(vec![hull])
     }
 
-    /// Compose (merge) multiple CrossSections by combining all their contours.
-    /// Matches C++ CrossSection::Compose(vector<CrossSection>) which unions all polygons.
+    /// Batch union of the sections. Mirrors C++ `CrossSection::Compose`,
+    /// which is `BatchBoolean(crossSections, OpType::Add)`.
     pub fn compose(sections: &[Self]) -> Self {
-        let all: Vec<Vec<Vec2>> = sections
-            .iter()
-            .flat_map(|s| s.polygons.iter().cloned())
-            .collect();
-        if all.is_empty() {
-            return Self::default();
-        }
-        Self::from_polygons_fill(all)
+        Self::batch_boolean(sections, OpType::Add)
+    }
+}
+
+/// C++ `cliptype_of_op`: Add is Union, Subtract Difference, Intersect
+/// Intersection.
+fn cliptype_of_op(op: OpType) -> ClipType {
+    match op {
+        OpType::Add => ClipType::Union,
+        OpType::Subtract => ClipType::Difference,
+        OpType::Intersect => ClipType::Intersection,
     }
 }
 

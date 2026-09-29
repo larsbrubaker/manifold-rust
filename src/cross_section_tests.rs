@@ -312,3 +312,121 @@ fn test_simplify_flattens_polytree_like_cpp() {
         ])
     );
 }
+
+fn three_squares() -> Vec<CrossSection> {
+    vec![
+        CrossSection::square(2.0),
+        CrossSection::square(2.0).translate(Vec2::new(1.0, 1.0)),
+        CrossSection::square(2.0).translate(Vec2::new(-1.0, 1.5)),
+    ]
+}
+
+/// C++ `BatchBoolean` Add/Subtract run one `BooleanOp` with the first
+/// section as subject and the rest as clips; Intersect folds pairwise, and
+/// `Compose` is BatchBoolean Add. Expected contours from the compiled C++.
+#[test]
+fn test_batch_boolean_matches_cpp() {
+    let secs = three_squares();
+    let add = polys(&[&[
+        (2.0, 1.0),
+        (3.0, 1.0),
+        (3.0, 3.0),
+        (1.0, 3.0),
+        (1.0, 3.5),
+        (-1.0, 3.5),
+        (-1.0, 1.5),
+        (0.0, 1.5),
+        (0.0, 0.0),
+        (2.0, 0.0),
+    ]]);
+    assert_eq!(
+        CrossSection::batch_boolean(&secs, OpType::Add).to_polygons(),
+        add
+    );
+    assert_eq!(CrossSection::compose(&secs).to_polygons(), add);
+    assert_eq!(
+        CrossSection::batch_boolean(&secs, OpType::Subtract).to_polygons(),
+        polys(&[&[
+            (2.0, 1.0),
+            (1.0, 1.0),
+            (1.0, 1.5),
+            (0.0, 1.5),
+            (0.0, 0.0),
+            (2.0, 0.0)
+        ]])
+    );
+    assert!(CrossSection::batch_boolean(&secs, OpType::Intersect).is_empty());
+}
+
+/// C++ `BatchBoolean` returns `crossSections[0]` itself for a single input,
+/// so neither it nor `Compose` snaps the contours through Clipper2.
+#[test]
+fn test_batch_boolean_single_section_is_unchanged() {
+    let circ = CrossSection::circle(1.0, 8).translate(Vec2::new(0.1, 0.2));
+    let one = [circ.clone()];
+    let bits = |p: &Polygons| -> Vec<(u64, u64)> {
+        p.iter()
+            .flatten()
+            .map(|v| (v.x.to_bits(), v.y.to_bits()))
+            .collect()
+    };
+    let want = bits(&circ.to_polygons());
+    for op in [OpType::Add, OpType::Subtract, OpType::Intersect] {
+        assert_eq!(
+            bits(&CrossSection::batch_boolean(&one, op).to_polygons()),
+            want
+        );
+    }
+    assert_eq!(bits(&CrossSection::compose(&one).to_polygons()), want);
+    assert!(CrossSection::compose(&[]).is_empty());
+}
+
+/// Subtract runs one `BooleanOp` with every tail contour as a clip; a
+/// pairwise fold reaches the same region with its contours in another
+/// order. Clip triangles as C++ `Hull` emits them; expected contours from
+/// the compiled C++ reference (its pairwise fold gives c1/c2 swapped).
+#[test]
+fn test_batch_subtract_is_one_boolean_op() {
+    let tri = |p: [(f64, f64); 3]| CrossSection::new(polys(&[&p]));
+    let secs = [
+        CrossSection::square(8.0).translate(Vec2::new(1.0, 1.0)),
+        tri([
+            (5.505859375, 9.8291015625),
+            (6.05078125, 0.2421875),
+            (9.4619140625, 1.42578125),
+        ]),
+        tri([
+            (2.4287109375, 5.0869140625),
+            (5.408203125, 0.8125),
+            (4.029296875, 9.94140625),
+        ]),
+    ];
+    assert_eq!(
+        CrossSection::batch_boolean(&secs, OpType::Subtract).to_polygons(),
+        polys(&[
+            &[
+                (2.4287109375, 5.0869140625),
+                (3.718903623521328, 9.0),
+                (1.0, 9.0),
+                (1.0, 1.0),
+                (5.2775057330727577, 1.0),
+            ],
+            &[
+                (5.5529856532812119, 9.0),
+                (4.1714947372674942, 9.0),
+                (5.3798815608024597, 1.0),
+                (6.0077070519328117, 1.0),
+            ],
+            &[
+                (9.0, 9.0),
+                (5.8961778432130814, 9.0),
+                (9.0, 2.4069637954235077)
+            ],
+            &[
+                (9.0, 1.2655064538121223),
+                (8.2348068803548813, 1.0),
+                (9.0, 1.0)
+            ],
+        ])
+    );
+}
