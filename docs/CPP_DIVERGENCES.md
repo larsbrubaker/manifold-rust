@@ -231,7 +231,7 @@ manifold-sharp carries the same fix in its commit 674b6ce.
 
 ## 5. `CrossSection::decompose` groups holes by bounding box, not by a `PolyTree` (2026-09-28)
 
-**What differs:** `CrossSection::decompose` (`src/cross_section.rs:256-318`)
+**What differs:** `CrossSection::decompose` (`src/cross_section.rs:286-348`)
 normalizes through `union` with an empty section, calls every contour with
 non-negative signed area an outline, and gives each hole to the outline with the
 smallest bounding box containing the hole's *first vertex*. C++ v3.5.2

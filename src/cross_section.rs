@@ -14,13 +14,17 @@
 
 use crate::types::OpType;
 use clipper2_rust::{
-    area, difference_d, inflate_paths_d, intersect_d, minkowski_sum_d, simplify_paths, union_d,
-    EndType, FillRule, JoinType, PathD, PathsD, Point,
+    difference_d, inflate_paths_d, intersect_d, minkowski_sum_d, simplify_paths, union_d, EndType,
+    FillRule, JoinType, PathD, PathsD, Point,
 };
 
 use crate::linalg::Vec2;
 use crate::math;
-use crate::types::{Polygons, Rect};
+use crate::types::{Polygons, Quality, Rect};
+
+/// Decimal places Clipper2 keeps when scaling to integer coordinates; mirrors
+/// `precision_` in C++ cross_section.cpp, passed to every Clipper2 call.
+const PRECISION: i32 = 8;
 
 #[derive(Clone, Debug, Default)]
 pub struct CrossSection {
@@ -41,13 +45,34 @@ fn from_paths(paths: &PathsD) -> Polygons {
         .collect()
 }
 
-fn signed_area(poly: &[Vec2]) -> f64 {
-    let mut area = 0.0;
-    for i in 0..poly.len() {
-        let j = (i + 1) % poly.len();
-        area += poly[i].x * poly[j].y - poly[j].x * poly[i].y;
+/// Exact port of Clipper2's `Area(const Path<T>&)` (clipper.core.h at commit
+/// 46f6391, the version C++ Manifold pins). Clipper2 walks the trapezoid form
+/// over edges (n-1,0), (0,1), ..., (n-2,n-1), accumulating
+/// `(prev.y + cur.y) * (prev.x - cur.x)` in that order; its two-edges-per-step
+/// unrolling does not change the order. This differs in the last bits from a
+/// shoelace sum (and from clipper2_rust's `area`), so every place C++ calls
+/// `C2::Area` uses this instead.
+fn clipper2_area_by<F: Fn(usize) -> (f64, f64)>(cnt: usize, pt: F) -> f64 {
+    if cnt < 3 {
+        return 0.0;
     }
-    area * 0.5
+    let mut a = 0.0;
+    let mut prev = cnt - 1;
+    for cur in 0..cnt {
+        let (px, py) = pt(prev);
+        let (cx, cy) = pt(cur);
+        a += (py + cy) * (px - cx);
+        prev = cur;
+    }
+    a * 0.5
+}
+
+fn contour_area(poly: &[Vec2]) -> f64 {
+    clipper2_area_by(poly.len(), |i| (poly[i].x, poly[i].y))
+}
+
+fn path_area(path: &PathD) -> f64 {
+    clipper2_area_by(path.len(), |i| (path[i].x, path[i].y))
 }
 
 impl CrossSection {
@@ -56,15 +81,16 @@ impl CrossSection {
     }
 
     /// Create a CrossSection from polygons, normalizing via Clipper2 Union.
-    /// Mirrors C++ CrossSection(Polygons, FillRule) constructor which runs
-    /// the polygons through C2::Union to merge overlapping regions.
+    /// Mirrors C++ CrossSection(Polygons, FillRule) constructor with its
+    /// default FillRule::Positive, which runs the polygons through C2::Union
+    /// to merge overlapping regions.
     pub fn from_polygons_fill(polygons: Polygons) -> Self {
         if polygons.is_empty() {
             return Self::default();
         }
         let paths = to_paths(&polygons);
         let empty = PathsD::new();
-        let result = union_d(&paths, &empty, FillRule::NonZero, 6);
+        let result = union_d(&paths, &empty, FillRule::Positive, PRECISION);
         Self {
             polygons: from_paths(&result),
         }
@@ -144,9 +170,11 @@ impl CrossSection {
     }
 
     /// Net enclosed area: the sum of signed contour areas, so CCW outers add
-    /// and CW holes subtract, matching C++ `CrossSection::Area`.
+    /// and CW holes subtract. Mirrors C++ `CrossSection::Area`, i.e.
+    /// Clipper2's `Area(Paths)`: an explicit fold from +0.0 in contour order,
+    /// so an empty section yields +0.0 rather than `.sum()`'s -0.0.
     pub fn area(&self) -> f64 {
-        self.polygons.iter().map(|p| signed_area(p)).sum()
+        self.polygons.iter().fold(0.0, |a, p| a + contour_area(p))
     }
 
     pub fn bounds(&self) -> Rect {
@@ -163,8 +191,8 @@ impl CrossSection {
         Self::new(from_paths(&union_d(
             &to_paths(&self.polygons),
             &to_paths(&other.polygons),
-            FillRule::NonZero,
-            6,
+            FillRule::Positive,
+            PRECISION,
         )))
     }
 
@@ -172,8 +200,8 @@ impl CrossSection {
         Self::new(from_paths(&intersect_d(
             &to_paths(&self.polygons),
             &to_paths(&other.polygons),
-            FillRule::NonZero,
-            6,
+            FillRule::Positive,
+            PRECISION,
         )))
     }
 
@@ -181,8 +209,8 @@ impl CrossSection {
         Self::new(from_paths(&difference_d(
             &to_paths(&self.polygons),
             &to_paths(&other.polygons),
-            FillRule::NonZero,
-            6,
+            FillRule::Positive,
+            PRECISION,
         )))
     }
 
@@ -276,7 +304,7 @@ impl CrossSection {
             if poly.len() < 3 {
                 continue;
             }
-            let sa = signed_area(poly);
+            let sa = contour_area(poly);
             if sa >= 0.0 {
                 // Outer (CCW in our convention)
                 let mut r = Rect::new();
@@ -328,12 +356,12 @@ impl CrossSection {
         }
         // Normalize via union (removes overlaps/inversions).
         let paths = to_paths(&self.polygons);
-        let unified = union_d(&paths, &PathsD::new(), FillRule::Positive, 6);
+        let unified = union_d(&paths, &PathsD::new(), FillRule::Positive, PRECISION);
         // Filter out contours smaller than epsilon (area vs bounding box).
         let filtered: PathsD = unified
             .into_iter()
             .filter(|poly| {
-                let a = area(poly).abs();
+                let a = path_area(poly).abs();
                 // Compute bounding box max extent
                 let (mut min_x, mut min_y) = (f64::MAX, f64::MAX);
                 let (mut max_x, mut max_y) = (f64::MIN, f64::MIN);
@@ -359,20 +387,16 @@ impl CrossSection {
         Self::new(from_paths(&simplified))
     }
 
+    /// Offset with the C++ `CrossSection::Offset` defaults: Round joins,
+    /// miter_limit 2.0, circularSegments 0 (segments from Quality).
     pub fn offset(&self, delta: f64) -> Self {
-        Self::new(from_paths(&inflate_paths_d(
-            &to_paths(&self.polygons),
-            delta,
-            JoinType::Round,
-            EndType::Polygon,
-            2.0,
-            6,
-            0.0,
-        )))
+        self.offset_with_params(delta, 1, 2.0, 0)
     }
 
     /// Offset with explicit join type and segment count.
-    /// join_type: 0=Square, 1=Round, 2=Miter
+    /// join_type: 0=Square, 1=Round, 2=Miter, 3=Bevel (the C++
+    /// `CrossSection::JoinType` enumerator order). Other codes fall through to
+    /// Square, the value C++ `jt()` starts from before its switch.
     pub fn offset_with_params(
         &self,
         delta: f64,
@@ -381,18 +405,23 @@ impl CrossSection {
         circular_segments: i32,
     ) -> Self {
         let jt = match join_type {
-            0 => JoinType::Square,
+            1 => JoinType::Round,
             2 => JoinType::Miter,
             3 => JoinType::Bevel,
-            _ => JoinType::Round,
+            _ => JoinType::Square,
         };
-        // For round joins, compute arc_tolerance from circular_segments to get the
-        // exact segment count. Matches C++ CrossSection::Offset:
-        //   arc_tol = (cos(π/n) - 1) * -|delta|
-        let arc_tol = if jt == JoinType::Round && circular_segments > 2 {
-            let n = circular_segments as f64;
+        // For round joins, compute arc_tolerance from circular_segments (or,
+        // when it is <= 2, Quality's count for radius delta) to get the exact
+        // segment count. Matches C++ CrossSection::Offset:
+        //   arc_tol = (math::cos(π/n) - 1) * -|delta|
+        let arc_tol = if jt == JoinType::Round {
+            let n = if circular_segments > 2 {
+                circular_segments
+            } else {
+                Quality::get_circular_segments(delta)
+            };
             let abs_delta = delta.abs();
-            ((std::f64::consts::PI / n).cos() - 1.0) * -abs_delta
+            (math::cos(std::f64::consts::PI / n as f64) - 1.0) * -abs_delta
         } else {
             0.0
         };
@@ -402,7 +431,7 @@ impl CrossSection {
             jt,
             EndType::Polygon,
             miter_limit,
-            6,
+            PRECISION,
             arc_tol,
         )))
     }
@@ -411,26 +440,27 @@ impl CrossSection {
         let mut result = Vec::new();
         for a in to_paths(&self.polygons) {
             for b in to_paths(&other.polygons) {
-                result.extend(minkowski_sum_d(&a, &b, true, 6));
+                result.extend(minkowski_sum_d(&a, &b, true, PRECISION));
             }
         }
         Self::new(from_paths(&result))
     }
 
     /// Create CrossSection from a simple polygon with a specified fill rule.
-    /// fill_rule: 0=EvenOdd, 1=NonZero, 2=Positive, 3=Negative
+    /// fill_rule: 0=EvenOdd, 1=NonZero, 2=Positive, 3=Negative (the C++
+    /// `CrossSection::FillRule` enumerator order). Other codes fall through to
+    /// EvenOdd, the value C++ `fr()` starts from before its switch.
     pub fn from_polygon_with_fill_rule(polygon: Vec<Vec2>, fill_rule: i32) -> Self {
         let fr = match fill_rule {
-            0 => FillRule::EvenOdd,
             1 => FillRule::NonZero,
             2 => FillRule::Positive,
             3 => FillRule::Negative,
-            _ => FillRule::Positive,
+            _ => FillRule::EvenOdd,
         };
         let path: PathD = polygon.iter().map(|v| Point::new(v.x, v.y)).collect();
         let paths = PathsD::from(vec![path]);
         let empty = PathsD::new();
-        let result = union_d(&paths, &empty, fr, 6);
+        let result = union_d(&paths, &empty, fr, PRECISION);
         Self {
             polygons: from_paths(&result),
         }
@@ -470,7 +500,7 @@ impl CrossSection {
                 }
                 let empty = PathsD::new();
                 Self {
-                    polygons: from_paths(&union_d(&paths, &empty, FillRule::NonZero, 6)),
+                    polygons: from_paths(&union_d(&paths, &empty, FillRule::Positive, PRECISION)),
                 }
             }
             OpType::Subtract => {
@@ -630,6 +660,103 @@ mod tests {
         assert!(
             cs.area().abs() < 1e-10,
             "CrossSection from empty polygons should have zero area"
+        );
+    }
+
+    /// C++ `CrossSection::Area` is `C2::Area(paths)`, which starts from
+    /// `a = 0.0` and adds each contour, so a section with no contours reports
+    /// +0.0 (an iterator `.sum()` of no f64s yields -0.0).
+    #[test]
+    fn test_cross_section_area_empty_is_positive_zero() {
+        assert_eq!(CrossSection::default().area().to_bits(), 0.0f64.to_bits());
+    }
+
+    /// Off-origin polygons separate Clipper2's trapezoid Area from a shoelace
+    /// sum in the last bits. Expected bits come from compiling Clipper2 commit
+    /// 46f6391's `clipper.core.h` `Area` (MSVC /O2) on these exact
+    /// coordinates: odd count (33) and even count (first 32 points).
+    #[test]
+    fn test_cross_section_area_matches_clipper2_bits() {
+        let cs = CrossSection::circle(1.0, 33).translate(Vec2::new(100.0, -50.0));
+        assert_eq!(cs.area().to_bits(), 0x4008fb2d94a5b1f1);
+        let mut even = cs.to_polygons();
+        even[0].pop();
+        assert_eq!(CrossSection::new(even).area().to_bits(), 0x4008f42c81cc8074);
+    }
+
+    /// C++ runs every Clipper2 op at `precision_ = 8` decimal places. ClipperD
+    /// scales by the power of two above 10^precision (2^27 at 8, 2^20 at 6),
+    /// so x = 1.00000012 snaps to 1 + 16 * 2^-27 = 1 + 2^-23, where precision
+    /// 6 would round the 1.2e-7 feature away to 1.0.
+    #[test]
+    fn test_cross_section_union_keeps_eighth_decimal() {
+        let x = 1.000_000_12;
+        let snapped = 1.0 + 2f64.powi(-23);
+        let a = CrossSection::new(vec![vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(x, 0.0),
+            Vec2::new(x, 1.0),
+            Vec2::new(0.0, 1.0),
+        ]]);
+        let u = a.union(&CrossSection::default());
+        assert_eq!(u.bounds().max.x, snapped);
+        let f = CrossSection::from_polygons_fill(a.to_polygons());
+        assert_eq!(f.bounds().max.x, snapped);
+    }
+
+    /// C++ booleans use FillRule::Positive and the Polygons constructor
+    /// defaults to Positive, so a clockwise (negative) contour fills nothing.
+    #[test]
+    fn test_cross_section_booleans_use_positive_fill() {
+        let cw = CrossSection::new(vec![vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(0.0, 1.0),
+            Vec2::new(1.0, 1.0),
+            Vec2::new(1.0, 0.0),
+        ]]);
+        assert!(cw.union(&CrossSection::default()).is_empty());
+        assert!(CrossSection::from_polygons_fill(cw.to_polygons()).is_empty());
+        let batch = CrossSection::batch_boolean(&[cw.clone(), cw.clone()], OpType::Add);
+        assert!(batch.is_empty());
+        let sq = CrossSection::square(1.0);
+        assert!(sq.intersection(&cw).is_empty());
+        assert_eq!(sq.difference(&cw).area(), 1.0);
+    }
+
+    /// C++ `fr()` starts from EvenOdd and only overrides it for the three
+    /// other enumerators, and `jt()` likewise starts from Square; unknown
+    /// integer codes fall through to those initial values.
+    #[test]
+    fn test_cross_section_unknown_codes_match_cpp_defaults() {
+        let star: Vec<Vec2> = (0..5)
+            .map(|i| {
+                let a = (i as f64) * 4.0 * std::f64::consts::PI / 5.0;
+                Vec2::new(10.0 * math::cos(a), 10.0 * math::sin(a))
+            })
+            .collect();
+        let even_odd = CrossSection::from_polygon_with_fill_rule(star.clone(), 0);
+        let positive = CrossSection::from_polygon_with_fill_rule(star.clone(), 2);
+        let unknown = CrossSection::from_polygon_with_fill_rule(star, 99);
+        assert!(even_odd.area() < positive.area());
+        assert_eq!(unknown.to_polygons(), even_odd.to_polygons());
+        let sq = CrossSection::square(1.0);
+        assert_eq!(
+            sq.offset_with_params(0.5, 99, 2.0, 0).to_polygons(),
+            sq.offset_with_params(0.5, 0, 2.0, 0).to_polygons()
+        );
+    }
+
+    /// C++ `Offset` defaults to Round joins with `circularSegments = 0`, which
+    /// derives the arc tolerance from `Quality::GetCircularSegments(delta)`.
+    #[test]
+    fn test_cross_section_offset_default_segments_match_quality() {
+        let sq = CrossSection::square(1.0);
+        let n = crate::types::Quality::get_circular_segments(3.0);
+        let expected = sq.offset_with_params(3.0, 1, 2.0, n).to_polygons();
+        assert_eq!(sq.offset(3.0).to_polygons(), expected);
+        assert_eq!(
+            sq.offset_with_params(3.0, 1, 2.0, 0).to_polygons(),
+            expected
         );
     }
 }
