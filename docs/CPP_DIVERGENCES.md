@@ -7,7 +7,7 @@ justified it. Trace-diff debugging against the C++ must expect these.
 Two kinds of entry live here, and they are not the same claim:
 
 - **Justified divergence** — an accuracy fix, a real bug fix in the C++, or a
-  measured improvement. CLAUDE.md's three qualifying reasons. Entries 1 and 3.
+  measured improvement. CLAUDE.md's three qualifying reasons. Entries 1, 3 and 4.
 - **Inherited divergence, documented and scheduled for coordinated
   harmonization** — an output shape this port already shipped, which we would
   resolve toward the C++ on the merits but cannot change unilaterally, because a
@@ -164,3 +164,36 @@ on `src/testdata/dedupe-stale-duplicate.txt` (the 852-triangle fixture shared
 with manifold-sharp's `DedupeEdgesRegressionTests`): 16 corners moved before the
 fix, 0 after; `robust::thingi_tests::thingi_1147177_import_counts` and
 `thingi_939888_import_counts` pin the new counts.
+
+## 4. Mirroring keeps each property with its corner (2026-09-28)
+
+**What differs:** when `ManifoldImpl::transform` (`src/impl_mesh.rs`) flips
+triangle winding for a negative-determinant transform, each halfedge's
+`prop_vert` is reassigned so the new corners take the props of old corners
+(0, 2, 1) — the old corner whose start vertex becomes the new start vertex. The
+pinned C++ v3.5.2 `FlipTris` (`src/mesh_fixes.h:51-67`) swaps halfedges `3t` and
+`3t+2` whole, so the props travel with the halfedges and new corner `i` takes the
+prop of old corner `2-i`: corners 0 and 2 exchange properties while their
+vertices do not.
+
+**Why:** a real bug in the C++, fixed upstream on master in 422ab6fc ("Fixes
+#1781 - Manifold::Transform() does not correctly handle mirror transforms",
+upstream issue #1781). We take upstream's change verbatim — the same
+`{Prop(3t), Prop(3t+2), Prop(3t+1)}` ordering — ahead of the pinned submodule.
+With the bug, a mirrored mesh with properties has normals/UVs on the wrong
+corners, and `get_mesh_gl` splits vertices that should be shared. The C++
+`CsgLeafNode::Compose` path (`src/csg_tree.cpp`) also calls `FlipTris`; ours
+composes leaves through the same `ManifoldImpl::transform`, so the one fix
+covers both. This entry retires once the submodule pin moves past 422ab6fc.
+
+**What is observably different:** only meshes with properties that go through a
+mirroring transform. `Manifold::sphere(1.0, 32).calculate_normals(0, 180.0)`
+has 258 `MeshGL` verts; mirrored over x it emitted 1536 before the fix (every
+triangle corner split off with a misplaced normal) and emits 258 after. Meshes
+without properties, and every
+positive-determinant transform, are byte-identical to before.
+
+**Evidence:** `manifold::tests::normals::test_cpp_mirrored_normals`, a port of
+upstream's `TEST(Manifold, MirroredNormals)`: MeshGL vertex count unchanged by
+the mirror and every normal outward-pointing; it failed before the fix and passes
+after. manifold-sharp inherits the bug from this tree and needs the same fix.

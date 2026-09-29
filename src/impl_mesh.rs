@@ -959,6 +959,16 @@ impl ManifoldImpl {
         if invert {
             // Flip triangle winding — matches C++ FlipTris
             for tri in 0..result.num_tri() {
+                // Props belong to corners (start verts), not halfedges: after
+                // the flip the new start verts are old starts (0, 2, 1), so
+                // the props must follow that order. Pinned v3.5.2 FlipTris let
+                // props travel with the swapped halfedges; upstream 422ab6fc
+                // (issue #1781) fixed it — see docs/CPP_DIVERGENCES.md.
+                let props = [
+                    result.halfedge[3 * tri].prop_vert,
+                    result.halfedge[3 * tri + 2].prop_vert,
+                    result.halfedge[3 * tri + 1].prop_vert,
+                ];
                 // Swap first and third halfedge within tri
                 result.halfedge.swap(3 * tri, 3 * tri + 2);
                 // For each halfedge: swap startVert/endVert and remap pairedHalfedge
@@ -966,6 +976,7 @@ impl ManifoldImpl {
                     let idx = 3 * tri + i;
                     let h = &mut result.halfedge[idx];
                     std::mem::swap(&mut h.start_vert, &mut h.end_vert);
+                    h.prop_vert = props[i];
                     // FlipHalfedge: within the paired tri, mirror the edge index
                     let paired = h.paired_halfedge;
                     if paired >= 0 {

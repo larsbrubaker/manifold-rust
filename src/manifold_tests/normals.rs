@@ -145,3 +145,19 @@ fn test_cpp_normals_non_standard_slot_not_recorded() {
         "non-standard slot must not record hasNormals"
     );
 }
+
+/// C++ TEST(Manifold, MirroredNormals) — upstream 422ab6fc (issue #1781). A
+/// mirror flips triangle winding; the per-corner prop indices must follow their
+/// start verts, or normals land on the wrong corners and GetMeshGL duplicates
+/// vertices. Vert count must be unchanged and normals must stay outward.
+#[test]
+fn test_cpp_mirrored_normals() {
+    let s = Manifold::sphere(1.0, 32).calculate_normals(0, 180.0);
+    let mesh = s.get_mesh_gl(-1);
+    let mirrored = s.mirror(Vec3::new(1.0, 0.0, 0.0)).get_mesh_gl(-1);
+    assert_eq!(mesh.num_vert(), mirrored.num_vert());
+    assert!(mirrored.has_normals(0));
+    let (good, bad) = count_sphere_normal_alignment(&mirrored, 1.0, normalize);
+    assert_eq!(bad, 0, "MirroredNormals: bad={}", bad);
+    assert_eq!(good, mirrored.num_vert() as i32, "MirroredNormals: good={}", good);
+}
