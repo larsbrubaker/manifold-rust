@@ -13,7 +13,8 @@ Two kinds of entry live here, and they are not the same claim:
   resolve toward the C++ on the merits but cannot change unilaterally, because a
   downstream consumer verifies against this tree bit-for-bit. These are
   *disclosures*, not justifications: the entry states what differs, why it
-  cannot be fixed here alone, and what a coordinated fix would take. Entry 2.
+  cannot be fixed here alone, and what a coordinated fix would take. Entries 2,
+  5 and 6.
 
 The second kind is deliberately uncomfortable to write, which is the point — it
 is a debt with a name attached, not a decision that ends the discussion. Nothing
@@ -114,10 +115,15 @@ keeps epsilon at `4e-12`.
 Switching to the C++ form is therefore not a free correction but a breaking
 behavioral change, and it has a downstream consumer that would break:
 [manifold-sharp](https://github.com/larsbrubaker/manifold-sharp) is a pure C#
-port of this crate whose test contract is bit-exactness against this tree, and
-whose own ledger (`docs/RUST_DIVERGENCES.md`, entries 4 and 5) cites these
-current outputs. Its oracle lane compares exported meshes row for row with no
-slack, so a signed zero is a failure there.
+port of this crate whose test contract is bit-exactness against this tree. It
+transcribes the same in-place centering (`ManifoldSharp/Constructors.cs`, the
+`if (center)` block of its cylinder), and the "Reference and oracle" section of
+its `CLAUDE.md` names `fa18cc5`, this tree's cache repair, as the floor for
+bit-agreement on this path. Its ledger once carried both stale-cache defects (the centered cylinder and `SubdivideImpl`) as its
+own entries 4 and 5; those were retired in manifold-sharp `13e0a87` when
+`fa18cc5` landed here, and its entries 4 and 5 today are unrelated (a progress
+`Phase`, a convex erosion). Its verification nets compare with no slack, so a
+signed zero moved on one side alone is a failure there.
 
 **The two halves of `cylinder` disagree today, and we say so plainly.** The cone
 branch a few lines above *does* finish with `cone.initialize_original()` and
@@ -133,8 +139,14 @@ constructions coordinate by coordinate on raw f64 bits (4 signed-zero
 differences, 0 value differences); the C++ sources cited above;
 `constructors::tests::centered_cylinder_collider_matches_its_vertex_positions`
 and `centered_cylinder_is_usable_in_a_boolean`, which pin the cache repair that
-this entry's semantics were preserved *through*; and manifold-sharp's 34/34
-oracle lane run against this tree's cdylib.
+this entry's semantics were preserved *through*; and manifold-sharp's
+`ConstructorsTests` (`CenteredCylinderColliderMatchesItsVertexPositions`,
+`CenteredCylinderIsUsableInABoolean`, `CenteredConeIsUsableInABoolean`), which
+pin the same repair on its transcription. manifold-sharp's oracle lane (34/34 at
+`13e0a87`) is *not* evidence for this entry: it consumes the published
+`ManifoldRust` 0.5.0 NuGet (`ManifoldSharp.OracleTests.csproj:22`), whose natives
+were built from `43f377f` — before `fa18cc5` — and, per that repo's `CLAUDE.md`,
+no oracle row exercises the centered cylinder on the native side.
 
 ## 3. `dedupe_edges` skips duplicate entries an earlier repair already resolved (2026-09-26)
 
@@ -155,9 +167,11 @@ would not catch.
 **What is observably different:** Thingi10K #1147177 through the demo import
 goes from 3201 verts / 6418 tris / genus 5 / volume 0.047535 to 3206 / 6424 /
 genus 4 / 0.047563, with no corner moved. Thingi10K #939888 goes from 860 / 1716
-to 861 / 1718. manifold-sharp made the same fix
-(its `docs/RUST_DIVERGENCES.md` entry 7) and pins the same counts, so the two
-ports agree.
+to 861 / 1718. manifold-sharp made the same fix in its commit `dd55f9f`
+(`ManifoldSharp/EdgeOp.Dedupe.cs`, pinned by `DedupeEdgesRegressionTests`) and
+pins the same counts, so the two ports agree. It is not a ledger entry there,
+since it does not diverge from this tree; its `docs/RUST_DIVERGENCES.md` mentions
+it only in a parenthetical under entry 6, as "not a divergence".
 
 **Evidence:** `edge_op::tests::test_dedupe_edges_never_moves_a_triangle_corner`
 on `src/testdata/dedupe-stale-duplicate.txt` (the 852-triangle fixture shared
@@ -197,3 +211,104 @@ positive-determinant transform, are byte-identical to before.
 upstream's `TEST(Manifold, MirroredNormals)`: MeshGL vertex count unchanged by
 the mirror and every normal outward-pointing; it failed before the fix and passes
 after. manifold-sharp inherits the bug from this tree and needs the same fix.
+
+## 5. `CrossSection::decompose` groups holes by bounding box, not by a `PolyTree` (2026-09-28)
+
+**What differs:** `CrossSection::decompose` (`src/cross_section.rs:256-318`)
+normalizes through `union` with an empty section, calls every contour with
+non-negative signed area an outline, and gives each hole to the outline with the
+smallest bounding box containing the hole's *first vertex*. C++ v3.5.2
+`CrossSection::Decompose` (`src/cross_section/cross_section.cpp:475-494`, with
+`decompose_outline` / `decompose_hole` at 126-151) runs
+`C2::BooleanOp(Union, FillRule::Positive, …)` into a `C2::PolyTreeD`, whose
+parent/child links are Clipper's own containment result, and emits one section
+per outline node with exactly that node's children as holes. This is not an
+accuracy fix or a bug fix on our side — the bounding-box heuristic is a
+simplification the port shipped, and it is the less correct of the two. It is an
+**inherited** divergence: debt, not a decision.
+
+**What is observably different:**
+
+- *Hole ownership.* A bounding box is not containment. When a hole's first vertex
+  also falls in a smaller outline's box, the hole goes to the wrong component.
+  Measured with a scratch probe: a bar `[0,10]×[0,2]` with a hole `[8,9]×[0.5,1.5]`,
+  unioned with a U-shaped outline (bbox `[7,11]×[-0.5,2.5]`, area 12) whose
+  opening embraces the bar's right end. `decompose` returns the U *carrying the
+  bar's hole* and the bar as a solid rectangle with no hole; the PolyTree puts the
+  hole under the bar. (`compose` of the two components still restores the input,
+  because the union re-derives winding from all contours together — the
+  components themselves are wrong.) Islands nested inside holes are separate
+  outlines in both implementations, so they are not the failure mode on their
+  own; any hole whose first vertex a smaller, unrelated outline's box covers is.
+- *Component order.* C++ emits the reversed post-order of the tree walk (islands
+  inside a node's holes are pushed before the node, siblings after); ours follows
+  the path order Clipper's flat union output happens to have. The two existing
+  tests (`test_cpp_cross_section_decompose` in `manifold_tests/cross_section2.rs`
+  and `manifold_tests/advanced.rs`) check only counts, which agree.
+- *Short-circuit.* C++ returns a copy of `*this` unchanged when
+  `NumContour() < 2` — so an empty section decomposes to one empty section, and a
+  single contour is not re-normalized. Ours always normalizes, and returns an empty
+  `Vec` for an empty section (probe: `CrossSection::default().decompose().len()`
+  is `0`).
+
+**Why it stays for now.** manifold-sharp transcribes the same heuristic
+(`ManifoldSharp/CrossSection.cs`, `Decompose`, with the same comments) and
+verifies bit-for-bit against this tree, so fixing it here alone breaks its
+parity.
+
+**Harmonization path:** port the PolyTree grouping in both trees together.
+`clipper2-rust` 1.0.3, already a dependency, exposes `boolean_op_tree_d` and
+`PolyTreeD`, so the C++ `decompose_outline` / `decompose_hole` recursion ports
+directly — including the `NumContour() < 2` short-circuit and the reversed
+emission order — with no new dependency. The shared regression should be the
+U-shape case above, asserting the hole stays with the bar.
+
+**Evidence:** source reading of both implementations at the lines above, and the
+scratch probe described (not checked in; it is the U-shape construction from
+`CrossSection::from_polygons_fill` rectangles and `difference`/`union`).
+
+## 6. `MeshGL::merge` dedupes open edges and open vertices (2026-09-28)
+
+**What differs:** `MeshGLP<f32, u32>::merge` (`src/types_meshgl.rs:160-267`)
+collects open halfedges into a `BTreeSet<(usize, usize)>` (175-191) and then
+dedupes their start vertices through a second `BTreeSet` (196-206). C++ v3.5.2
+`MergeMeshGLP` (`src/sort.cpp:62-98`) uses a `std::multiset<std::pair<int,int>>`,
+erases one matching copy per reverse halfedge, and builds `openVerts` with one
+entry per remaining open edge, duplicates kept. Like entry 5 this is neither an
+accuracy fix nor a bug fix; it is an **inherited** simplification.
+
+**What is observably different.** Two cases, both requiring input that is not
+already a clean manifold (which is exactly what `merge` exists to repair):
+
+- *Duplicate same-direction halfedges* change which edges are open, so they can
+  change which vertices merge. If a halfedge `s→e` occurs twice before its reverse
+  `e→s` arrives, the multiset holds two copies and the reverse erases one, leaving
+  `s→e` open; the set holds one and the reverse leaves nothing. Whether a
+  divergence appears depends on triangle order: if the reverse arrives between the
+  copies, both implementations leave one open. Scratch probe: a tetrahedron whose
+  face `(0,2,1)` is listed twice first, plus a separate open triangle `(4,5,6)`
+  with vertex 4 coincident with vertex 0. Ours returns `true` with no merges (only
+  4, 5, 6 are open); by the C++ source, vertices 0, 1, 2 are also open and 4
+  merges to 0 (`mergeFromVert = [4]`, `mergeToVert = [0]`). No C++ build was run
+  for this; the C++ result is traced from source.
+- *A vertex that starts two or more open halfedges* — a pinched boundary, such as
+  two open fans touching at one vertex — appears once in our `open_verts` and
+  once per edge in the C++'s, with no duplicate edge involved. The collider then
+  holds a different number of leaves, so collision pairs arrive in a different
+  order. The resulting partition (which vertices end up together) is the same,
+  but `DisjointSets::unite` is union-by-rank, so the representative written to
+  `merge_to_vert` can in principle differ. We have not constructed a case that
+  shows it.
+
+**Why it stays for now.** manifold-sharp transcribes the same two sets
+(`ManifoldSharp/MeshGL.cs`, `SortedSet<(int, int)>` and `SortedSet<int>`, with a
+comment citing the Rust `BTreeSet`), and verifies against this tree bit-for-bit.
+
+**Harmonization path:** in both trees together, replace the edge set with a
+multiset (a `BTreeMap<(usize, usize), usize>` count, erasing one per reverse
+match), iterate it in `(start, end)` order to emit one `open_verts` entry per open
+edge including repeats, and keep the stable Morton sort that follows. The probe
+above is the shared regression.
+
+**Evidence:** source reading of both implementations at the lines above; the
+scratch probe for the Rust half of the first case.
