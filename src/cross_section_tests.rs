@@ -466,10 +466,8 @@ fn test_is_empty_and_num_contour_count_every_path_like_cpp() {
     assert!(!one_empty.is_empty());
     assert_eq!(one_empty.num_contour(), 1);
     assert_eq!(one_empty.num_vert(), 0);
-    let degenerate = CrossSection::from_raw(vec![
-        vec![],
-        vec![Vec2::new(0.0, 0.0), Vec2::new(3.0, 0.0)],
-    ]);
+    let degenerate =
+        CrossSection::from_raw(vec![vec![], vec![Vec2::new(0.0, 0.0), Vec2::new(3.0, 0.0)]]);
     assert!(!degenerate.is_empty());
     assert_eq!(degenerate.num_contour(), 2);
     assert_eq!(degenerate.num_vert(), 2);
@@ -495,48 +493,40 @@ fn test_hull_matches_cpp_hull_impl() {
         b.iter().map(|c| c.to_vec()).collect()
     }
     // area 0x3ff0000000001198
-    const NEAR_DUP: Bits = &[
-        &[
-            (0x0000000000000000, 0x0000000000000000),
-            (0x3ff0000000000000, 0x0000000000000000),
-            (0x3ff0000000001198, 0x3ff0000000001198),
-            (0x0000000000000000, 0x3ff0000000000000),
-        ],
-    ];
+    const NEAR_DUP: Bits = &[&[
+        (0x0000000000000000, 0x0000000000000000),
+        (0x3ff0000000000000, 0x0000000000000000),
+        (0x3ff0000000001198, 0x3ff0000000001198),
+        (0x0000000000000000, 0x3ff0000000000000),
+    ]];
 
     // area 0x3ff0000000000000
-    const UNDERFLOW: Bits = &[
-        &[
-            (0x0000000000000000, 0x0000000000000000),
-            (0x3ff0000000000000, 0xbff0000000000000),
-            (0x4000000000000000, 0x0000000000000000),
-        ],
-    ];
+    const UNDERFLOW: Bits = &[&[
+        (0x0000000000000000, 0x0000000000000000),
+        (0x3ff0000000000000, 0xbff0000000000000),
+        (0x4000000000000000, 0x0000000000000000),
+    ]];
 
     // area 0x4017e064f81d2212
-    const HULL_CS: Bits = &[
-        &[
-            (0xbfeccccccccccccd, 0x3fc999999999999a),
-            (0xbfe36d6b334c0899, 0xbfe03a380018d566),
-            (0x3fb999999999999a, 0xbfe999999999999a),
-            (0x3fe9d3d199b26eff, 0xbfe03a380018d566),
-            (0x40096b31d45717ee, 0x3ff16daed770771d),
-            (0x40050fc61e7afa27, 0x3ffed8e0abc78f0b),
-            (0x3fb999999999999a, 0x3ff3333333333333),
-            (0xbfe36d6b334c0899, 0x3fed0704cce5a232),
-        ],
-    ];
+    const HULL_CS: Bits = &[&[
+        (0xbfeccccccccccccd, 0x3fc999999999999a),
+        (0xbfe36d6b334c0899, 0xbfe03a380018d566),
+        (0x3fb999999999999a, 0xbfe999999999999a),
+        (0x3fe9d3d199b26eff, 0xbfe03a380018d566),
+        (0x40096b31d45717ee, 0x3ff16daed770771d),
+        (0x40050fc61e7afa27, 0x3ffed8e0abc78f0b),
+        (0x3fb999999999999a, 0x3ff3333333333333),
+        (0xbfe36d6b334c0899, 0x3fed0704cce5a232),
+    ]];
 
     // area 0x4027000000000000
-    const HULL_POLYS: Bits = &[
-        &[
-            (0x0000000000000000, 0x0000000000000000),
-            (0x4008000000000000, 0xbff0000000000000),
-            (0x4010000000000000, 0x0000000000000000),
-            (0x4014000000000000, 0x4000000000000000),
-            (0x4000000000000000, 0x4008000000000000),
-        ],
-    ];
+    const HULL_POLYS: Bits = &[&[
+        (0x0000000000000000, 0x0000000000000000),
+        (0x4008000000000000, 0xbff0000000000000),
+        (0x4010000000000000, 0x0000000000000000),
+        (0x4014000000000000, 0x4000000000000000),
+        (0x4000000000000000, 0x4008000000000000),
+    ]];
 
     let v = |x: f64, y: f64| Vec2::new(x, y);
 
@@ -546,7 +536,10 @@ fn test_hull_matches_cpp_hull_impl() {
 
     let collinear =
         CrossSection::hull_points(&[v(0.0, 0.0), v(2.0, 0.0), v(1.0, 0.0), v(3.0, 0.0)]);
-    assert_eq!(collinear.to_polygons(), vec![vec![v(0.0, 0.0), v(3.0, 0.0)]]);
+    assert_eq!(
+        collinear.to_polygons(),
+        vec![vec![v(0.0, 0.0), v(3.0, 0.0)]]
+    );
 
     let same = CrossSection::hull_points(&[v(1.0, 1.0), v(1.0, 1.0), v(1.0, 1.0)]);
     assert_eq!(same.to_polygons(), vec![vec![v(1.0, 1.0), v(1.0, 1.0)]]);

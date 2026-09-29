@@ -230,7 +230,11 @@ fn test_slice_and_project_wrap_like_cpp() {
 /// so only the cyclic sequence of vertices is comparable across ports.
 fn canonical_cycle(c: &[(u64, u64)]) -> Vec<(u64, u64)> {
     let start = (0..c.len()).min_by_key(|&i| c[i]).unwrap_or(0);
-    c[start..].iter().chain(c[..start].iter()).copied().collect()
+    c[start..]
+        .iter()
+        .chain(c[..start].iter())
+        .copied()
+        .collect()
 }
 
 /// C++ `Impl::Slice` interpolates each crossing with `la::lerp(below, above,
@@ -257,9 +261,6 @@ fn test_raw_slice_matches_cpp_lerp_bits() {
         .iter()
         .map(|c| canonical_cycle(c))
         .collect();
-    let expected: Vec<_> = want(SLICE_RAW)
-        .iter()
-        .map(|c| canonical_cycle(c))
-        .collect();
+    let expected: Vec<_> = want(SLICE_RAW).iter().map(|c| canonical_cycle(c)).collect();
     assert_eq!(got, expected);
 }

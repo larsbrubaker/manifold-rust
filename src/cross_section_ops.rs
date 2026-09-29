@@ -32,8 +32,8 @@ use std::cmp::Ordering;
 
 use super::{from_paths, path_area, to_paths, CrossSection, PRECISION};
 use crate::linalg::Vec2;
-use crate::polygon::ccw;
 use crate::math;
+use crate::polygon::ccw;
 use crate::types::{OpType, Quality, Rect};
 
 impl CrossSection {
