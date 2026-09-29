@@ -161,3 +161,30 @@ fn test_cpp_mirrored_normals() {
     assert_eq!(bad, 0, "MirroredNormals: bad={}", bad);
     assert_eq!(good, mirrored.num_vert() as i32, "MirroredNormals: good={}", good);
 }
+
+// Property-adding ops after a mirror: with num_prop == 0 the flip must still
+// keep prop_vert == start_vert, because set_properties, calculate_curvature and
+// calculate_normals index existing props by prop_vert. Upstream 422ab6fc;
+// see docs/CPP_DIVERGENCES.md entry 4.
+
+#[test]
+fn test_mirrored_cone_set_properties_shares_verts() {
+    // radius_low == 0 builds the apex-bottom cone by mirroring internally.
+    let cone = Manifold::cylinder(2.0, 0.0, 1.0, 16);
+    let gl = cone.set_properties(1, |p, pos, _| p[0] = pos.z).get_mesh_gl(-1);
+    assert_eq!(gl.num_vert(), 17);
+}
+
+#[test]
+fn test_mirrored_cube_set_properties_shares_verts() {
+    let cube = Manifold::cube(Vec3::new(1.0, 2.0, 3.0), true).mirror(Vec3::new(1.0, 0.0, 0.0));
+    let gl = cube.set_properties(1, |p, pos, _| p[0] = pos.x).get_mesh_gl(-1);
+    assert_eq!(gl.num_vert(), 8);
+}
+
+#[test]
+fn test_mirrored_cone_calculate_normals_vert_count() {
+    let cone = Manifold::cylinder(2.0, 0.0, 1.0, 16);
+    let gl = cone.calculate_normals(0, 60.0).get_mesh_gl(-1);
+    assert_eq!(gl.num_vert(), 33);
+}

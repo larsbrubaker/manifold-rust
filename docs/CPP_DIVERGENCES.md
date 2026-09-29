@@ -200,17 +200,34 @@ corners, and `get_mesh_gl` splits vertices that should be shared. The C++
 composes leaves through the same `ManifoldImpl::transform`, so the one fix
 covers both. This entry retires once the submodule pin moves past 422ab6fc.
 
-**What is observably different:** only meshes with properties that go through a
-mirroring transform. `Manifold::sphere(1.0, 32).calculate_normals(0, 180.0)`
-has 258 `MeshGL` verts; mirrored over x it emitted 1536 before the fix (every
-triangle corner split off with a misplaced normal) and emits 258 after. Meshes
-without properties, and every
-positive-determinant transform, are byte-identical to before.
+**What is observably different:** a mirrored mesh with properties exports
+differently: `Manifold::sphere(1.0, 32).calculate_normals(0, 180.0)` has 258
+`MeshGL` verts; mirrored over x it emitted 1536 before the fix (every triangle
+corner split off with a misplaced normal) and emits 258 after. A mirrored mesh
+*without* properties exports identically, because `get_mesh_gl` ignores
+`prop_vert` when `num_prop == 0`. But the old flip still broke the
+`prop_vert == start_vert` identity on such meshes, and three property-adding
+readers index by `prop_vert` even when `num_prop == 0`:
+`Manifold::set_properties` (`src/manifold.rs`), `calculate_curvature`
+(`src/properties.rs`) and `calculate_normals` (`src/smoothing.rs`). So any of
+those applied after a mirror now sees corrected corners, including meshes the
+user never mirrored: `Manifold::cylinder(2.0, 0.0, 1.0, 16)` (apex-bottom cone)
+mirrors internally (`src/constructors.rs`). Measured before -> after: that cone
+then `set_properties(1, ..)` exports 90 -> 17 verts; the cone then
+`calculate_normals(0, 60.0)` 90 -> 33; a mirrored `cube` then `set_properties`
+36 -> 8; a mirrored `sphere(1.0, 32)` then `set_properties`,
+`calculate_curvature` or `calculate_normals` 1536 -> 258. All of these outputs
+now diverge from pinned v3.5.2, whose `FlipTris` has the old behavior.
+Positive-determinant transforms are unchanged.
 
 **Evidence:** `manifold::tests::normals::test_cpp_mirrored_normals`, a port of
 upstream's `TEST(Manifold, MirroredNormals)`: MeshGL vertex count unchanged by
-the mirror and every normal outward-pointing; it failed before the fix and passes
-after. manifold-sharp inherits the bug from this tree and needs the same fix.
+the mirror and every normal outward-pointing. Plus, in the same file,
+`test_mirrored_cone_set_properties_shares_verts` (17 verts),
+`test_mirrored_cube_set_properties_shares_verts` (8 verts) and
+`test_mirrored_cone_calculate_normals_vert_count` (33 verts). All four fail
+with the prop capture removed (1536, 90, 36, 90 verts) and pass with it.
+manifold-sharp carries the same fix in its commit 674b6ce.
 
 ## 5. `CrossSection::decompose` groups holes by bounding box, not by a `PolyTree` (2026-09-28)
 
