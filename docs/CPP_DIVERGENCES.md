@@ -25,9 +25,32 @@ A third, narrower kind records where the C++ output is itself not pinned:
   part of the output is affected and what is still compared exactly. Entries 7
   and 8.
 
+A fourth kind makes no numerical claim at all:
+
+- **API shape or extension** — a public signature that differs from the C++
+  one, or a Rust-only method the C++ does not have. The entry states what the
+  numbers match (or that nothing in the C++ constrains them). Entries 9 and 10.
+
 The second kind is deliberately uncomfortable to write, which is the point — it
 is a debt with a name attached, not a decision that ends the discussion. Nothing
-belongs in either category for convenience.
+belongs in any category for convenience.
+
+**Remaining divergences at a glance** (retired entries 5 and 6 omitted):
+
+| # | Kind | What |
+|---|------|------|
+| 1 | Justified | Robust-engine outputs skip `swap_degenerates` |
+| 2 | Inherited | Centered cylinder centers in place, not via `Translate().AsOriginal()` |
+| 3 | Justified | `dedupe_edges` skips duplicates an earlier repair resolved |
+| 4 | Justified | Mirroring keeps each property with its corner |
+| 7 | Implementation-defined | `Impl::slice` contour start vertex (and contour order) |
+| 8 | Implementation-defined | Hull: order of `+0.0` / `-0.0` ties |
+| 9 | API shape | `Manifold::slice` / `project` return a `CrossSection`, not `Polygons` |
+| 10 | Extension | `CrossSection::minkowski_sum` (no C++ counterpart) |
+
+Anything else that differs from the C++ is a bug, not an entry. The ones known
+and not yet fixed are listed under *Known unresolved mismatches* at the end, so
+a trace-diff session does not mistake them for intent.
 
 ## 1. Robust-engine outputs skip `swap_degenerates` (2026-08-08)
 
@@ -326,3 +349,59 @@ points under `V2Lesser` are otherwise bit-identical.
 **Evidence:** `cross_section::tests::test_hull_matches_cpp_hull_impl` pins the
 C++ (MSVC) result bit-for-bit on degenerate (fewer than three, collinear,
 coincident), near-duplicate, underflowing-`CCW` and multi-section inputs.
+
+## 9. `Manifold::slice` / `project` return a `CrossSection`, not `Polygons` (API shape)
+
+**What differs:** C++ v3.5.2 `Manifold::Slice(double)` and `Manifold::Project()`
+return raw `Polygons` (`src/manifold.cpp`, delegating to `Impl::Slice` /
+`Impl::Project` in `src/face_op.cpp`). This port's `Manifold::slice` /
+`Manifold::project` (`src/manifold.rs`) return a `CrossSection` built with
+`CrossSection::new`, i.e. C++ `CrossSection(m.Slice(height))` /
+`CrossSection(m.Project())` with the default `FillRule::Positive` union.
+
+**What still matches:** the numbers. The returned section's contours are
+bit-for-bit those of the C++ `CrossSection(Polygons)` constructor applied to the
+C++ raw polygons (`cross_section::ctor_tests::test_slice_and_project_wrap_like_cpp`).
+The raw polygons are reachable in-crate as `as_impl().slice(h)` /
+`as_impl().project()`, which the ported `TEST(Smooth, Fillet)` uses to extrude
+the un-unioned slice exactly as the C++ test does; the raw slice is pinned by
+`cross_section::ctor_tests::test_raw_slice_matches_cpp_lerp_bits` (modulo
+entry 7) and the raw projection by `test_slice_and_project_wrap_like_cpp`.
+
+**Why kept:** the signature shipped long before this audit, and manifold-sharp
+mirrors it. Changing it is a public-API decision, not a numerical fix.
+
+## 10. `CrossSection::minkowski_sum` has no C++ counterpart (extension)
+
+**What differs:** C++ v3.5.2 `CrossSection` has no Minkowski operation. This
+port's `CrossSection::minkowski_sum` (`src/cross_section_ops.rs`) runs Clipper2's
+`MinkowskiSum` (closed, at `precision_`) for every pair of contours and
+concatenates the per-pair results. Clipper2 unions each pair's output with
+`FillRule::NonZero`, but the concatenation is not unioned again, so the result
+can hold overlapping contours when either operand has more than one contour.
+
+**Why kept:** it is an extension, so nothing in the reference constrains it;
+callers that need a clean section can pass the result through
+`CrossSection::new`. Should the C++ ever gain a Minkowski operation, this entry
+becomes a porting task.
+
+## Known unresolved mismatches (bugs, not entries)
+
+Found while porting `TEST(Smooth, Fillet)` exactly (2026-09-29), against the C++
+compiled with MSVC (`MANIFOLD_PAR=-1`):
+
+- **Chained booleans evaluate eagerly.** `Manifold` holds its `ManifoldImpl`
+  directly, so `&(&a + &b) + &c` runs two pairwise booleans, and
+  `Manifold::batch_boolean` is a left fold. C++ builds a lazy `CsgOpNode` and
+  flattens `a + b + c` into one `BatchBoolean` / `BatchUnion`. On the Fillet
+  inputs the C++ inline `cylinder + chamfer + base` refines to 3770 triangles;
+  with the first union forced (as this port always does) the C++ gives 3822, as
+  does this port. `src/csg_tree.rs` ports the C++ tree but only
+  `minkowski.rs` uses it.
+- **`smooth_by_normals` + `refine_to_tolerance` drift by a few ULPs.** With the
+  union order matched (3822 triangles, 1913 vertices), every stage through
+  `SmoothByNormals` agrees bit-for-bit in volume and surface area, and the
+  refined surface area agrees too, but most refined vertex positions differ in
+  the last few bits and the volume by about 1e-9 relative
+  (`0x40be40dfe1b35e91` here vs `0x40be40dfe1b7737f` in C++). The test asserts
+  the C++ test's own `EXPECT_NEAR` bounds, which both meet.
