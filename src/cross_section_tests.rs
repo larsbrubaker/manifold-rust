@@ -430,3 +430,23 @@ fn test_batch_subtract_is_one_boolean_op() {
         ])
     );
 }
+
+/// C++ `Warp` goes through `WarpBatch`, which re-unions the moved contours
+/// with FillRule::Positive at `precision_`: a warp that twists a square into
+/// a bowtie keeps only the positively wound lobe (expected contour from the
+/// compiled C++ reference), and moved vertices land on Clipper2's grid.
+#[test]
+fn test_warp_unions_like_cpp() {
+    let bowtie = CrossSection::square(2.0).warp(|v| {
+        if v.y > 1.0 {
+            v.x = 2.0 - v.x;
+        }
+    });
+    assert_eq!(
+        bowtie.to_polygons(),
+        polys(&[&[(1.0, 1.0), (0.0, 0.0), (2.0, 0.0)]])
+    );
+    assert_eq!(bowtie.area(), 1.0);
+    let stretched = CrossSection::square(1.0).warp(|v| v.x *= 1.000_000_12);
+    assert_eq!(stretched.bounds().max.x, 1.0 + 2f64.powi(-23));
+}

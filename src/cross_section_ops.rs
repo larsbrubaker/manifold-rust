@@ -23,7 +23,8 @@
 
 use clipper2_rust::{
     boolean_op_d, boolean_op_tree_d, difference_d, inflate_paths_d, intersect_d, minkowski_sum_d,
-    simplify_paths, union_d, ClipType, EndType, FillRule, JoinType, PathsD, PolyTreeD,
+    simplify_paths, union_d, union_subjects_d, ClipType, EndType, FillRule, JoinType, PathsD,
+    PolyTreeD,
 };
 
 use super::{from_paths, path_area, to_paths, CrossSection, PRECISION};
@@ -178,22 +179,25 @@ impl CrossSection {
         Self::new(from_paths(&result))
     }
 
-    /// Apply a function to every vertex in-place.
+    /// Move every vertex through `f`, then re-union. Mirrors C++
+    /// `CrossSection::Warp` / `WarpBatch`: vertices are visited in contour
+    /// order, and the moved contours go through a FillRule::Positive union
+    /// at `precision_`, so introduced self-intersections are resolved.
     pub fn warp<F: FnMut(&mut Vec2)>(&self, mut f: F) -> Self {
-        let polys = self
-            .polygons
-            .iter()
-            .map(|poly| {
-                poly.iter()
-                    .map(|&v| {
-                        let mut v2 = v;
-                        f(&mut v2);
-                        v2
-                    })
-                    .collect()
-            })
-            .collect();
-        Self { polygons: polys }
+        let mut paths = to_paths(&self.polygons);
+        for path in paths.iter_mut() {
+            for p in path.iter_mut() {
+                let mut v = Vec2::new(p.x, p.y);
+                f(&mut v);
+                p.x = v.x;
+                p.y = v.y;
+            }
+        }
+        Self::new(from_paths(&union_subjects_d(
+            &paths,
+            FillRule::Positive,
+            PRECISION,
+        )))
     }
 
     /// Boolean over a list of sections. Mirrors C++
