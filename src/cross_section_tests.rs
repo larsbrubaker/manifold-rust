@@ -159,7 +159,7 @@ fn test_cross_section_unknown_codes_match_cpp_defaults() {
     let star: Vec<Vec2> = (0..5)
         .map(|i| {
             let a = (i as f64) * 4.0 * std::f64::consts::PI / 5.0;
-            Vec2::new(10.0 * math::cos(a), 10.0 * math::sin(a))
+            Vec2::new(10.0 * crate::math::cos(a), 10.0 * crate::math::sin(a))
         })
         .collect();
     let even_odd = CrossSection::from_polygon_with_fill_rule(star.clone(), 0);

@@ -17,26 +17,98 @@
 // src/cross_section/cross_section.cpp of the C++ reference.
 //
 // This file owns the struct, the Clipper2 path conversions and area helpers,
-// the constructors, the affine transforms and the read-only queries. The
+// the constructors, the affine transforms and the read-only queries. As in
+// C++, transforms are lazy: each one composes into a pending mat2x3 that the
+// first read (`paths`, C++ `GetPaths`) bakes into the stored contours. The
 // Clipper2-backed operations (booleans, decompose, simplify, offset, warp,
 // hull, batch booleans) live in cross_section_ops.rs, a child module so they
 // keep access to the private `polygons` field; tests are in
 // cross_section_tests.rs. Manifold::slice / project (manifold.rs) and the
 // extrude/revolve constructors (constructors.rs) consume CrossSections.
 
+use std::sync::{Arc, Mutex, MutexGuard};
+
 use clipper2_rust::{union_subjects_d, FillRule, PathD, PathsD, Point};
 
-use crate::linalg::Vec2;
-use crate::math;
+use crate::linalg::{length_2, Mat2x3, Vec2, Vec3};
 use crate::types::{cosd, sind, Polygons, Quality, Rect};
 
 /// Decimal places Clipper2 keeps when scaling to integer coordinates; mirrors
 /// `precision_` in C++ cross_section.cpp, passed to every Clipper2 call.
 const PRECISION: i32 = 8;
 
-#[derive(Clone, Debug, Default)]
+/// `la::identity` as a mat2x3: C++ `transform_`'s initial value.
+const IDENTITY: Mat2x3 = Mat2x3::from_cols(
+    Vec2::new(1.0, 0.0),
+    Vec2::new(0.0, 1.0),
+    Vec2::new(0.0, 0.0),
+);
+
+/// The C++ `paths_` / `transform_` pair. The contours are an `Arc`, as C++
+/// shares `paths_` through a `shared_ptr`; `transform` is still to be applied
+/// to them.
+#[derive(Clone, Debug)]
+struct PathState {
+    paths: Arc<Polygons>,
+    transform: Mat2x3,
+}
+
+#[derive(Debug)]
 pub struct CrossSection {
-    polygons: Polygons,
+    /// Behind a mutex because reads materialize the transform in place, as
+    /// C++ `GetPaths` does under `pathsMutex_`.
+    state: Mutex<PathState>,
+}
+
+impl Default for CrossSection {
+    fn default() -> Self {
+        Self::from_raw(Polygons::new())
+    }
+}
+
+/// Copies the current contours and pending transform, like the C++ copy
+/// constructor; the contours stay shared.
+impl Clone for CrossSection {
+    fn clone(&self) -> Self {
+        Self {
+            state: Mutex::new(self.lock().clone()),
+        }
+    }
+}
+
+/// C++ `Mat3(mat2x3)` (utils.h): the affine 3x3 with a `(0, 0, 1)` bottom row,
+/// given as its three columns.
+fn mat3_cols(a: Mat2x3) -> [Vec3; 3] {
+    [
+        Vec3::new(a.x.x, a.x.y, 0.0),
+        Vec3::new(a.y.x, a.y.y, 0.0),
+        Vec3::new(a.z.x, a.z.y, 1.0),
+    ]
+}
+
+/// C++ `m * Mat3(t)`: each result column is `m * column`, which `la::mul`
+/// sums over all three of m's columns, zero entries included.
+fn compose(m: Mat2x3, t: Mat2x3) -> Mat2x3 {
+    let [c0, c1, c2] = mat3_cols(t);
+    Mat2x3::from_cols(m * c0, m * c1, m * c2)
+}
+
+/// C++ `transform` (cross_section.cpp:89-104): every vertex becomes
+/// `m * vec3(x, y, 1)`, and a negative determinant of the linear part
+/// reverses each contour so outlines stay counter-clockwise.
+fn transform_polygons(ps: &Polygons, m: Mat2x3) -> Polygons {
+    let invert = m.x.x * m.y.y - m.x.y * m.y.x < 0.0;
+    ps.iter()
+        .map(|path| {
+            let sz = path.len();
+            let mut s = vec![Vec2::new(0.0, 0.0); sz];
+            for (i, p) in path.iter().enumerate() {
+                let idx = if invert { sz - 1 - i } else { i };
+                s[idx] = m * Vec3::new(p.x, p.y, 1.0);
+            }
+            s
+        })
+        .collect()
 }
 
 fn to_paths(polygons: &Polygons) -> PathsD {
@@ -88,7 +160,45 @@ impl CrossSection {
     /// `CrossSection(std::shared_ptr<const PathImpl>)` constructor that every
     /// Clipper2 result, transform, hull and primitive goes through.
     pub(crate) fn from_raw(polygons: Polygons) -> Self {
-        Self { polygons }
+        Self {
+            state: Mutex::new(PathState {
+                paths: Arc::new(polygons),
+                transform: IDENTITY,
+            }),
+        }
+    }
+
+    /// A poisoned lock can only come from a panic inside `paths` or `clone`,
+    /// neither of which leaves the state half-written, so recover it.
+    fn lock(&self) -> MutexGuard<'_, PathState> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The contours with the pending transform applied. Mirrors C++
+    /// `GetPaths`: an identity transform (compared with `==`, so `-0.0`
+    /// counts as zero) returns the stored contours untouched; otherwise they
+    /// are transformed, stored back, and the transform reset to identity, so
+    /// later transforms compose from the baked contours. Every reader must go
+    /// through here.
+    pub(crate) fn paths(&self) -> Arc<Polygons> {
+        let mut st = self.lock();
+        if st.transform != IDENTITY {
+            st.paths = Arc::new(transform_polygons(&st.paths, st.transform));
+            st.transform = IDENTITY;
+        }
+        Arc::clone(&st.paths)
+    }
+
+    /// C++ `CrossSection::Transform`: a new section sharing these contours
+    /// with `m` composed after the pending transform.
+    fn transform(&self, m: Mat2x3) -> Self {
+        let st = self.lock();
+        Self {
+            state: Mutex::new(PathState {
+                paths: Arc::clone(&st.paths),
+                transform: compose(m, st.transform),
+            }),
+        }
     }
 
     /// Create a CrossSection from contours. Mirrors C++
@@ -182,16 +292,16 @@ impl CrossSection {
     }
 
     pub fn to_polygons(&self) -> Polygons {
-        self.polygons.clone()
+        (*self.paths()).clone()
     }
 
+    /// C++ `Translate`: the transform with columns `(1, 0)`, `(0, 1)`, `v`.
     pub fn translate(&self, v: Vec2) -> Self {
-        Self::from_raw(
-            self.polygons
-                .iter()
-                .map(|poly| poly.iter().map(|p| *p + v).collect())
-                .collect(),
-        )
+        self.transform(Mat2x3::from_cols(
+            Vec2::new(1.0, 0.0),
+            Vec2::new(0.0, 1.0),
+            Vec2::new(v.x, v.y),
+        ))
     }
 
     /// Net enclosed area: the sum of signed contour areas, so CCW outers add
@@ -199,12 +309,12 @@ impl CrossSection {
     /// Clipper2's `Area(Paths)`: an explicit fold from +0.0 in contour order,
     /// so an empty section yields +0.0 rather than `.sum()`'s -0.0.
     pub fn area(&self) -> f64 {
-        self.polygons.iter().fold(0.0, |a, p| a + contour_area(p))
+        self.paths().iter().fold(0.0, |a, p| a + contour_area(p))
     }
 
     pub fn bounds(&self) -> Rect {
         let mut rect = Rect::new();
-        for poly in &self.polygons {
+        for poly in self.paths().iter() {
             for &p in poly {
                 rect.union_point(p);
             }
@@ -212,73 +322,59 @@ impl CrossSection {
         rect
     }
 
+    /// C++ `Scale`: the transform with columns `(x, 0)`, `(0, y)`, `(0, 0)`.
     pub fn scale(&self, v: Vec2) -> Self {
-        Self::from_raw(
-            self.polygons
-                .iter()
-                .map(|poly| {
-                    poly.iter()
-                        .map(|p| Vec2::new(p.x * v.x, p.y * v.y))
-                        .collect()
-                })
-                .collect(),
-        )
+        self.transform(Mat2x3::from_cols(
+            Vec2::new(v.x, 0.0),
+            Vec2::new(0.0, v.y),
+            Vec2::new(0.0, 0.0),
+        ))
     }
 
+    /// C++ `Rotate`: counter-clockwise by `degrees` about the origin, with
+    /// `sind` / `cosd` so multiples of 90 degrees are exact.
     pub fn rotate(&self, degrees: f64) -> Self {
-        let rad = degrees.to_radians();
-        let c = math::cos(rad);
-        let s = math::sin(rad);
-        Self::from_raw(
-            self.polygons
-                .iter()
-                .map(|poly| {
-                    poly.iter()
-                        .map(|p| Vec2::new(p.x * c - p.y * s, p.x * s + p.y * c))
-                        .collect()
-                })
-                .collect(),
-        )
+        let s = sind(degrees);
+        let c = cosd(degrees);
+        self.transform(Mat2x3::from_cols(
+            Vec2::new(c, s),
+            Vec2::new(-s, c),
+            Vec2::new(0.0, 0.0),
+        ))
     }
 
-    /// Mirror through a line perpendicular to the given axis vector.
-    /// Matches C++ `CrossSection::Mirror(ax)` which uses `I - 2*n*n^T`.
+    /// Mirror over the line through the origin whose normal is `axis`.
+    /// Matches C++ `CrossSection::Mirror`: empty only when
+    /// `la::length(axis) == 0` (underflow included); otherwise
+    /// `n = normalize(axis)` and the transform is
+    /// `mat2(identity) - 2 * outerprod(n, n)`, whose negative determinant
+    /// reverses the winding when applied.
     pub fn mirror(&self, axis: Vec2) -> Self {
-        let len_sq = axis.x * axis.x + axis.y * axis.y;
-        if len_sq < 1e-20 {
+        if length_2(axis) == 0.0 {
             return Self::default();
         }
-        // Reflection matrix: R = I - 2*n*n^T where n = normalize(axis)
-        let nx = axis.x / len_sq.sqrt();
-        let ny = axis.y / len_sq.sqrt();
-        let r00 = 1.0 - 2.0 * nx * nx;
-        let r01 = -2.0 * nx * ny;
-        let r10 = -2.0 * nx * ny;
-        let r11 = 1.0 - 2.0 * ny * ny;
-        Self::from_raw(
-            self.polygons
-                .iter()
-                .map(|poly| {
-                    // Mirror reverses winding, so reverse the polygon
-                    poly.iter()
-                        .rev()
-                        .map(|p| Vec2::new(r00 * p.x + r01 * p.y, r10 * p.x + r11 * p.y))
-                        .collect()
-                })
-                .collect(),
-        )
+        let n = axis / length_2(axis);
+        // outerprod(n, n) has columns n * n.x and n * n.y.
+        let o0 = Vec2::new(n.x * n.x, n.y * n.x);
+        let o1 = Vec2::new(n.x * n.y, n.y * n.y);
+        self.transform(Mat2x3::from_cols(
+            Vec2::new(1.0 - 2.0 * o0.x, 0.0 - 2.0 * o0.y),
+            Vec2::new(0.0 - 2.0 * o1.x, 1.0 - 2.0 * o1.y),
+            Vec2::new(0.0, 0.0),
+        ))
     }
 
     pub fn is_empty(&self) -> bool {
-        self.polygons.is_empty() || self.polygons.iter().all(|p| p.len() < 3)
+        let paths = self.paths();
+        paths.is_empty() || paths.iter().all(|p| p.len() < 3)
     }
 
     pub fn num_vert(&self) -> usize {
-        self.polygons.iter().map(|p| p.len()).sum()
+        self.paths().iter().map(|p| p.len()).sum()
     }
 
     pub fn num_contour(&self) -> usize {
-        self.polygons.iter().filter(|p| p.len() >= 3).count()
+        self.paths().iter().filter(|p| p.len() >= 3).count()
     }
 
     /// Create CrossSection from a simple polygon with a specified fill rule.
@@ -308,3 +404,7 @@ mod tests;
 #[cfg(test)]
 #[path = "cross_section_ctor_tests.rs"]
 mod ctor_tests;
+
+#[cfg(test)]
+#[path = "cross_section_transform_tests.rs"]
+mod transform_tests;

@@ -18,8 +18,9 @@
 //
 // Ports the corresponding members of src/cross_section/cross_section.cpp.
 // A child module of cross_section.rs (which owns the struct, constructors,
-// transforms and queries) so these methods keep access to the private
-// `polygons` field and callers keep the same `CrossSection::...` paths.
+// transforms and queries) so callers keep the same `CrossSection::...` paths.
+// Every operation reads its contours through `paths()` (C++ `GetPaths`), so
+// pending transforms are applied first.
 
 use clipper2_rust::{
     boolean_op_d, boolean_op_tree_d, difference_d, inflate_paths_d, intersect_d, minkowski_sum_d,
@@ -35,8 +36,8 @@ use crate::types::{OpType, Quality, Rect};
 impl CrossSection {
     pub fn union(&self, other: &Self) -> Self {
         Self::from_raw(from_paths(&union_d(
-            &to_paths(&self.polygons),
-            &to_paths(&other.polygons),
+            &to_paths(&self.paths()),
+            &to_paths(&other.paths()),
             FillRule::Positive,
             PRECISION,
         )))
@@ -44,8 +45,8 @@ impl CrossSection {
 
     pub fn intersection(&self, other: &Self) -> Self {
         Self::from_raw(from_paths(&intersect_d(
-            &to_paths(&self.polygons),
-            &to_paths(&other.polygons),
+            &to_paths(&self.paths()),
+            &to_paths(&other.paths()),
             FillRule::Positive,
             PRECISION,
         )))
@@ -53,8 +54,8 @@ impl CrossSection {
 
     pub fn difference(&self, other: &Self) -> Self {
         Self::from_raw(from_paths(&difference_d(
-            &to_paths(&self.polygons),
-            &to_paths(&other.polygons),
+            &to_paths(&self.paths()),
+            &to_paths(&other.paths()),
             FillRule::Positive,
             PRECISION,
         )))
@@ -66,14 +67,14 @@ impl CrossSection {
     /// belong to which outline, walked as `decompose_outline` /
     /// `decompose_hole` do and emitted in reverse push order.
     pub fn decompose(&self) -> Vec<Self> {
-        if self.polygons.len() < 2 {
+        if self.paths().len() < 2 {
             return vec![self.clone()];
         }
         let mut tree = PolyTreeD::new();
         boolean_op_tree_d(
             ClipType::Union,
             FillRule::Positive,
-            &to_paths(&self.polygons),
+            &to_paths(&self.paths()),
             &PathsD::new(),
             &mut tree,
             PRECISION,
@@ -98,7 +99,7 @@ impl CrossSection {
         boolean_op_tree_d(
             ClipType::Union,
             FillRule::Positive,
-            &to_paths(&self.polygons),
+            &to_paths(&self.paths()),
             &PathsD::new(),
             &mut tree,
             PRECISION,
@@ -159,7 +160,7 @@ impl CrossSection {
             0.0
         };
         Self::from_raw(from_paths(&inflate_paths_d(
-            &to_paths(&self.polygons),
+            &to_paths(&self.paths()),
             delta,
             jt,
             EndType::Polygon,
@@ -171,8 +172,8 @@ impl CrossSection {
 
     pub fn minkowski_sum(&self, other: &Self) -> Self {
         let mut result = Vec::new();
-        for a in to_paths(&self.polygons) {
-            for b in to_paths(&other.polygons) {
+        for a in to_paths(&self.paths()) {
+            for b in to_paths(&other.paths()) {
                 result.extend(minkowski_sum_d(&a, &b, true, PRECISION));
             }
         }
@@ -184,7 +185,7 @@ impl CrossSection {
     /// order, and the moved contours go through a FillRule::Positive union
     /// at `precision_`, so introduced self-intersections are resolved.
     pub fn warp<F: FnMut(&mut Vec2)>(&self, mut f: F) -> Self {
-        let mut paths = to_paths(&self.polygons);
+        let mut paths = to_paths(&self.paths());
         for path in paths.iter_mut() {
             for p in path.iter_mut() {
                 let mut v = Vec2::new(p.x, p.y);
@@ -212,7 +213,7 @@ impl CrossSection {
             1 => return sections[0].clone(),
             _ => {}
         }
-        let subjs = to_paths(&sections[0].polygons);
+        let subjs = to_paths(&sections[0].paths());
         if let OpType::Intersect = op {
             let mut res = subjs;
             for s in &sections[1..] {
@@ -220,7 +221,7 @@ impl CrossSection {
                     ClipType::Intersection,
                     FillRule::Positive,
                     &res,
-                    &to_paths(&s.polygons),
+                    &to_paths(&s.paths()),
                     PRECISION,
                 );
             }
@@ -228,7 +229,7 @@ impl CrossSection {
         }
         let mut clips = PathsD::new();
         for s in &sections[1..] {
-            clips.extend(to_paths(&s.polygons));
+            clips.extend(to_paths(&s.paths()));
         }
         Self::from_raw(from_paths(&boolean_op_d(
             cliptype_of_op(op),
@@ -243,7 +244,7 @@ impl CrossSection {
     pub fn hull_cross_sections(sections: &[Self]) -> Self {
         let points: Vec<Vec2> = sections
             .iter()
-            .flat_map(|s| s.polygons.iter().flat_map(|p| p.iter().cloned()))
+            .flat_map(|s| s.paths().iter().flat_map(|p| p.iter().cloned()).collect::<Vec<_>>())
             .collect();
         Self::hull_points(&points)
     }
