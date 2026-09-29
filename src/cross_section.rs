@@ -364,17 +364,22 @@ impl CrossSection {
         ))
     }
 
+    /// Does the section hold any contours? C++ `IsEmpty` is
+    /// `paths_.empty()`, so a degenerate contour (such as the empty path
+    /// C++ `Hull` returns for fewer than three points) is not empty.
     pub fn is_empty(&self) -> bool {
-        let paths = self.paths();
-        paths.is_empty() || paths.iter().all(|p| p.len() < 3)
+        self.paths().is_empty()
     }
 
+    /// Total vertices over every contour, as C++ `NumVert`.
     pub fn num_vert(&self) -> usize {
         self.paths().iter().map(|p| p.len()).sum()
     }
 
+    /// Number of contours, outer and hole, degenerate ones included: C++
+    /// `NumContour` is `paths_.size()`.
     pub fn num_contour(&self) -> usize {
-        self.paths().iter().filter(|p| p.len() >= 3).count()
+        self.paths().len()
     }
 
     /// Create CrossSection from a simple polygon with a specified fill rule.

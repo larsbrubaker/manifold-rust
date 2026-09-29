@@ -453,3 +453,28 @@ fn test_warp_unions_like_cpp() {
     let stretched = CrossSection::square(1.0).warp(|v| v.x *= 1.000_000_12);
     assert_eq!(stretched.bounds().max.x, 1.0 + 2f64.powi(-23));
 }
+
+/// C++ `IsEmpty` is `paths_.empty()` and `NumContour` is `paths_.size()`:
+/// contours with fewer than three vertices still count. C++ `Hull` produces
+/// exactly such sections — one empty contour for fewer than three points
+/// (`h_2pts`: contours=1 nvert=0 empty=0) and a two-vertex contour for
+/// collinear points (`h_collinear`: contours=1 nvert=2 empty=0) — through the
+/// private no-union constructor that `from_raw` mirrors.
+#[test]
+fn test_is_empty_and_num_contour_count_every_path_like_cpp() {
+    let one_empty = CrossSection::from_raw(vec![vec![]]);
+    assert!(!one_empty.is_empty());
+    assert_eq!(one_empty.num_contour(), 1);
+    assert_eq!(one_empty.num_vert(), 0);
+    let degenerate = CrossSection::from_raw(vec![
+        vec![],
+        vec![Vec2::new(0.0, 0.0), Vec2::new(3.0, 0.0)],
+    ]);
+    assert!(!degenerate.is_empty());
+    assert_eq!(degenerate.num_contour(), 2);
+    assert_eq!(degenerate.num_vert(), 2);
+    let none = CrossSection::default();
+    assert!(none.is_empty());
+    assert_eq!(none.num_contour(), 0);
+    assert_eq!(none.num_vert(), 0);
+}
