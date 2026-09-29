@@ -181,7 +181,7 @@ fix, 0 after; `robust::thingi_tests::thingi_1147177_import_counts` and
 
 ## 4. Mirroring keeps each property with its corner (2026-09-28)
 
-**What differs:** when `ManifoldImpl::transform` (`src/impl_mesh.rs`) flips
+**What differs:** when `ManifoldImpl::transform` (`src/impl_transform.rs`) flips
 triangle winding for a negative-determinant transform, each halfedge's
 `prop_vert` is reassigned so the new corners take the props of old corners
 (0, 2, 1) — the old corner whose start vertex becomes the new start vertex. The

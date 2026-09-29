@@ -40,6 +40,8 @@ pub mod disjoint_sets;
 pub mod edge_op;
 pub mod face_op;
 pub mod impl_mesh;
+mod impl_shapes;
+mod impl_transform;
 pub mod interp_tri;
 pub mod linalg;
 pub mod manifold;

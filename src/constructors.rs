@@ -2,7 +2,7 @@
 //
 // Ports src/constructors.cpp from the Manifold C++ library.
 // Sphere() requires Subdivide() (Phase 15) and is omitted here.
-// Cube, Tetrahedron, Octahedron are in impl_mesh.rs.
+// Cube, Tetrahedron, Octahedron are in impl_shapes.rs.
 
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{IVec3, Mat3x4, Vec2, Vec3};
