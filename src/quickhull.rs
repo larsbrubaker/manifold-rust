@@ -19,6 +19,8 @@
 
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{dot, normalize, Vec3};
+use crate::robust::exact::filtered::orient3d;
+use crate::robust::exact::Sign;
 
 #[path = "quickhull_algo.rs"]
 mod quickhull_algo;
@@ -93,6 +95,22 @@ impl Plane {
 #[inline]
 fn signed_distance_to_plane(v: Vec3, p: &Plane) -> f64 {
     dot(p.n, v) + p.d
+}
+
+/// Whether `point` is strictly above the face with corners `a, b, c`: on the side
+/// its counterclockwise normal points to, decided exactly. NOT A PORT; divergence
+/// ledger entry 11 (docs/CPP_DIVERGENCES.md).
+///
+/// The C++ reads "above" off the float distance to the face's stored plane. When
+/// the apex is collinear with an edge it lies in the plane of both faces on that
+/// edge, and rounding can put one face at +5.6e-17 and the other at 0: the edge
+/// becomes a horizon edge, the new face has zero area and a noise normal, and the
+/// hull ends non-convex. The exact orientation gives both faces the same answer,
+/// zero, so neither is visible. `triangle_normal(a, b, c)` = cross(a-c, b-c) points
+/// the same way as orient3d's cross(b-a, c-a), so the two agree on "above".
+#[inline]
+fn is_above(a: Vec3, b: Vec3, c: Vec3, point: Vec3) -> bool {
+    orient3d(a, b, c, point) == Sign::Pos
 }
 
 // ---------------------------------------------------------------------------

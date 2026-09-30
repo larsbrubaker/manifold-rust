@@ -6,7 +6,8 @@ use crate::types::Halfedge;
 use std::collections::VecDeque;
 
 use super::{
-    signed_distance_to_plane, squared_distance, squared_distance_point_ray, triangle_normal, Plane,
+    is_above, signed_distance_to_plane, squared_distance, squared_distance_point_ray,
+    triangle_normal, Plane,
 };
 
 // ---------------------------------------------------------------------------
@@ -475,11 +476,10 @@ impl QuickHull {
                         continue;
                     }
                 } else {
-                    let plane_n = self.mesh.faces[fi].plane.n;
-                    let plane_d = self.mesh.faces[fi].plane.d;
                     self.mesh.faces[fi].visibility_checked_on_iteration = iter;
-                    let d = dot(plane_n, active_point) + plane_d;
-                    if d > 0.0 {
+                    // Divergence ledger entry 11: the exact side of the face's corners,
+                    // not the float plane distance (see `is_above`).
+                    if self.is_face_above(fi, active_point) {
                         self.mesh.faces[fi].is_visible_face_on_current_iteration = true;
                         self.mesh.faces[fi].horizon_edges_on_current_iteration = 0;
                         self.visible_faces.push(fi);
@@ -881,10 +881,24 @@ impl QuickHull {
         }
     }
 
+    fn is_face_above(&self, face_index: usize, point: Vec3) -> bool {
+        let [a, b, c] = self.mesh.get_vertex_indices_of_face_by_index(face_index);
+        is_above(
+            self.verts[a as usize],
+            self.verts[b as usize],
+            self.verts[c as usize],
+            point,
+        )
+    }
+
     fn add_point_to_face(&mut self, face_index: usize, point_index: usize) -> bool {
         let d =
             signed_distance_to_plane(self.verts[point_index], &self.mesh.faces[face_index].plane);
-        if d > 0.0 && d * d > self.epsilon_squared * self.mesh.faces[face_index].plane.sqr_n_length
+        // Divergence ledger entry 11: also exactly above the face, so the face a point
+        // is queued on is one the flood fill will find visible from it.
+        if d > 0.0
+            && d * d > self.epsilon_squared * self.mesh.faces[face_index].plane.sqr_n_length
+            && self.is_face_above(face_index, self.verts[point_index])
         {
             let f = &mut self.mesh.faces[face_index];
             if f.points_on_positive_side.is_none() {

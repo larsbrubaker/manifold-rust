@@ -7,7 +7,8 @@ justified it. Trace-diff debugging against the C++ must expect these.
 Two kinds of entry live here, and they are not the same claim:
 
 - **Justified divergence** — an accuracy fix, a real bug fix in the C++, or a
-  measured improvement. CLAUDE.md's three qualifying reasons. Entries 1, 3 and 4.
+  measured improvement. CLAUDE.md's three qualifying reasons. Entries 1, 3, 4
+  and 11.
 - **Inherited divergence, documented and scheduled for coordinated
   harmonization** — an output shape this port already shipped, which we would
   resolve toward the C++ on the merits but cannot change unilaterally, because a
@@ -47,6 +48,7 @@ belongs in any category for convenience.
 | 8 | Implementation-defined | Hull: order of `+0.0` / `-0.0` ties |
 | 9 | API shape | `Manifold::slice` / `project` return a `CrossSection`, not `Polygons` |
 | 10 | Extension | `CrossSection::minkowski_sum` (no C++ counterpart) |
+| 11 | Justified | QuickHull decides above-a-face exactly |
 
 Anything else that differs from the C++ is a bug, not an entry. The ones known
 and not yet fixed are listed under *Known unresolved mismatches* at the end, so
@@ -393,6 +395,37 @@ can hold overlapping contours when either operand has more than one contour.
 callers that need a clean section can pass the result through
 `CrossSection::new`. Should the C++ ever gain a Minkowski operation, this entry
 becomes a porting task.
+
+## 11. QuickHull decides above-a-face exactly (2026-09-30)
+
+**What differs:** the QuickHull flood fill (`src/quickhull_algo.rs`) calls a face
+visible from the apex only when the exact `orient3d` of the face's three corners
+and the apex is strictly positive (`quickhull::is_above`); exactly coplanar is
+hidden. `add_point_to_face` queues a point on a face only when it is also exactly
+above it; the float epsilon test that decides whether a point is outside at all
+is unchanged. The C++ (`src/quickhull.cpp:391`, and its `AddPointToFace`) reads
+both off the float distance to the face's stored plane (`d > 0.0`).
+
+**Why:** a real bug in the C++. When the apex is collinear with a hull edge it
+lies in the plane of both faces on that edge, and rounding can put one face at
++5.6e-17 (visible) and the other at 0 (hidden). The edge becomes a horizon edge,
+the new face coned to it has zero area and a noise normal, and every later
+visibility test against it is noise: the hull ends non-convex. Minkowski sums
+hull each triangle swept by the tool, so a folded hull loses solid from the sum
+(Thingi10K 63451, 641145 and 287448 in manifold-sharp's dilation). The exact
+orientation gives both faces the same answer, so no zero-area face is built.
+
+**What is observably different:** hulls whose points hold exactly collinear or
+coplanar sets can come out with different triangles. No existing expected value
+in this tree moved. manifold-sharp made the same fix in its commit `b178563` (its
+`RUST_DIVERGENCES.md` entry 7), so the two ports agree.
+
+**Evidence:** `quickhull::tests::test_hull_of_a_flat_triangle_swept_by_sphere_is_convex`
+(Thingi10K 63451 triangle 163 swept by `sphere(0.3, 8)`) and
+`test_thingi641145_triangle109_swept_hull_is_convex` (641145 triangle 109 swept by
+`sphere(0.05781898171099809, 12)`): an input point lay 0.581 and 0.2336 outside a
+hull face before the fix, under 1e-12 after. Both tests are shared with
+manifold-sharp's `QuickHullContainmentTests`.
 
 ## Known unresolved mismatches (bugs, not entries)
 

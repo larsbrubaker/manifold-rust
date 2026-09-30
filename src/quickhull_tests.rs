@@ -124,3 +124,68 @@ fn test_convex_hull_is_convex() {
     let hull = convex_hull(&pts);
     assert!(hull.is_convex());
 }
+
+// A defect found by the convex-dilation union tree (manifold-sharp) on Thingi10K
+// 63451 dilated by Sphere(0.3, 8): the hull of one flat triangle swept by the sphere
+// was not convex. At iteration 29 the apex lay on the line through two hull points,
+// so in the plane of both faces on that edge; the float plane distance put one face
+// at 5.6e-17 (visible) and the other at 0 (hidden), so the edge became a horizon edge
+// and the new face had zero area and a noise normal. Divergence ledger entry 11
+// decides visibility with the exact orientation instead (`quickhull::is_above`).
+
+/// The worst distance any input point lies outside any face of its hull, after
+/// sweeping `triangle` by `tool` the way the Minkowski sum does (every corner plus
+/// every tool vertex, in the same order).
+fn worst_outside_of_swept_hull(triangle: &[Vec3; 3], tool: &crate::manifold::Manifold) -> f64 {
+    let tool = tool.as_impl();
+    let mut points = Vec::with_capacity(3 * tool.vert_pos.len());
+    for &corner in triangle {
+        for &tool_vert in &tool.vert_pos {
+            points.push(corner + tool_vert);
+        }
+    }
+
+    let hull = convex_hull(&points);
+    assert_eq!(hull.status, crate::types::Error::NoError);
+
+    let mut worst_outside = 0.0f64;
+    for tri in 0..hull.num_tri() {
+        let p0 = hull.vert_pos[hull.halfedge[3 * tri].start_vert as usize];
+        let p1 = hull.vert_pos[hull.halfedge[3 * tri + 1].start_vert as usize];
+        let p2 = hull.vert_pos[hull.halfedge[3 * tri + 2].start_vert as usize];
+        let normal = crate::linalg::normalize(crate::linalg::cross(p1 - p0, p2 - p0));
+        for &point in &points {
+            worst_outside = worst_outside.max(crate::linalg::dot(normal, point - p0));
+        }
+    }
+    worst_outside
+}
+
+#[test]
+fn test_hull_of_a_flat_triangle_swept_by_sphere_is_convex() {
+    // Triangle 163 of Thingi10K 63451 after the demo import, bit-exact.
+    let triangle = [
+        Vec3::new(-0.373046875, 0.33203125, 0.0234375),
+        Vec3::new(-0.5078125, 0.466796875, 0.0234375),
+        Vec3::new(-0.5078125, 0.197265625, 0.0234375),
+    ];
+    let worst = worst_outside_of_swept_hull(&triangle, &crate::manifold::Manifold::sphere(0.3, 8));
+    assert!(worst < 1e-12, "a hull vertex lies {worst} outside a face");
+}
+
+#[test]
+fn test_thingi641145_triangle109_swept_hull_is_convex() {
+    // Triangle 109 of Thingi10K 641145 after the demo import, bit-exact; the sweep
+    // radius is 0.02 of the part's diagonal. Before the exact visibility test, input
+    // points lay 0.234 outside the hull.
+    let triangle = [
+        Vec3::new(-0.6162518858909607, 0.6155887842178345, 0.3000994920730591),
+        Vec3::new(-0.7850430011749268, 0.6208153367042542, 0.3000994920730591),
+        Vec3::new(-0.6162518858909607, -0.6155887246131897, 0.3000994920730591),
+    ];
+    let worst = worst_outside_of_swept_hull(
+        &triangle,
+        &crate::manifold::Manifold::sphere(0.05781898171099809, 12),
+    );
+    assert!(worst < 1e-12, "a hull vertex lies {worst} outside a face");
+}
