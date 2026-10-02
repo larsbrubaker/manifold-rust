@@ -411,10 +411,16 @@ pub fn boolean_result_with_token(
         return crate::boolean3::cancelled_impl();
     }
 
-    // Build edge maps
-    let mut edges_p: EdgeList<i32> = Vec::new();
-    let mut edges_q: EdgeList<i32> = Vec::new();
-    let mut edges_new: EdgeList<(i32, i32)> = Vec::new();
+    // Build edge maps, sized up front rather than grown by doubling: each
+    // intersection adds |inclusion| entries to its edge's list and two to
+    // `edges_new`.
+    let count = |inclusions: &[i32]| -> usize {
+        inclusions.iter().map(|x| x.unsigned_abs() as usize).sum()
+    };
+    let (n12, n21) = (count(&i12), count(&i21));
+    let mut edges_p: EdgeList<i32> = Vec::with_capacity(n12);
+    let mut edges_q: EdgeList<i32> = Vec::with_capacity(n21);
+    let mut edges_new: EdgeList<(i32, i32)> = Vec::with_capacity(2 * (n12 + n21));
 
     add_new_edge_verts(
         &mut edges_p,
@@ -425,6 +431,7 @@ pub fn boolean_result_with_token(
         &in_p.halfedge,
         true,
         0,
+        token,
     );
     add_new_edge_verts(
         &mut edges_q,
@@ -435,21 +442,28 @@ pub fn boolean_result_with_token(
         &in_q.halfedge,
         false,
         bool3.xv12.p1q2.len(),
+        token,
     );
-
-    let edges_p = EdgeGroups::new(edges_p);
-    let edges_q = EdgeGroups::new(edges_q);
-    let edges_new = EdgeGroups::new(edges_new);
 
     // C++ clears v12R/v21R here (after AddNewEdgeVerts); drop the counterparts
     // so the large scans don't ride through the rest of the pipeline.
     drop(v12r);
     drop(v21r);
 
-    // Phase 3 (C++ boolean_result.cpp:869): after AddNewEdgeVerts.
+    // Phase 3 (C++ boolean_result.cpp:869): after AddNewEdgeVerts, and between
+    // the edge-list sorts, which have no C++ counterpart.
     if is_cancelled(token) {
         return crate::boolean3::cancelled_impl();
     }
+    let edges_p = EdgeGroups::new(edges_p);
+    if is_cancelled(token) {
+        return crate::boolean3::cancelled_impl();
+    }
+    let edges_q = EdgeGroups::new(edges_q);
+    if is_cancelled(token) {
+        return crate::boolean3::cancelled_impl();
+    }
+    let edges_new = EdgeGroups::new(edges_new);
 
     // Size output
     let (face_edge, face_pq2r) = size_output(

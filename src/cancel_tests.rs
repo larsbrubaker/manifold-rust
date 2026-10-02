@@ -308,3 +308,43 @@ fn cancelled_status_survives_the_csg_tree_root() {
     // Same tree, no token: unaffected.
     assert_eq!(tree.evaluate().status, Error::NoError);
 }
+
+/// `add_new_edge_verts` checks the token per intersection, as C++
+/// `AddNewEdgeVerts` does: a live token fills the lists, a cancelled one
+/// leaves them empty.
+#[test]
+fn add_new_edge_verts_stops_at_a_cancelled_token() {
+    use crate::types::Halfedge;
+    let halfedge: Vec<Halfedge> = (0..3)
+        .map(|i| Halfedge {
+            start_vert: i,
+            end_vert: (i + 1) % 3,
+            paired_halfedge: -1,
+            prop_vert: i,
+        })
+        .collect();
+    let p1q2 = vec![[0, 7], [1, 7], [2, 8], [0, 9]];
+    let i12 = vec![1, -1, 2, 1];
+    let v12r = vec![0, 1, 2, 4];
+    let run = |token: Option<&CancelToken>| {
+        let (mut edges_p, mut edges_new) = (Vec::new(), Vec::new());
+        crate::boolean_result::add_new_edge_verts(
+            &mut edges_p,
+            &mut edges_new,
+            &p1q2,
+            &i12,
+            &v12r,
+            &halfedge,
+            true,
+            0,
+            token,
+        );
+        (edges_p.len(), edges_new.len())
+    };
+    let live = CancelToken::new();
+    assert_eq!(run(None), (5, 10));
+    assert_eq!(run(Some(&live)), (5, 10));
+    let cancelled = CancelToken::new();
+    cancelled.cancel();
+    assert_eq!(run(Some(&cancelled)), (0, 0));
+}

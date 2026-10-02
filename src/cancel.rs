@@ -55,8 +55,11 @@
 //                                              <- boolean3.cpp:380/437/456/472/
 //                                                 480/530/536/552/558
 //   boolean_result_       all eleven phase boundaries between the assembly
-//     assemble.rs         stages, including the final one after SortGeometry
-//                                              <- boolean_result.cpp:758-963
+//     assemble.rs         stages, including the final one after SortGeometry,
+//                         and between the edge-list sorts after
+//                         AddNewEdgeVerts  <- boolean_result.cpp:758-963
+//   boolean_result.rs     `add_new_edge_verts` (per intersection)
+//                                              <- boolean_result.cpp:273-280
 //   face_op.rs            `face2tri_ct` entry plus per-face triangulation
 //                                              <- face_op.cpp:192/290
 //
