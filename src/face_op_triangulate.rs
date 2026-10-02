@@ -24,6 +24,7 @@ use super::{assemble_halfedges, get_axis_aligned_projection, project_polygons};
 fn write_local_triangles(
     output: &mut [Halfedge],
     contour2tri: &mut [i32],
+    (tri_base, edge_base): (usize, usize),
     face_halfedge: &[Halfedge],
     first_tri: usize,
     triangles: &[[i32; 3]],
@@ -43,12 +44,13 @@ fn write_local_triangles(
             let start = tri[i];
             let end = tri[(i + 1) % 3];
             local_edges[num_edge] = [start, end, out];
-            output[out as usize].start_vert = face_halfedge[start as usize].start_vert;
+            let o = out as usize - 3 * tri_base;
+            output[o].start_vert = face_halfedge[start as usize].start_vert;
             // C++ Halfedges derives end verts from triangle adjacency; the
             // Rust Halfedge stores them, so set explicitly.
-            output[out as usize].end_vert = face_halfedge[end as usize].start_vert;
-            output[out as usize].prop_vert = face_halfedge[start as usize].prop_vert;
-            output[out as usize].paired_halfedge = -1;
+            output[o].end_vert = face_halfedge[end as usize].start_vert;
+            output[o].prop_vert = face_halfedge[start as usize].prop_vert;
+            output[o].paired_halfedge = -1;
             num_edge += 1;
         }
     }
@@ -63,9 +65,9 @@ fn write_local_triangles(
             }
         }
         if pair >= 0 {
-            output[edge[2] as usize].paired_halfedge = pair;
+            output[edge[2] as usize - 3 * tri_base].paired_halfedge = pair;
         } else {
-            contour2tri[edge[0] as usize] = edge[2];
+            contour2tri[edge[0] as usize - edge_base] = edge[2];
         }
     }
 }
@@ -77,6 +79,7 @@ fn write_local_triangles(
 fn write_general_triangulation(
     output: &mut [Halfedge],
     contour2tri: &mut [i32],
+    (tri_base, edge_base): (usize, usize),
     face_halfedge: &[Halfedge],
     first_tri: usize,
     triangulation: &HalfedgeTriangulation,
@@ -86,7 +89,7 @@ fn write_general_triangulation(
     let num_tri_halfedge = 3 * triangulation.num_tri();
 
     for local in 0..num_tri_halfedge {
-        let out = (first_out as usize) + local;
+        let out = (first_out as usize) + local - 3 * tri_base;
         let edge = &triangulation.halfedges[contour_end + local];
         output[out].start_vert = face_halfedge[edge.start_vert as usize].start_vert;
         output[out].end_vert = face_halfedge[edge.end_vert as usize].start_vert;
@@ -111,10 +114,11 @@ fn write_general_triangulation(
         // the original face-halfedge index of the edge's start.
         let boundary = edge.end_vert;
         debug_assert!(
-            boundary >= 0 && (boundary as usize) < contour2tri.len(),
+            boundary >= 0 && (boundary as usize - edge_base) < contour2tri.len(),
             "contour edge index out of bounds"
         );
-        contour2tri[boundary as usize] = first_out + edge.paired_halfedge - contour_end as i32;
+        contour2tri[boundary as usize - edge_base] =
+            first_out + edge.paired_halfedge - contour_end as i32;
     }
 }
 
@@ -186,9 +190,7 @@ pub fn face2tri_ct(
         };
 
     let mut tri_offset = vec![0usize; face_edge.len()];
-    let mut results: std::collections::HashMap<usize, HalfedgeTriangulation> =
-        std::collections::HashMap::new();
-    for (face, triangulation) in general.into_iter().enumerate() {
+    for (face, triangulation) in general.iter().enumerate() {
         let num_edge = (face_edge[face + 1] - face_edge[face]) as usize;
         if num_edge == 0 {
             continue;
@@ -197,7 +199,6 @@ pub fn face2tri_ct(
         tri_offset[face] = num_edge - 2;
         if let Some(t) = triangulation {
             tri_offset[face] = t.num_tri();
-            results.insert(face, t);
         }
     }
 
@@ -222,120 +223,178 @@ pub fn face2tri_ct(
     let mut tri_normal = vec![Vec3::new(0.0, 0.0, 0.0); num_tri];
     let mut tri_ref = vec![TriRef::default(); num_tri];
 
-    for face in 0..num_faces {
-        let first_edge = face_edge[face] as usize;
-        let last_edge = face_edge[face + 1] as usize;
-        let num_edge = last_edge - first_edge;
-        if num_edge == 0 {
-            continue;
-        }
-        let normal = mesh.face_normal[face];
-        let first_tri = tri_offset[face];
-        let face_num_tri;
-
-        if num_edge == 3 {
-            // Single triangle — sort edges into correct winding order.
-            let mut tri_edge = [
-                first_edge as i32,
-                first_edge as i32 + 1,
-                first_edge as i32 + 2,
-            ];
-            let mut tri = [
-                face_halfedge[first_edge].start_vert,
-                face_halfedge[first_edge + 1].start_vert,
-                face_halfedge[first_edge + 2].start_vert,
-            ];
-            let mut ends = [
-                face_halfedge[first_edge].end_vert,
-                face_halfedge[first_edge + 1].end_vert,
-                face_halfedge[first_edge + 2].end_vert,
-            ];
-            if ends[0] == tri[2] {
-                tri_edge.swap(1, 2);
-                tri.swap(1, 2);
-                ends.swap(1, 2);
-            }
-            debug_assert!(
-                ends[0] == tri[1] && ends[1] == tri[2] && ends[2] == tri[0],
-                "these 3 edges do not form a triangle!"
-            );
-            write_local_triangles(
-                &mut new_halfedge,
-                &mut contour2tri,
-                &face_halfedge,
-                first_tri,
-                &[tri_edge],
-            );
-            face_num_tri = 1;
-        } else if num_edge == 4 {
-            // Quad — split into two triangles along the better diagonal.
-            let projection = get_axis_aligned_projection(normal);
-            let tri_ccw = |t: [i32; 3]| -> bool {
-                ccw(
-                    projection
-                        .apply(mesh.vert_pos[face_halfedge[t[0] as usize].start_vert as usize]),
-                    projection
-                        .apply(mesh.vert_pos[face_halfedge[t[1] as usize].start_vert as usize]),
-                    projection
-                        .apply(mesh.vert_pos[face_halfedge[t[2] as usize].start_vert as usize]),
-                    mesh.epsilon,
-                ) >= 0
-            };
-
-            let quad_loops =
-                assemble_halfedges(&face_halfedge[first_edge..last_edge], first_edge as i32);
-            let quad = &quad_loops[0]; // Should be exactly one loop
-
-            let tris0 = [[quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]]];
-            let tris1 = [[quad[1], quad[2], quad[3]], [quad[0], quad[1], quad[3]]];
-
-            let choice = if !(tri_ccw(tris0[0]) && tri_ccw(tris0[1])) {
-                1
-            } else if tri_ccw(tris1[0]) && tri_ccw(tris1[1]) {
-                let diag0 = mesh.vert_pos[face_halfedge[quad[0] as usize].start_vert as usize]
-                    - mesh.vert_pos[face_halfedge[quad[2] as usize].start_vert as usize];
-                let diag1 = mesh.vert_pos[face_halfedge[quad[1] as usize].start_vert as usize]
-                    - mesh.vert_pos[face_halfedge[quad[3] as usize].start_vert as usize];
-                if length2(diag0) > length2(diag1) {
-                    1
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
-
-            let chosen = if choice == 0 { &tris0 } else { &tris1 };
-            write_local_triangles(
-                &mut new_halfedge,
-                &mut contour2tri,
-                &face_halfedge,
-                first_tri,
-                chosen,
-            );
-            face_num_tri = 2;
-        } else {
-            // General triangulation
-            let triangulation = results
-                .get(&face)
-                .expect("general face missing triangulation result");
-            write_general_triangulation(
-                &mut new_halfedge,
-                &mut contour2tri,
-                &face_halfedge,
-                first_tri,
-                triangulation,
-            );
-            face_num_tri = triangulation.num_tri();
-        }
-
-        // WriteTriRefs
-        let ref_tri = halfedge_ref[first_edge];
-        for t in 0..face_num_tri {
-            tri_normal[first_tri + t] = normal;
-            tri_ref[first_tri + t] = ref_tri;
+    // Write the faces' triangles in parallel, in fixed runs of faces. A face
+    // writes only its own triangles and `contour2tri` entries, from values that
+    // depend only on the face, so each run gets its own slices of the arrays.
+    struct FaceRun<'a> {
+        faces: std::ops::Range<usize>,
+        halfedge: &'a mut [Halfedge],
+        contour2tri: &'a mut [i32],
+        tri_normal: &'a mut [Vec3],
+        tri_ref: &'a mut [TriRef],
+    }
+    const FACES_PER_RUN: usize = 4096;
+    let mut runs: Vec<FaceRun> = Vec::with_capacity(num_faces / FACES_PER_RUN + 1);
+    {
+        let mut halfedge_rest: &mut [Halfedge] = &mut new_halfedge;
+        let mut contour_rest: &mut [i32] = &mut contour2tri;
+        let mut normal_rest: &mut [Vec3] = &mut tri_normal;
+        let mut ref_rest: &mut [TriRef] = &mut tri_ref;
+        let mut f0 = 0;
+        while f0 < num_faces {
+            let f1 = (f0 + FACES_PER_RUN).min(num_faces);
+            let tris = tri_offset[f1] - tri_offset[f0];
+            let edges = (face_edge[f1] - face_edge[f0]) as usize;
+            let (h, hr) = std::mem::take(&mut halfedge_rest).split_at_mut(3 * tris);
+            let (c, cr) = std::mem::take(&mut contour_rest).split_at_mut(edges);
+            let (n, nr) = std::mem::take(&mut normal_rest).split_at_mut(tris);
+            let (r, rr) = std::mem::take(&mut ref_rest).split_at_mut(tris);
+            halfedge_rest = hr;
+            contour_rest = cr;
+            normal_rest = nr;
+            ref_rest = rr;
+            runs.push(FaceRun {
+                faces: f0..f1,
+                halfedge: h,
+                contour2tri: c,
+                tri_normal: n,
+                tri_ref: r,
+            });
+            f0 = f1;
         }
     }
+    let face_halfedge_ref = &face_halfedge;
+    let general_ref = &general;
+    crate::par::maybe_par_for_each(runs, 2, |run| {
+        let FaceRun {
+            faces,
+            halfedge: new_halfedge,
+            contour2tri,
+            tri_normal,
+            tri_ref,
+        } = run;
+        let face_halfedge = face_halfedge_ref;
+        // Bases of this run's slices in the whole arrays.
+        let tri_base = tri_offset[faces.start];
+        let edge_base = face_edge[faces.start] as usize;
+        for face in faces {
+            let first_edge = face_edge[face] as usize;
+            let last_edge = face_edge[face + 1] as usize;
+            let num_edge = last_edge - first_edge;
+            if num_edge == 0 {
+                continue;
+            }
+            let normal = face_normal_ref[face];
+            let first_tri = tri_offset[face];
+            let face_num_tri;
+
+            if num_edge == 3 {
+                // Single triangle — sort edges into correct winding order.
+                let mut tri_edge = [
+                    first_edge as i32,
+                    first_edge as i32 + 1,
+                    first_edge as i32 + 2,
+                ];
+                let mut tri = [
+                    face_halfedge[first_edge].start_vert,
+                    face_halfedge[first_edge + 1].start_vert,
+                    face_halfedge[first_edge + 2].start_vert,
+                ];
+                let mut ends = [
+                    face_halfedge[first_edge].end_vert,
+                    face_halfedge[first_edge + 1].end_vert,
+                    face_halfedge[first_edge + 2].end_vert,
+                ];
+                if ends[0] == tri[2] {
+                    tri_edge.swap(1, 2);
+                    tri.swap(1, 2);
+                    ends.swap(1, 2);
+                }
+                debug_assert!(
+                    ends[0] == tri[1] && ends[1] == tri[2] && ends[2] == tri[0],
+                    "these 3 edges do not form a triangle!"
+                );
+                write_local_triangles(
+                    new_halfedge,
+                    contour2tri,
+                    (tri_base, edge_base),
+                    face_halfedge,
+                    first_tri,
+                    &[tri_edge],
+                );
+                face_num_tri = 1;
+            } else if num_edge == 4 {
+                // Quad — split into two triangles along the better diagonal.
+                let projection = get_axis_aligned_projection(normal);
+                let tri_ccw = |t: [i32; 3]| -> bool {
+                    ccw(
+                        projection
+                            .apply(vert_pos_ref[face_halfedge[t[0] as usize].start_vert as usize]),
+                        projection
+                            .apply(vert_pos_ref[face_halfedge[t[1] as usize].start_vert as usize]),
+                        projection
+                            .apply(vert_pos_ref[face_halfedge[t[2] as usize].start_vert as usize]),
+                        epsilon,
+                    ) >= 0
+                };
+
+                let quad_loops =
+                    assemble_halfedges(&face_halfedge[first_edge..last_edge], first_edge as i32);
+                let quad = &quad_loops[0]; // Should be exactly one loop
+
+                let tris0 = [[quad[0], quad[1], quad[2]], [quad[0], quad[2], quad[3]]];
+                let tris1 = [[quad[1], quad[2], quad[3]], [quad[0], quad[1], quad[3]]];
+
+                let choice = if !(tri_ccw(tris0[0]) && tri_ccw(tris0[1])) {
+                    1
+                } else if tri_ccw(tris1[0]) && tri_ccw(tris1[1]) {
+                    let diag0 = vert_pos_ref[face_halfedge[quad[0] as usize].start_vert as usize]
+                        - vert_pos_ref[face_halfedge[quad[2] as usize].start_vert as usize];
+                    let diag1 = vert_pos_ref[face_halfedge[quad[1] as usize].start_vert as usize]
+                        - vert_pos_ref[face_halfedge[quad[3] as usize].start_vert as usize];
+                    if length2(diag0) > length2(diag1) {
+                        1
+                    } else {
+                        0
+                    }
+                } else {
+                    0
+                };
+
+                let chosen = if choice == 0 { &tris0 } else { &tris1 };
+                write_local_triangles(
+                    new_halfedge,
+                    contour2tri,
+                    (tri_base, edge_base),
+                    face_halfedge,
+                    first_tri,
+                    chosen,
+                );
+                face_num_tri = 2;
+            } else {
+                // General triangulation
+                let triangulation = general_ref[face]
+                    .as_ref()
+                    .expect("general face missing triangulation result");
+                write_general_triangulation(
+                    new_halfedge,
+                    contour2tri,
+                    (tri_base, edge_base),
+                    face_halfedge,
+                    first_tri,
+                    triangulation,
+                );
+                face_num_tri = triangulation.num_tri();
+            }
+
+            // WriteTriRefs
+            let ref_tri = halfedge_ref[first_edge];
+            for t in 0..face_num_tri {
+                tri_normal[first_tri - tri_base + t] = normal;
+                tri_ref[first_tri - tri_base + t] = ref_tri;
+            }
+        }
+    });
 
     // Cross-face pairing: connect each face-boundary output halfedge to its
     // counterpart via the original assembly pairing.
