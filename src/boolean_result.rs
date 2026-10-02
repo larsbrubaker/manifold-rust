@@ -37,6 +37,7 @@ use crate::types::{Halfedge, TriRef};
 // ---------------------------------------------------------------------------
 
 #[derive(Clone)]
+#[cfg_attr(test, derive(Debug, PartialEq))]
 pub(super) struct EdgePos {
     edge_pos: f64,
     vert: i32,
@@ -251,8 +252,14 @@ pub(super) fn add_new_edge_verts(
     halfedge_p: &[Halfedge],
     forward: bool,
     offset: usize,
+    token: Option<&crate::cancel::CancelToken>,
 ) {
     for i in 0..p1q2.len() {
+        // As C++ AddNewEdgeVerts (boolean_result.cpp:276-280); the caller's
+        // check after the call discards the partial lists.
+        if crate::cancel::is_cancelled(token) {
+            return;
+        }
         let edge_p = p1q2[i][if forward { 0 } else { 1 }];
         let face_q = p1q2[i][if forward { 1 } else { 0 }];
         let vert = v12r[i];

@@ -308,3 +308,54 @@ fn cancelled_status_survives_the_csg_tree_root() {
     // Same tree, no token: unaffected.
     assert_eq!(tree.evaluate().status, Error::NoError);
 }
+
+/// `add_new_edge_verts` checks the token per intersection, as C++
+/// `AddNewEdgeVerts` does: a live token fills the lists, and a token that
+/// cancels at the k-th poll leaves only the entries of the k intersections
+/// before it. A check only at entry would fill the lists for every k > 0.
+#[test]
+fn add_new_edge_verts_stops_at_a_cancelled_token() {
+    use crate::types::Halfedge;
+    let halfedge: Vec<Halfedge> = (0..3)
+        .map(|i| Halfedge {
+            start_vert: i,
+            end_vert: (i + 1) % 3,
+            paired_halfedge: -1,
+            prop_vert: i,
+        })
+        .collect();
+    let p1q2 = vec![[0, 7], [1, 7], [2, 8], [0, 9]];
+    let i12 = vec![1, -1, 2, 1];
+    let v12r = vec![0, 1, 2, 4];
+    let run = |token: Option<&CancelToken>| {
+        let (mut edges_p, mut edges_new) = (Vec::new(), Vec::new());
+        crate::boolean_result::add_new_edge_verts(
+            &mut edges_p,
+            &mut edges_new,
+            &p1q2,
+            &i12,
+            &v12r,
+            &halfedge,
+            true,
+            0,
+            token,
+        );
+        (edges_p, edges_new)
+    };
+    let (all_p, all_new) = run(None);
+    assert_eq!((all_p.len(), all_new.len()), (5, 10));
+    assert_eq!(
+        run(Some(&CancelToken::new())),
+        (all_p.clone(), all_new.clone())
+    );
+    let cancelled = CancelToken::new();
+    cancelled.cancel();
+    assert_eq!(run(Some(&cancelled)), (vec![], vec![]));
+    // Intersection k adds |i12[k]| entries to `edges_p` and twice that to
+    // `edges_new`, so after k intersections the lists hold these prefixes.
+    for (polls, len_p) in [0, 1, 2, 4, 5].into_iter().enumerate() {
+        let token = CancelToken::cancelling_after(polls);
+        let expected = (all_p[..len_p].to_vec(), all_new[..2 * len_p].to_vec());
+        assert_eq!(run(Some(&token)), expected, "cancelled at poll {polls}");
+    }
+}
