@@ -5,13 +5,18 @@
 
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::Vec3;
-use crate::types::{Box as BBox, Halfedge};
+use crate::types::Box as BBox;
 
 // -----------------------------------------------------------------------
 // Morton code (30-bit, 10 bits per axis)
 // -----------------------------------------------------------------------
 
 const K_NO_CODE: u32 = 0xFFFF_FFFFu32;
+
+/// Element count from which the passes below run in parallel; above C++'s
+/// `kSeqThreshold` (1e4), as they are cheap per element. Each is a per-element
+/// map or update or a stable integer-key sort, so the result is sequential's.
+const PAR_THRESHOLD: usize = 100_000;
 
 /// Spread the low 10 bits of v into bits 0,3,6,9,...,27 (every 3rd bit).
 /// This is the inverse of the interleaving needed for a 3D Morton code.
@@ -56,15 +61,15 @@ pub fn sort_verts(mesh: &mut ManifoldImpl) {
     let bbox = mesh.bbox;
 
     // Compute Morton code for each vertex
-    let vert_morton: Vec<u32> = mesh
-        .vert_pos
-        .iter()
-        .map(|&p| morton_code(p, &bbox))
-        .collect();
+    let vert_pos = &mesh.vert_pos;
+    let vert_morton: Vec<u32> =
+        crate::par::maybe_par_map(num_vert, PAR_THRESHOLD, |v| morton_code(vert_pos[v], &bbox));
 
-    // Build sorted index array
+    // Build sorted index array (a stable sort, so equal codes keep index order)
     let mut vert_new2old: Vec<i32> = (0..num_vert as i32).collect();
-    vert_new2old.sort_by(|&a, &b| vert_morton[a as usize].cmp(&vert_morton[b as usize]));
+    crate::par::maybe_par_sort_by_key(&mut vert_new2old, PAR_THRESHOLD, |&v| {
+        vert_morton[v as usize]
+    });
 
     // Find how many survive (NaN verts get K_NO_CODE, sort to end)
     let new_num_vert = vert_new2old.partition_point(|&v| vert_morton[v as usize] < K_NO_CODE);
@@ -73,20 +78,17 @@ pub fn sort_verts(mesh: &mut ManifoldImpl) {
     reindex_verts(mesh, vert_new2old_trimmed, num_vert);
 
     // Permute vert positions (only surviving verts)
-    let old_pos = mesh.vert_pos.clone();
-    mesh.vert_pos.resize(new_num_vert, Vec3::new(0.0, 0.0, 0.0));
-    for (new_idx, &old_idx) in vert_new2old_trimmed.iter().enumerate() {
-        mesh.vert_pos[new_idx] = old_pos[old_idx as usize];
-    }
+    let old_pos = std::mem::take(&mut mesh.vert_pos);
+    mesh.vert_pos = crate::par::maybe_par_map(new_num_vert, PAR_THRESHOLD, |v| {
+        old_pos[vert_new2old_trimmed[v] as usize]
+    });
 
     // Permute vert normals if present
     if mesh.vert_normal.len() == num_vert {
-        let old_n = mesh.vert_normal.clone();
-        mesh.vert_normal
-            .resize(new_num_vert, Vec3::new(0.0, 0.0, 0.0));
-        for (new_idx, &old_idx) in vert_new2old_trimmed.iter().enumerate() {
-            mesh.vert_normal[new_idx] = old_n[old_idx as usize];
-        }
+        let old_n = std::mem::take(&mut mesh.vert_normal);
+        mesh.vert_normal = crate::par::maybe_par_map(new_num_vert, PAR_THRESHOLD, |v| {
+            old_n[vert_new2old_trimmed[v] as usize]
+        });
     }
 }
 
@@ -98,16 +100,16 @@ pub fn reindex_verts(mesh: &mut ManifoldImpl, vert_new2old: &[i32], old_num_vert
         vert_old2new[old_idx as usize] = new_idx as i32;
     }
     let has_prop = mesh.num_prop > 0;
-    for edge in mesh.halfedge.iter_mut() {
+    crate::par::maybe_par_for_each_mut(&mut mesh.halfedge, PAR_THRESHOLD, |edge| {
         if edge.start_vert < 0 {
-            continue;
+            return;
         }
         edge.start_vert = vert_old2new[edge.start_vert as usize];
         edge.end_vert = vert_old2new[edge.end_vert as usize];
         if !has_prop {
             edge.prop_vert = edge.start_vert;
         }
-    }
+    });
 }
 
 // -----------------------------------------------------------------------
@@ -119,25 +121,22 @@ pub fn reindex_verts(mesh: &mut ManifoldImpl, vert_new2old: &[i32], old_num_vert
 pub fn get_face_box_morton(mesh: &ManifoldImpl) -> (Vec<BBox>, Vec<u32>) {
     let num_tri = mesh.num_tri();
     let bbox = mesh.bbox;
-    let mut face_box = vec![BBox::default(); num_tri];
-    let mut face_morton = vec![0u32; num_tri];
-
-    for face in 0..num_tri {
+    crate::par::maybe_par_map(num_tri, PAR_THRESHOLD, |face| {
+        let mut face_box = BBox::default();
         if mesh.halfedge[3 * face].paired_halfedge < 0 {
-            face_morton[face] = K_NO_CODE;
-            continue;
+            return (face_box, K_NO_CODE);
         }
         let mut center = Vec3::new(0.0, 0.0, 0.0);
         for i in 0..3 {
             let pos = mesh.vert_pos[mesh.halfedge[3 * face + i].start_vert as usize];
             center = center + pos;
-            face_box[face].union_point(pos);
+            face_box.union_point(pos);
         }
         center = center / 3.0;
-        face_morton[face] = morton_code_impl(center, &bbox);
-    }
-
-    (face_box, face_morton)
+        (face_box, morton_code_impl(center, &bbox))
+    })
+    .into_iter()
+    .unzip()
 }
 
 // -----------------------------------------------------------------------
@@ -151,21 +150,18 @@ pub fn sort_faces(mesh: &mut ManifoldImpl, face_box: &mut Vec<BBox>, face_morton
     let mut face_new2old: Vec<usize> = (0..num_tri).collect();
 
     // Stable sort by Morton code (removed tris get K_NO_CODE → sorted last)
-    face_new2old.sort_by(|&a, &b| face_morton[a].cmp(&face_morton[b]));
+    crate::par::maybe_par_sort_by_key(&mut face_new2old, PAR_THRESHOLD, |&f| face_morton[f]);
 
     // Trim removed faces
     let new_num_tri = face_new2old.partition_point(|&f| face_morton[f] < K_NO_CODE);
     face_new2old.truncate(new_num_tri);
 
     // Permute face_morton and face_box to match new order
-    let old_morton = face_morton.clone();
-    let old_box = face_box.clone();
-    face_morton.resize(new_num_tri, 0);
-    face_box.resize(new_num_tri, BBox::default());
-    for (new_f, &old_f) in face_new2old.iter().enumerate() {
-        face_morton[new_f] = old_morton[old_f];
-        face_box[new_f] = old_box[old_f];
-    }
+    let old_morton = std::mem::take(face_morton);
+    let old_box = std::mem::take(face_box);
+    let order = &face_new2old;
+    *face_morton = crate::par::maybe_par_map(new_num_tri, PAR_THRESHOLD, |f| old_morton[order[f]]);
+    *face_box = crate::par::maybe_par_map(new_num_tri, PAR_THRESHOLD, |f| old_box[order[f]]);
 
     gather_faces(mesh, &face_new2old);
 }
@@ -177,22 +173,16 @@ pub fn gather_faces(mesh: &mut ManifoldImpl, face_new2old: &[usize]) {
 
     // Permute tri_ref if present
     if mesh.mesh_relation.tri_ref.len() == old_num_tri {
-        let old_tri_ref = mesh.mesh_relation.tri_ref.clone();
-        mesh.mesh_relation
-            .tri_ref
-            .resize(num_tri, Default::default());
-        for (new_f, &old_f) in face_new2old.iter().enumerate() {
-            mesh.mesh_relation.tri_ref[new_f] = old_tri_ref[old_f];
-        }
+        let old_tri_ref = std::mem::take(&mut mesh.mesh_relation.tri_ref);
+        mesh.mesh_relation.tri_ref =
+            crate::par::maybe_par_map(num_tri, PAR_THRESHOLD, |f| old_tri_ref[face_new2old[f]]);
     }
 
     // Permute face normals if present
     if mesh.face_normal.len() == old_num_tri {
-        let old_normals = mesh.face_normal.clone();
-        mesh.face_normal.resize(num_tri, Vec3::new(0.0, 0.0, 0.0));
-        for (new_f, &old_f) in face_new2old.iter().enumerate() {
-            mesh.face_normal[new_f] = old_normals[old_f];
-        }
+        let old_normals = std::mem::take(&mut mesh.face_normal);
+        mesh.face_normal =
+            crate::par::maybe_par_map(num_tri, PAR_THRESHOLD, |f| old_normals[face_new2old[f]]);
     }
 
     // Build faceOld2New for pairedHalfedge remapping
@@ -202,33 +192,26 @@ pub fn gather_faces(mesh: &mut ManifoldImpl, face_new2old: &[usize]) {
     }
 
     // Gather halfedges from old layout into new
-    let old_halfedge = mesh.halfedge.clone();
-    let old_tangent = mesh.halfedge_tangent.clone();
+    let old_halfedge = std::mem::take(&mut mesh.halfedge);
+    let old_tangent = std::mem::take(&mut mesh.halfedge_tangent);
     let has_tangent = !old_tangent.is_empty();
 
-    mesh.halfedge.resize(3 * num_tri, Halfedge::default());
-    if has_tangent {
-        mesh.halfedge_tangent
-            .resize(3 * num_tri, Default::default());
-    }
-
-    for new_face in 0..num_tri {
-        let old_face = face_new2old[new_face];
-        for i in 0..3 {
-            let old_edge_idx = 3 * old_face + i;
-            let new_edge_idx = 3 * new_face + i;
-            let mut edge = old_halfedge[old_edge_idx];
-            // Remap pairedHalfedge
-            if edge.paired_halfedge >= 0 {
-                let paired_old_face = (edge.paired_halfedge / 3) as usize;
-                let offset = edge.paired_halfedge % 3;
-                edge.paired_halfedge = 3 * face_old2new[paired_old_face] + offset;
-            }
-            mesh.halfedge[new_edge_idx] = edge;
-            if has_tangent {
-                mesh.halfedge_tangent[new_edge_idx] = old_tangent[old_edge_idx];
-            }
+    mesh.halfedge = crate::par::maybe_par_map(3 * num_tri, PAR_THRESHOLD, |new_edge_idx| {
+        let old_edge_idx = 3 * face_new2old[new_edge_idx / 3] + new_edge_idx % 3;
+        let mut edge = old_halfedge[old_edge_idx];
+        // Remap pairedHalfedge
+        if edge.paired_halfedge >= 0 {
+            let paired_old_face = (edge.paired_halfedge / 3) as usize;
+            let offset = edge.paired_halfedge % 3;
+            edge.paired_halfedge = 3 * face_old2new[paired_old_face] + offset;
         }
+        edge
+    });
+    if has_tangent {
+        mesh.halfedge_tangent =
+            crate::par::maybe_par_map(3 * num_tri, PAR_THRESHOLD, |new_edge_idx| {
+                old_tangent[3 * face_new2old[new_edge_idx / 3] + new_edge_idx % 3]
+            });
     }
 }
 

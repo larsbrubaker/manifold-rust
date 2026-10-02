@@ -170,3 +170,45 @@ fn test_union_keeps_concave_corner() {
         );
     }
 }
+
+/// `orbit_owners` must give each orbit's smallest eligible halfedge, as the
+/// sequential scans do, on cubes touching along edges, for two rules.
+#[cfg(feature = "parallel")]
+#[test]
+fn test_orbit_owners_match_the_sequential_scan() {
+    let cube = crate::manifold::Manifold::cube(Vec3::splat(1.0), false);
+    let mut model = crate::manifold::Manifold::empty();
+    for x in 0..4 {
+        for y in 0..4 {
+            for z in 0..4 {
+                if (x + y + z) % 2 == 0 {
+                    let at = Vec3::new(f64::from(x), f64::from(y), f64::from(z));
+                    model = model.union(&cube.translate(at));
+                }
+            }
+        }
+    }
+    let halfedge = &model.as_impl().halfedge;
+    let rules: [&(dyn Fn(&Halfedge) -> bool + Sync); 2] = [&|h| h.start_vert >= 0, &|h| {
+        h.start_vert >= 0 && h.end_vert % 3 != 0
+    }];
+    for eligible in rules {
+        let mut visited = vec![false; halfedge.len()];
+        let mut expected = Vec::new();
+        for i in 0..halfedge.len() {
+            if visited[i] || !eligible(&halfedge[i]) {
+                continue;
+            }
+            expected.push(i);
+            let mut current = i;
+            loop {
+                visited[current] = true;
+                current = next_halfedge(halfedge[current].paired_halfedge) as usize;
+                if current == i {
+                    break;
+                }
+            }
+        }
+        assert_eq!(orbit_owners(halfedge, 0, eligible), Some(expected));
+    }
+}
