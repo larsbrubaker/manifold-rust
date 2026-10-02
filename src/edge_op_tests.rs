@@ -124,3 +124,49 @@ fn test_dedupe_edges_never_moves_a_triangle_corner() {
         .count();
     assert_eq!(moved, 0, "a corner that moves changes the solid");
 }
+
+/// Two operands cut from a union in a BOSL2 `cubetruss` model, around a
+/// concave corner. Format: "3 numVert numTri tolerance 0", then one "x y z"
+/// per vertex, then one "v0 v1 v2" per triangle. Positions are round-trip
+/// formatted, so bit-exact. Neither mesh carries face IDs.
+const UNION_CONCAVE_CORNER_A: &str = include_str!("testdata/union-concave-corner-a.txt");
+const UNION_CONCAVE_CORNER_B: &str = include_str!("testdata/union-concave-corner-b.txt");
+
+fn load_tri_fixture(text: &str) -> crate::manifold::Manifold {
+    let mut lines = text.lines();
+    let header: Vec<&str> = lines.next().unwrap().split_whitespace().collect();
+    let (num_vert, num_tri) = (header[1].parse().unwrap(), header[2].parse().unwrap());
+    let mut mesh = crate::types::MeshGL64 {
+        num_prop: 3,
+        tolerance: header[3].parse().unwrap(),
+        ..Default::default()
+    };
+    for line in lines.by_ref().take(num_vert) {
+        mesh.vert_properties
+            .extend(line.split_whitespace().map(|s| s.parse::<f64>().unwrap()));
+    }
+    for line in lines.take(num_tri) {
+        mesh.tri_verts
+            .extend(line.split_whitespace().map(|s| s.parse::<u64>().unwrap()));
+    }
+    crate::manifold::Manifold::from_mesh_gl64(&mesh)
+}
+
+/// The union's volume must match inclusion-exclusion. Before the stale-entry
+/// check in `dedupe_edges` (divergence ledger entry 3), the cleanup filled the
+/// concave corner, as it does in C++ Manifold 3.5.2.
+#[test]
+fn test_union_keeps_concave_corner() {
+    use crate::types::OpType;
+    let a = load_tri_fixture(UNION_CONCAVE_CORNER_A);
+    let b = load_tri_fixture(UNION_CONCAVE_CORNER_B);
+    let expected = a.volume() + b.volume() - a.boolean(&b, OpType::Intersect).volume();
+    for (x, y) in [(&a, &b), (&b, &a)] {
+        let union = x.boolean(y, OpType::Add);
+        assert!(
+            (union.volume() - expected).abs() < 1e-9 * expected,
+            "union volume {}, expected {expected}",
+            union.volume()
+        );
+    }
+}
