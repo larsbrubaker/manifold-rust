@@ -109,7 +109,7 @@ Parallel execution (bit-identical results, roughly 2× on heavy boolean workload
 
 ```toml
 [dependencies]
-manifold-rust = { version = "0.15", features = ["parallel"] }
+manifold-rust = { version = "0.16", features = ["parallel"] }
 ```
 
 ## Quickstart — C# / .NET

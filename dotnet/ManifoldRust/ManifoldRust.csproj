@@ -49,7 +49,7 @@
          against the newer native, and a newer binding against an older native
          fails loudly with EntryPointNotFoundException rather than silently -
          so the 0.3.x handshake is unchanged. -->
-    <Version>0.5.1</Version>
+    <Version>0.5.2</Version>
     <Authors>Lars Brubaker</Authors>
     <Company>Lars Brubaker</Company>
     <Copyright>Copyright 2026 Lars Brubaker</Copyright>
