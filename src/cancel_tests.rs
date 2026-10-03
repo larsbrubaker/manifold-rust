@@ -21,7 +21,7 @@ use crate::csg_tree::CsgNode;
 use crate::linalg::Vec3;
 use crate::manifold::Manifold;
 use crate::types::{Error, OpType};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Two heavily overlapping spheres: the same shape C++
 /// `ExecutionContextCancelMidBoolean` uses, sized so a single boolean is slow
@@ -138,57 +138,121 @@ fn empty_input_fast_paths_still_honour_a_pre_cancelled_token() {
     );
 }
 
+/// A cancel sent from another thread while a boolean is running stops the
+/// work before it finishes.
+///
+/// Measured in work, not time: an earlier version timed an uncancelled and a
+/// cancelled run and asserted the cancelled one took under half as long,
+/// which compared two tens-of-milliseconds numbers and flaked (its
+/// `uncancelled > 20ms` precondition failed outright on a fast machine). The
+/// progress reporter's phase reports are driven by work, never by the clock,
+/// so the uncancelled run's list of phases is the same on every machine.
+///
+/// The cancelled run parks the kernel inside its first progress report until
+/// this thread has cancelled, so the cancel lands mid-flight at the same
+/// point every time. It must then report `Cancelled`, return nothing, and
+/// enter fewer phases than the full run. A cancel ignored until the work
+/// finishes enters every one of them, however fast the machine. Parking
+/// inside the callback is safe: it holds only the reporter's own lock, which
+/// the cancelling thread never takes, and the first report comes from the
+/// calling thread before any parallel map starts.
+///
+/// The robust engine is what makes the work countable: it reports eight
+/// phases. The exact engine (`boolean_with_token`) reports one indeterminate
+/// `ExactBoolean` just before its entry gate, so a cancel it ignored would
+/// enter exactly as many phases as one it honoured, and a cancel landing at
+/// that report would only exercise the entry gate
+/// `pre_cancelled_token_returns_cancelled_promptly` already covers.
+///
+/// Shared 1:1 with manifold-sharp's
+/// `CancelTests.CancelFromAnotherThreadInterruptsABooleanInFlight` (its
+/// commit 51e14b8 made the same change).
 #[test]
 fn cancel_from_another_thread_interrupts_a_boolean_in_flight() {
-    let (a, b) = slow_pair();
+    use crate::progress::{Phase, ProgressReporter};
+    use crate::types::BooleanEngine;
+    use std::sync::{Arc, Barrier, Mutex};
 
-    // Measure the uncancelled duration in-test so the assertion is relative:
-    // an absolute millisecond threshold would be a machine-speed lottery.
-    let start = Instant::now();
-    let baseline = a.boolean_with_token(&b, OpType::Add, None);
-    let uncancelled = start.elapsed();
+    // Small is fine: the test needs no slow input, only one that runs the
+    // whole robust pipeline.
+    let a = Manifold::sphere(1.0, 32);
+    let b = Manifold::sphere(1.0, 32).translate(Vec3::new(0.5, 0.0, 0.0));
+
+    // The phases the kernel entered, in order, consecutive repeats folded (a
+    // determinate phase reports many fractions). The reporter may call from a
+    // worker thread under `--features parallel`, hence the mutex.
+    let run = |token: Option<&CancelToken>,
+               on_first_report: Option<Box<dyn Fn() + Send + Sync>>|
+     -> (Vec<Phase>, Manifold) {
+        let phases = Arc::new(Mutex::new(Vec::<Phase>::new()));
+        let sink = Arc::clone(&phases);
+        let reporter = ProgressReporter::new(move |phase, _| {
+            let first = {
+                let mut seen = sink.lock().expect("phase list poisoned");
+                let first = seen.is_empty();
+                if first || seen.last() != Some(&phase) {
+                    seen.push(phase);
+                }
+                first
+            };
+            if first {
+                if let Some(hook) = &on_first_report {
+                    hook();
+                }
+            }
+        });
+        let result = a.boolean_with_engine_and_progress(
+            &b,
+            OpType::Add,
+            BooleanEngine::Robust,
+            token,
+            Some(&reporter),
+        );
+        let seen = phases.lock().expect("phase list poisoned").clone();
+        (seen, result)
+    };
+
+    let (full_run, baseline) = run(None, None);
     assert_eq!(baseline.status(), Error::NoError);
+    assert!(!baseline.is_empty());
     assert!(
-        uncancelled > Duration::from_millis(20),
-        "test input is too fast ({uncancelled:?}) to be a meaningful cancel target"
+        full_run.len() > 1,
+        "the kernel must pass through more than one phase, or there is no later \
+         work a cancel could be shown to skip: {full_run:?}"
     );
 
+    // Clones share one flag, so the worker's clone sees this thread's cancel.
     let token = CancelToken::new();
     let worker_token = token.clone();
-    // Inputs are built up front and the worker times only the boolean itself,
-    // so the comparison is like-for-like with `uncancelled`. The handshake
-    // pins the start: the main thread does not begin its delay until the
-    // worker is at the call, so we are cancelling work in flight rather than
-    // racing the thread spawn.
-    let (started_tx, started_rx) = std::sync::mpsc::channel();
-    let worker = std::thread::spawn(move || {
-        started_tx.send(()).expect("main thread went away");
-        let start = Instant::now();
-        let status = a
-            .boolean_with_token(&b, OpType::Add, Some(&worker_token))
-            .status();
-        (status, start.elapsed())
+    // Two rendezvous: the kernel is inside its first phase, then the cancel
+    // has been sent.
+    let inside_the_kernel = Arc::new(Barrier::new(2));
+    let cancel_sent = Arc::new(Barrier::new(2));
+    let (cancelled_run, cancelled) = std::thread::scope(|s| {
+        let (inside, sent) = (Arc::clone(&inside_the_kernel), Arc::clone(&cancel_sent));
+        let worker = s.spawn(move || {
+            // Hold the kernel inside its first phase until the other thread
+            // has cancelled, so the cancel lands mid-work on every machine.
+            let hook: Box<dyn Fn() + Send + Sync> = Box::new(move || {
+                inside.wait();
+                sent.wait();
+            });
+            run(Some(&worker_token), Some(hook))
+        });
+        // Not a delay: the boolean has reported its first phase and is
+        // parked there.
+        inside_the_kernel.wait();
+        token.cancel();
+        cancel_sent.wait();
+        worker.join().expect("worker panicked")
     });
-    started_rx.recv().expect("worker never started");
 
-    // A small fraction of the runtime: long enough to be inside the kernel,
-    // short enough that the measured elapsed is dominated by cancel latency
-    // rather than by the delay itself. Scaling it off `uncancelled` keeps the
-    // proportions stable on a loaded machine, where both numbers inflate.
-    std::thread::sleep((uncancelled / 16).max(Duration::from_millis(1)));
-    token.cancel();
-    let (status, cancelled_elapsed) = worker.join().expect("worker panicked");
-
-    assert_eq!(status, Error::Cancelled);
-    // Cancellation is cooperative, so the bound is "returned in a small
-    // fraction of the full runtime", not "returned instantly". Measured
-    // latency is a few ms against a ~50ms operation; half the runtime is a
-    // deliberately loose ceiling that still fails if cancel is being ignored
-    // until the operation finishes on its own.
+    assert_eq!(cancelled.status(), Error::Cancelled);
+    assert!(cancelled.is_empty(), "a cancelled result must be empty");
     assert!(
-        cancelled_elapsed * 2 < uncancelled,
-        "cancelled boolean took {cancelled_elapsed:?}, which is not well under \
-         the uncancelled {uncancelled:?}"
+        cancelled_run.len() < full_run.len(),
+        "the cancelled boolean went on to report {cancelled_run:?}, every phase of \
+         the full run {full_run:?} - the cancel is being ignored until the work finishes"
     );
 }
 

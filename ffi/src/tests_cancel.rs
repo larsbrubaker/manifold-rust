@@ -15,9 +15,10 @@
 // Unit tests for the cancellation C ABI (src/cancel.rs) and the cancellable
 // batch boolean, called the way a C caller does.
 
-use std::time::{Duration, Instant};
+use std::os::raw::c_void;
 
 use crate::cancel::*;
+use crate::progress::manifold_rs_boolean_progress;
 use crate::tests::{export, ffi_cube};
 use crate::*;
 
@@ -32,13 +33,14 @@ struct SendPtr<T>(*const T);
 // thread, and the main thread does not touch it until after `join()`.
 unsafe impl<T> Send for SendPtr<T> {}
 
-/// A pair of heavily overlapping high-resolution spheres, imported through the
-/// FFI. Big enough that a union takes long enough to be cancelled mid-flight.
+/// A pair of heavily overlapping spheres, imported through the FFI. Their
+/// union runs the whole robust pipeline, which is all the cross-thread test
+/// needs: it counts phases, so the input does not have to be slow.
 fn ffi_sphere_pair() -> (*mut ManifoldRs, *mut ManifoldRs) {
     use manifold_rust::linalg::Vec3;
 
     let build = |offset: f64| {
-        let mesh = Manifold::sphere(1.0, 256)
+        let mesh = Manifold::sphere(1.0, 32)
             .translate(Vec3::new(offset, 0.0, 0.0))
             .get_mesh_gl(-1);
         let handle = unsafe {
@@ -159,60 +161,109 @@ fn null_token_is_identical_to_the_uncancellable_entry_point() {
     }
 }
 
+/// What the progress callback's `user` word points at: the phases entered,
+/// consecutive repeats folded, plus an optional pair of rendezvous that park
+/// the kernel in its first report.
+struct PhaseLog {
+    phases: std::sync::Mutex<Vec<u32>>,
+    park: Option<(std::sync::Barrier, std::sync::Barrier)>,
+}
+
+extern "C" fn log_phase(phase_id: u32, _fraction: f64, user: *mut c_void) {
+    // SAFETY: `user` is the &PhaseLog the test passed in, which outlives the
+    // boolean call that drives this callback.
+    let log = unsafe { &*(user as *const PhaseLog) };
+    let first = {
+        let mut seen = log.phases.lock().expect("phase list poisoned");
+        let first = seen.is_empty();
+        if first || seen.last() != Some(&phase_id) {
+            seen.push(phase_id);
+        }
+        first
+    };
+    if let (true, Some((inside, sent))) = (first, &log.park) {
+        inside.wait();
+        sent.wait();
+    }
+}
+
+/// A cancel sent from another thread through the C ABI stops the work before
+/// it finishes. Measured in work, not time, like the crate's
+/// `cancel_from_another_thread_interrupts_a_boolean_in_flight` (see its doc):
+/// the earlier wall-time ratio compared two tens-of-milliseconds runs and
+/// flaked, its `uncancelled > 20ms` precondition failing outright on a fast
+/// machine. The robust engine's progress phases are driven by work, so the
+/// cancelled run, parked in its first report until the token is cancelled
+/// from this thread, must enter fewer phases than the full run.
 #[test]
 fn cross_thread_cancel_interrupts_a_slow_boolean() {
     let (a, b) = ffi_sphere_pair();
-    let inputs = [a as *const ManifoldRs, b as *const ManifoldRs];
-
-    // Baseline: the same op, uncancelled, timed in-test so the assertion is a
-    // ratio rather than an absolute millisecond count.
-    let start = Instant::now();
-    let baseline = unsafe { manifold_rs_batch_boolean(inputs.as_ptr(), inputs.len(), 0) };
-    let uncancelled = start.elapsed();
-    assert!(!baseline.is_null());
-    assert_eq!(unsafe { manifold_rs_status(baseline) }, 0);
-    assert!(
-        uncancelled > Duration::from_millis(20),
-        "test input is too fast ({uncancelled:?}) to be a meaningful cancel target"
-    );
-    unsafe { manifold_rs_destroy(baseline) };
-
-    let t = manifold_rs_cancel_token_new();
-    let worker_inputs = SendPtr(inputs.as_ptr());
-    let worker_token = SendPtr(t as *const CancelTokenRs);
-    // The handshake pins the start: the main thread does not begin its delay
-    // until the worker is at the call, so the cancel lands on work in flight
-    // rather than racing the thread spawn.
-    let (started_tx, started_rx) = std::sync::mpsc::channel();
-    let worker = std::thread::spawn(move || {
-        let inputs = worker_inputs;
-        let token = worker_token;
-        started_tx.send(()).expect("main thread went away");
-        let start = Instant::now();
-        // SAFETY: the handles and the token outlive the thread — the main
-        // thread joins before destroying any of them.
-        let result = unsafe { manifold_rs_batch_boolean_ct(inputs.0, 2, 0, token.0) };
-        let elapsed = start.elapsed();
+    // Captures nothing, so the worker thread can share it; the handles are
+    // passed in, wrapped in `SendPtr` on the way across.
+    let run = |a: *const ManifoldRs,
+               b: *const ManifoldRs,
+               token: *const CancelTokenRs,
+               log: &PhaseLog|
+     -> i32 {
+        // SAFETY: live handles; `log` outlives the call. 0 = union, 1 = Robust.
+        let result = unsafe {
+            manifold_rs_boolean_progress(
+                a,
+                b,
+                0,
+                1,
+                token,
+                Some(log_phase),
+                log as *const PhaseLog as *mut c_void,
+            )
+        };
         assert!(!result.is_null(), "cancellation must not return NULL");
         let status = unsafe { manifold_rs_status(result) };
         unsafe { manifold_rs_destroy(result) };
-        (status, elapsed)
-    });
-    started_rx.recv().expect("worker never started");
+        status
+    };
 
-    // Small fraction of the runtime, scaled off the baseline so the ratio
-    // stays stable on a loaded machine where both numbers inflate.
-    std::thread::sleep((uncancelled / 16).max(Duration::from_millis(1)));
-    // The point of the whole feature: cancel from a different thread while the
-    // kernel is running.
-    unsafe { manifold_rs_cancel_token_cancel(t) };
-    let (status, cancelled_elapsed) = worker.join().expect("worker panicked");
+    let full = PhaseLog {
+        phases: Default::default(),
+        park: None,
+    };
+    assert_eq!(run(a, b, std::ptr::null(), &full), 0);
+    let full_run = full.phases.into_inner().expect("phase list poisoned");
+    assert!(full_run.len() > 1, "no later work to skip: {full_run:?}");
+
+    let t = manifold_rs_cancel_token_new();
+    let worker_args = (
+        SendPtr(a as *const ManifoldRs),
+        SendPtr(b as *const ManifoldRs),
+        SendPtr(t as *const CancelTokenRs),
+    );
+    let parked = PhaseLog {
+        phases: Default::default(),
+        park: Some((std::sync::Barrier::new(2), std::sync::Barrier::new(2))),
+    };
+    let status = std::thread::scope(|s| {
+        let parked = &parked;
+        let worker = s.spawn(move || {
+            let (a, b, token) = worker_args;
+            run(a.0, b.0, token.0, parked)
+        });
+        let (inside, sent) = parked.park.as_ref().expect("parked log");
+        // Not a delay: the boolean has reported its first phase and is
+        // parked there.
+        inside.wait();
+        // The point of the whole feature: cancel from a different thread
+        // while the kernel is running.
+        unsafe { manifold_rs_cancel_token_cancel(t) };
+        sent.wait();
+        worker.join().expect("worker panicked")
+    });
 
     assert_eq!(status, CANCELLED);
+    let cancelled_run = parked.phases.into_inner().expect("phase list poisoned");
     assert!(
-        cancelled_elapsed * 2 < uncancelled,
-        "cancelled boolean took {cancelled_elapsed:?}, which is not well under \
-         the uncancelled {uncancelled:?}"
+        cancelled_run.len() < full_run.len(),
+        "the cancelled boolean went on to report {cancelled_run:?}, every phase of the \
+         full run {full_run:?} - the cancel is being ignored until the work finishes"
     );
 
     // Destroying the token only after the call using it has returned — the
