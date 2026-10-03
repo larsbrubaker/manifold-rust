@@ -171,8 +171,49 @@ fn test_union_keeps_concave_corner() {
     }
 }
 
+/// The sequential owner scan that `orbit_owners` replaces: ascending, each
+/// unvisited eligible halfedge owns its orbit and marks it visited.
+#[cfg(feature = "parallel")]
+fn sequential_orbit_owners(
+    halfedge: &[Halfedge],
+    eligible: &dyn Fn(&Halfedge) -> bool,
+) -> Vec<usize> {
+    let mut visited = vec![false; halfedge.len()];
+    let mut owners = Vec::new();
+    for i in 0..halfedge.len() {
+        if visited[i] || !eligible(&halfedge[i]) {
+            continue;
+        }
+        owners.push(i);
+        let mut current = i;
+        loop {
+            visited[current] = true;
+            current = next_halfedge(halfedge[current].paired_halfedge) as usize;
+            if current == i {
+                break;
+            }
+        }
+    }
+    owners
+}
+
+/// `orbit_owners` with a threshold of 0 against the sequential scan, under
+/// eligibility rules that make every, most, and few halfedges eligible.
+#[cfg(feature = "parallel")]
+fn assert_orbit_owners_match(halfedge: &[Halfedge]) {
+    let rules: [&(dyn Fn(&Halfedge) -> bool + Sync); 3] = [
+        &|h| h.start_vert >= 0,
+        &|h| h.start_vert >= 0 && h.end_vert % 3 != 0,
+        &|h| h.start_vert >= 0 && h.end_vert % 7 == 3,
+    ];
+    for eligible in rules {
+        let expected = sequential_orbit_owners(halfedge, eligible);
+        assert_eq!(orbit_owners(halfedge, 0, eligible), Some(expected));
+    }
+}
+
 /// `orbit_owners` must give each orbit's smallest eligible halfedge, as the
-/// sequential scans do, on cubes touching along edges, for two rules.
+/// sequential scans do, on cubes touching along edges.
 #[cfg(feature = "parallel")]
 #[test]
 fn test_orbit_owners_match_the_sequential_scan() {
@@ -188,27 +229,47 @@ fn test_orbit_owners_match_the_sequential_scan() {
             }
         }
     }
-    let halfedge = &model.as_impl().halfedge;
-    let rules: [&(dyn Fn(&Halfedge) -> bool + Sync); 2] = [&|h| h.start_vert >= 0, &|h| {
-        h.start_vert >= 0 && h.end_vert % 3 != 0
-    }];
-    for eligible in rules {
-        let mut visited = vec![false; halfedge.len()];
-        let mut expected = Vec::new();
-        for i in 0..halfedge.len() {
-            if visited[i] || !eligible(&halfedge[i]) {
-                continue;
-            }
-            expected.push(i);
-            let mut current = i;
-            loop {
-                visited[current] = true;
-                current = next_halfedge(halfedge[current].paired_halfedge) as usize;
-                if current == i {
-                    break;
-                }
-            }
-        }
-        assert_eq!(orbit_owners(halfedge, 0, eligible), Some(expected));
+    assert_orbit_owners_match(&model.as_impl().halfedge);
+}
+
+/// The same on orbits longer than `ORBIT_WALK_CAP`: a bipyramid whose two
+/// apexes have valence 300, so their orbits are left to the sequential pass,
+/// while the ring vertices' orbits (valence 4) resolve in the parallel walks.
+#[cfg(feature = "parallel")]
+#[test]
+fn test_orbit_owners_match_the_sequential_scan_on_orbits_longer_than_the_cap() {
+    let n = 300u64;
+    let mut mesh = crate::types::MeshGL64 {
+        num_prop: 3,
+        ..Default::default()
+    };
+    for i in 0..n {
+        let angle = i as f64 * std::f64::consts::TAU / n as f64;
+        mesh.vert_properties
+            .extend_from_slice(&[100.0 * angle.cos(), 100.0 * angle.sin(), 0.0]);
     }
+    mesh.vert_properties
+        .extend_from_slice(&[0.0, 0.0, 50.0, 0.0, 0.0, -50.0]);
+    let (top, bottom) = (n, n + 1);
+    for i in 0..n {
+        let j = (i + 1) % n;
+        mesh.tri_verts.extend_from_slice(&[i, j, top, j, i, bottom]);
+    }
+    let model = crate::manifold::Manifold::from_mesh_gl64(&mesh);
+    assert_eq!(model.num_tri(), 2 * n as usize);
+    let halfedge = &model.as_impl().halfedge;
+    let longest = (0..halfedge.len())
+        .map(|i| {
+            let mut len = 1;
+            let mut current = next_halfedge(halfedge[i].paired_halfedge) as usize;
+            while current != i {
+                len += 1;
+                current = next_halfedge(halfedge[current].paired_halfedge) as usize;
+            }
+            len
+        })
+        .max();
+    assert_eq!(longest, Some(n as usize));
+    assert!(n as usize > super::orbits::ORBIT_WALK_CAP);
+    assert_orbit_owners_match(halfedge);
 }

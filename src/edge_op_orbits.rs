@@ -15,10 +15,49 @@ use crate::types::{next_halfedge, Halfedge};
 // returns to its start or reaches a halfedge with no pair, which an open
 // orbit's smallest eligible halfedge must do. Otherwise, or on an open orbit,
 // the callers fall back to their sequential scans.
+//
+// Walking a whole orbit from every eligible halfedge costs the sum of the
+// squared orbit lengths, Θ(n²) for one high-valence vertex. So the parallel
+// walks stop after `ORBIT_WALK_CAP` steps, and the orbits they leave
+// unresolved are settled by one sequential visited-flag pass, which walks
+// each such orbit once. Why the owners are still exactly the sequential
+// scan's, in its order, given closed orbits:
+//
+// - An orbit of length L <= cap: every walk from an eligible halfedge returns
+//   to its start within L steps unless it first meets a smaller eligible one,
+//   so the walks alone mark exactly its smallest eligible halfedge owner.
+// - An orbit of length L > cap: no walk returns within the cap. A walk from a
+//   halfedge that is not the smallest eligible one ends `NOT_OWNER` or
+//   `UNRESOLVED`; the walk from the smallest one meets nothing smaller and
+//   ends `UNRESOLVED`. So the orbit's `UNRESOLVED` halfedges are eligible and
+//   include its smallest eligible halfedge, which is therefore the smallest
+//   `UNRESOLVED` one. The ascending pass reaches it first, makes it the owner
+//   and marks the whole orbit visited, so no other halfedge of the orbit
+//   becomes an owner.
+// - The pass walks only from `UNRESOLVED` halfedges, and a walk never leaves
+//   its orbit, so short orbits keep the roles their walks gave them.
+//
+// Every orbit with an eligible halfedge thus has exactly one owner, its
+// smallest eligible halfedge, as in the sequential scan, and the owners are
+// collected ascending, the order in which that scan reaches them. An open
+// orbit with an eligible halfedge is still caught: its smallest eligible
+// halfedge's walk meets no smaller one, so it either reaches the open end
+// (`OPEN`) or the cap, and then the pass reaches it first and its full walk
+// reaches the open end.
 
 /// Halfedge count from which the orbit scans run in parallel. Above C++'s 1e4:
 /// every halfedge walks its own orbit, and below 100k that costs more than it saves.
 pub(super) const ORBIT_PAR_THRESHOLD: usize = 100_001;
+
+/// Steps after which a parallel orbit walk stops and leaves its orbit to the
+/// sequential pass. Vertex valences rarely exceed it, so that pass is usually
+/// empty, and it bounds the parallel work at 64 steps per halfedge.
+pub(super) const ORBIT_WALK_CAP: usize = 64;
+
+const NOT_OWNER: u8 = 0;
+const OWNER: u8 = 1;
+const OPEN: u8 = 2;
+const UNRESOLVED: u8 = 3;
 
 /// The owner of every orbit with an eligible halfedge, ascending, or `None`
 /// below `threshold` or if an orbit is not a closed cycle.
@@ -41,34 +80,59 @@ where
     if !paired_back.is_empty() {
         return None;
     }
-    // 0: not an owner, 1: owner, 2: the walk left the orbit open.
-    let role: Vec<u8> = crate::par::maybe_par_map(n, threshold, |i| {
+    // The step from `current`, or `None` at an open end (no pair, or a count
+    // not a multiple of 3): those cases are left to the sequential scan.
+    let step = |current: usize| -> Option<usize> {
+        let p = halfedge[current].paired_halfedge;
+        if p < 0 {
+            return None;
+        }
+        let next = next_halfedge(p) as usize;
+        (next < n).then_some(next)
+    };
+    let mut role: Vec<u8> = crate::par::maybe_par_map(n, threshold, |i| {
         if !eligible(&halfedge[i]) {
-            return 0;
+            return NOT_OWNER;
         }
         let mut current = i;
-        loop {
-            let p = halfedge[current].paired_halfedge;
-            if p < 0 {
-                return 2;
-            }
-            current = next_halfedge(p) as usize;
-            if current >= n {
-                // Count not a multiple of 3: leave it to the sequential scan.
-                return 2;
-            }
+        for _ in 0..ORBIT_WALK_CAP {
+            let Some(next) = step(current) else {
+                return OPEN;
+            };
+            current = next;
             if current == i {
-                return 1;
+                return OWNER;
             }
             if current < i && eligible(&halfedge[current]) {
-                return 0;
+                return NOT_OWNER;
             }
         }
+        UNRESOLVED
     });
-    if role.contains(&2) {
+    if role.contains(&OPEN) {
         return None;
     }
-    Some((0..n).filter(|&i| role[i] == 1).collect())
+    // The sequential pass over the orbits longer than the cap (see above).
+    let unresolved: Vec<usize> = (0..n).filter(|&i| role[i] == UNRESOLVED).collect();
+    if !unresolved.is_empty() {
+        let mut visited = vec![false; n];
+        for i in unresolved {
+            if visited[i] {
+                role[i] = NOT_OWNER;
+                continue;
+            }
+            role[i] = OWNER;
+            let mut current = i;
+            loop {
+                visited[current] = true;
+                current = step(current)?;
+                if current == i {
+                    break;
+                }
+            }
+        }
+    }
+    Some((0..n).filter(|&i| role[i] == OWNER).collect())
 }
 
 /// Appends the duplicate edges of the orbit walked from `i`, in walk order:
