@@ -433,24 +433,21 @@ pub(super) fn intersect12(
     }
 
     // Sort by edge index for deterministic results
+    // (stable on integer keys, so the parallel sort keeps the sequential order)
     let mut indices: Vec<usize> = (0..result.p1q2.len()).collect();
     let sort_idx = if forward { 0 } else { 1 };
-    indices.sort_by(|&a, &b| {
-        let pa = result.p1q2[a];
-        let pb = result.p1q2[b];
-        pa[sort_idx]
-            .cmp(&pb[sort_idx])
-            .then(pa[1 - sort_idx].cmp(&pb[1 - sort_idx]))
+    let p1q2 = &result.p1q2;
+    crate::par::maybe_par_sort_by_key(&mut indices, 10_000, |&i| {
+        (p1q2[i][sort_idx], p1q2[i][1 - sort_idx])
     });
 
-    let old_p1q2 = result.p1q2.clone();
-    let old_x12 = result.x12.clone();
-    let old_v12 = result.v12.clone();
-    for (new_i, &old_i) in indices.iter().enumerate() {
-        result.p1q2[new_i] = old_p1q2[old_i];
-        result.x12[new_i] = old_x12[old_i];
-        result.v12[new_i] = old_v12[old_i];
-    }
+    let old_p1q2 = std::mem::take(&mut result.p1q2);
+    let old_x12 = std::mem::take(&mut result.x12);
+    let old_v12 = std::mem::take(&mut result.v12);
+    let m = indices.len();
+    result.p1q2 = crate::par::maybe_par_map(m, 10_000, |i| old_p1q2[indices[i]]);
+    result.x12 = crate::par::maybe_par_map(m, 10_000, |i| old_x12[indices[i]]);
+    result.v12 = crate::par::maybe_par_map(m, 10_000, |i| old_v12[indices[i]]);
 
     Some(result)
 }
@@ -479,29 +476,31 @@ pub(super) fn winding03(
     let sort_idx = if forward { 0 } else { 1 };
 
     // Build union-find: unite vertices along unbroken edges. This loop is the
-    // Rust counterpart of the ctx-passing `for_each` at boolean3.cpp:425, so it
-    // gets the same bounded-latency check — but on a chunk boundary rather than
-    // per element, because the body is a cheap binary search and `unite`.
+    // Rust counterpart of the ctx-passing `for_each` at boolean3.cpp:425, and
+    // checks the token once per C++ kSeqCancelChunk (= 1024) halfedges
+    // (parallel.h:424), in the search and again in the unions.
+    const CHUNK: usize = 1024;
     let u_a = DisjointSets::new(a.vert_pos.len() as u32);
-    // Hoisted so the uncancellable path pays one predictable branch per edge
-    // instead of a modulo: C++ gets the same effect from `ctx == nullptr`
-    // folding the check out of the loop entirely (parallel.h:427-430).
-    let cancellable = token.is_some();
-    for edge in 0..a.halfedge.len() {
-        // C++ `for_each` checks every kSeqCancelChunk (= 1024) elements on the
-        // sequential branch (parallel.h:424); same constant, same reason.
-        if cancellable && edge % 1024 == 0 && is_cancelled(token) {
+    let n = a.halfedge.len();
+    // Find each chunk's unbroken edges in parallel, but unite them in index
+    // order: the union-find's roots, where windings are computed, depend on it.
+    let unbroken = crate::par::maybe_par_map_ct(n.div_ceil(CHUNK), 10, token, |c| {
+        (c * CHUNK..n.min((c + 1) * CHUNK))
+            .filter(|&edge| {
+                // Unbroken: no intersection on it.
+                a.halfedge[edge].is_forward()
+                    && p1q2
+                        .binary_search_by(|pair| pair[sort_idx].cmp(&(edge as i32)))
+                        .is_err()
+            })
+            .collect::<Vec<usize>>()
+    })?;
+    for chunk in unbroken {
+        if is_cancelled(token) {
             return None;
         }
-        let he = &a.halfedge[edge];
-        if !he.is_forward() {
-            continue;
-        }
-        // Check if this edge is broken (has an intersection)
-        let is_broken = p1q2
-            .binary_search_by(|pair| pair[sort_idx].cmp(&(edge as i32)))
-            .is_ok();
-        if !is_broken {
+        for edge in chunk {
+            let he = &a.halfedge[edge];
             u_a.unite(he.start_vert as u32, he.end_vert as u32);
         }
     }
