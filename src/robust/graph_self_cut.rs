@@ -20,7 +20,7 @@ use super::tri_tri::{tri_tri_intersect, TriTriIsect};
 /// determinant on escalation. This replaced a cached exact-plane structure
 /// (TriPlane) — with intpred's division-free fallback, building planes
 /// eagerly per triangle cost more than it ever saved.
-fn orient3d_plane(t: &[Vec3; 3], v: Vec3) -> Sign {
+pub(super) fn orient3d_plane(t: &[Vec3; 3], v: Vec3) -> Sign {
     if let Some(s) = super::exact::approx::orient3d_a(
         [t[0].x, t[0].y, t[0].z],
         [t[1].x, t[1].y, t[1].z],

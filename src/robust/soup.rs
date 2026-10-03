@@ -249,16 +249,50 @@ pub fn has_self_intersections_with_token(
 /// them. They are still coincident surface, which is precisely what the
 /// exact engine cannot integrate (Thingi10K #92068's shells are triple-wound
 /// duplicates and nothing else), so the dispatch detector counts them.
+///
+/// Before that, a pair sharing exactly one vertex is benign when `t1`'s two
+/// other corners lie strictly on one side of `t2`'s plane: then every point
+/// of t1 but the shared vertex is strictly off that plane, so the pair meets
+/// in that vertex alone, which `real_self_contact` also calls benign (by its
+/// own shortcut or, after a full tri-tri test, as a point contact). Its
+/// shortcut only tests t2's corners against t1's plane; this is the mirror,
+/// kept here so `real_self_contact` itself is untouched, and it changes no
+/// verdict. (manifold-sharp, its commit 1d9162c: on a 21.6k-triangle part it
+/// settles about 171k of the 209k vertex-neighbour pairs that would
+/// otherwise pay for the full test.)
 fn genuine_contact(
     t1: [Vec3; 3],
     t2: [Vec3; 3],
     stats: &mut super::intersection_graph::SelfCutStats,
 ) -> bool {
-    if t1.iter().all(|v| t2.contains(v)) {
+    use super::exact::Sign;
+    // Shared vertices counted as real_self_contact counts them: t1's corners
+    // found in t2 by IEEE equality.
+    let n_shared = t1.iter().filter(|v| t2.contains(v)).count();
+    if n_shared == 3 {
         return true;
+    }
+    if n_shared == 1 {
+        let mut first = Sign::Zero;
+        let mut one_sided = true;
+        for &v in t1.iter().filter(|v| !t2.contains(v)) {
+            let s = super::intersection_graph::orient3d_plane(&t2, v);
+            if s == Sign::Zero || (first != Sign::Zero && s != first) {
+                one_sided = false;
+                break;
+            }
+            first = s;
+        }
+        if one_sided {
+            stats.vert_benign += 1;
+            return false;
+        }
     }
     super::intersection_graph::real_self_contact(t1, t2, stats).is_some()
 }
+
+/// Triangle count at or above which the parallel build scans in parallel.
+pub(crate) const SELF_INTERSECT_PAR_THRESHOLD: usize = 1_000;
 
 /// Uncached detector: BVH broad phase over the impl's own triangles, exact
 /// narrow phase, early exit on the first genuine contact. `None` means the
@@ -325,35 +359,45 @@ fn compute_self_intersections(
     };
     let mapped = !leaf_tri.is_empty();
 
-    let mut stats = SelfCutStats::default();
-    let mut cands: Vec<usize> = Vec::new();
-    for i in 0..tris.len() {
-        if !live[i] {
-            continue;
-        }
-        if crate::cancel::is_cancelled(token) {
-            return None;
-        }
-        cands.clear();
-        collider.collisions_one(&boxes[i], i, |_, leaf| {
-            cands.push(if mapped { leaf_tri[leaf] } else { leaf });
-        });
-        cands.sort_unstable();
-        for &j in &cands {
-            if j <= i || !live[j] || !boxes[i].does_overlap_box(&boxes[j]) {
-                continue;
+    // One row per triangle i: does it genuinely touch some later triangle j?
+    // The verdict is "some row hits", which `maybe_par_any_ct` answers the
+    // same in both builds (par.rs). Each job gets its own candidate list and
+    // stats; the stats are discarded, and the rows read only the shared,
+    // read-only tris/boxes/live and the collider, which the robust engine's
+    // self-cut map already queries concurrently. Cancellation keeps its
+    // contract: `None` when the scan stopped on the token before finding a
+    // contact.
+    crate::par::maybe_par_any_ct(
+        tris.len(),
+        SELF_INTERSECT_PAR_THRESHOLD,
+        token,
+        || (Vec::<usize>::new(), SelfCutStats::default()),
+        |i, (cands, stats)| {
+            if !live[i] {
+                return false;
             }
-            if genuine_contact(tris[i], tris[j], &mut stats) {
-                return Some(true);
-            }
-        }
-    }
-    Some(false)
+            cands.clear();
+            collider.collisions_one(&boxes[i], i, |_, leaf| {
+                cands.push(if mapped { leaf_tri[leaf] } else { leaf });
+            });
+            cands.sort_unstable();
+            cands.iter().any(|&j| {
+                j > i
+                    && live[j]
+                    && boxes[i].does_overlap_box(&boxes[j])
+                    && genuine_contact(tris[i], tris[j], stats)
+            })
+        },
+    )
 }
 
 #[cfg(test)]
 #[path = "soup_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "self_intersection_scan_tests.rs"]
+mod scan_tests;
 
 /// Per-corner vertex properties of an impl, flattened as
 /// `props[(3*tri + corner) * num_prop + channel]`, aligned with

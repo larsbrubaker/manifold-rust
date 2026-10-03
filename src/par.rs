@@ -37,6 +37,15 @@
 //   sdf.rs                level-set voxel evaluation                 10,000 voxels
 //   minkowski.rs          per-face hull maps                         8
 //   robust/intersection_graph.rs (via progress.rs) map_ct stages     64 / 16
+//   robust/soup.rs        `compute_self_intersections` rows, any_ct 1,000 triangles
+//
+// One site is an existential "any" rather than a map: `maybe_par_any_ct`, the
+// Auto engine's self-intersection pre-check
+// (robust/soup.rs `compute_self_intersections`, rows of 1,000+ triangles).
+// It returns no array but a boolean identical to the sequential loop's,
+// because "some index hits" does not depend on which index is found first or
+// how many ran (see its doc). Shared with manifold-sharp's
+// `Par.MaybeParAnyCt` (its commit 1d9162c).
 
 /// Map `f` over `0..n`, in parallel when the `parallel` feature is enabled and
 /// `n >= threshold`. Results are returned in index order either way.
@@ -249,6 +258,109 @@ where
             }
         })
         .collect()
+}
+
+/// Does `predicate` hold for some index in `0..n`? Stops at the first hit, in
+/// parallel when the `parallel` feature is enabled and `n >= threshold`.
+/// `None` means the token was cancelled before a verdict.
+///
+/// The one existential site (the Auto engine's self-intersection pre-check,
+/// `robust::soup::compute_self_intersections`). Its answer is a single
+/// boolean rather than an array, so the index-order argument the maps above
+/// rest on becomes this one: the answer is "some index's predicate is true",
+/// and an existential does not depend on which index is found first or how
+/// many ran. A hit, from any worker, answers `Some(true)`; a run in which
+/// every index ran without a hit answers `Some(false)`. Both are exactly what
+/// the sequential loop answers, so the verdict is the same in both builds;
+/// only *which* hit stops the loop differs, and the caller never learns which.
+///
+/// `predicate` must be pure apart from its per-job scratch `L`, made by
+/// `local_init` (rayon's `*_init`: one per split job in parallel, one for the
+/// whole sequential loop).
+///
+/// Cancellation: a cancel any worker observed answers `None`, unless some
+/// worker had already found a hit, which answers `Some(true)` — a real
+/// verdict (the hit is a genuine witness), not a cancelled partial result.
+/// The sequential loop polls the token before every index.
+#[cfg(feature = "parallel")]
+pub fn maybe_par_any_ct<L, I, F>(
+    n: usize,
+    threshold: usize,
+    token: Option<&crate::cancel::CancelToken>,
+    local_init: I,
+    predicate: F,
+) -> Option<bool>
+where
+    I: Fn() -> L + Sync + Send,
+    F: Fn(usize, &mut L) -> bool + Sync + Send,
+{
+    use rayon::prelude::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    if n < threshold {
+        return seq_any_ct(n, token, local_init, predicate);
+    }
+    // Written only ever from false to true, so two racing hits are benign.
+    let found = AtomicBool::new(false);
+    let stopped = (0..n)
+        .into_par_iter()
+        .try_for_each_init(local_init, |local, i| {
+            if token.is_some_and(|t| t.is_cancelled()) {
+                return Err(());
+            }
+            if predicate(i, local) {
+                found.store(true, Ordering::Relaxed);
+                return Err(());
+            }
+            Ok(())
+        })
+        .is_err();
+    if found.load(Ordering::Relaxed) {
+        Some(true)
+    } else if stopped {
+        // Stopped without a hit means some worker stopped on the cancel.
+        None
+    } else {
+        Some(false)
+    }
+}
+
+/// Sequential fallback: identical verdict to the parallel version.
+#[cfg(not(feature = "parallel"))]
+pub fn maybe_par_any_ct<L, I, F>(
+    n: usize,
+    _threshold: usize,
+    token: Option<&crate::cancel::CancelToken>,
+    local_init: I,
+    predicate: F,
+) -> Option<bool>
+where
+    I: Fn() -> L,
+    F: Fn(usize, &mut L) -> bool,
+{
+    seq_any_ct(n, token, local_init, predicate)
+}
+
+/// The sequential loop both builds' [`maybe_par_any_ct`] reduce to.
+fn seq_any_ct<L, I, F>(
+    n: usize,
+    token: Option<&crate::cancel::CancelToken>,
+    local_init: I,
+    predicate: F,
+) -> Option<bool>
+where
+    I: Fn() -> L,
+    F: Fn(usize, &mut L) -> bool,
+{
+    let mut local = local_init();
+    for i in 0..n {
+        if token.is_some_and(|t| t.is_cancelled()) {
+            return None;
+        }
+        if predicate(i, &mut local) {
+            return Some(true);
+        }
+    }
+    Some(false)
 }
 
 #[cfg(test)]

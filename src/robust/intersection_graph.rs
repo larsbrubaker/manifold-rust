@@ -44,7 +44,7 @@ use super::graph_types::{bit_edge_key, geo_edge_key, BitEdgeKey, GeoEdgeKey, Poi
 // `tri_box` / `is_degenerate` / `real_self_contact` / `SelfCutStats` stay
 // crate-internal (robust/soup.rs reaches them through this path).
 pub(super) use super::graph_geom::{is_degenerate, tri_box};
-pub(super) use super::graph_self_cut::{real_self_contact, SelfCutStats};
+pub(super) use super::graph_self_cut::{orient3d_plane, real_self_contact, SelfCutStats};
 pub use super::graph_types::{edge_key, EdgeKey, IntersectionGraph, Piece, VertInterner};
 
 /// A pair's primitives after distribution: segments (including coplanar

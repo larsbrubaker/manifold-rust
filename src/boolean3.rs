@@ -489,11 +489,22 @@ pub fn boolean_dispatch_full(
     let resolved = match engine {
         E::Auto => {
             use crate::robust::soup::has_self_intersections_with_token as self_isect;
+            // The two scans run smaller operand first (by triangle count, A on
+            // a tie). `||` is commutative, so the engine chosen is the same
+            // either way; only which operand pays for, and caches, its scan
+            // changes. A typical CAD boolean pairs a large clean body with a
+            // small cutter, and when the cutter self-intersects this skips the
+            // body's scan entirely. (manifold-sharp 1d9162c does the same.)
+            let (first, second) = if mesh_b.num_tri() < mesh_a.num_tri() {
+                (mesh_b, mesh_a)
+            } else {
+                (mesh_a, mesh_b)
+            };
             if rule == WindingRule::Nonzero
                 || mesh_a.is_soup
                 || mesh_b.is_soup
-                || self_isect(mesh_a, token)
-                || self_isect(mesh_b, token)
+                || self_isect(first, token)
+                || self_isect(second, token)
             {
                 E::Robust
             } else {

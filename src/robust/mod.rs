@@ -100,7 +100,9 @@ fn needs_no_classification(
     tris: &[[Vec3; 3]],
     token: Option<&CancelToken>,
 ) -> bool {
-    // Cheapest first, and usually already cached by `Auto`'s dispatch. A
+    // Cheapest first. Cached when `Auto`'s dispatch scanned this operand, but
+    // not when the other, smaller operand self-intersected and decided alone
+    // (boolean3.rs `boolean_dispatch_full`): then this scan runs here, once. A
     // cancelled scan answers "self-intersecting", which routes to the pipeline
     // and so reports `Error::Cancelled` rather than a bogus pass-through.
     !soup::has_self_intersections_with_token(imp, token) && repair::shells_well_nested(tris)
