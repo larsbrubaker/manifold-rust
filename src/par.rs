@@ -7,6 +7,36 @@
 // sequential build are parallelized — per-index maps with indexed writes, and
 // collect-then-sort pipelines whose final sort is a total order. This keeps
 // the `parallel` feature bit-exact with the sequential reference.
+//
+// The sites, with the size at which each goes parallel (manifold-sharp's
+// Par.cs mirrors this list; keep it current):
+//   face_op.rs            `calculate_vert_normals`, per-vertex map    10,000 verts
+//   face_op_triangulate.rs `face2tri_ct` triangulation, map_ct       512 faces
+//                         `face2tri` writes, runs of 4,096 faces into
+//                         disjoint `split_at_mut` slices             2 runs
+//   boolean3_kernels.rs   `intersect12` query map_ct; result stable
+//                         sort and gathers                           10,000
+//                         `winding03` unbroken-edge search, chunks of
+//                         1,024 halfedges (unions stay sequential)   10 chunks
+//                         `winding03` per-vert winding query map_ct  1,000 verts
+//   boolean_result.rs     `EdgeGroups::new` stable sort of the
+//                         AddNewEdgeVerts edge lists                 10,000 entries
+//   sort.rs               `sort_geometry`: Morton codes, stable sorts,
+//                         vertex/face/halfedge/tangent gathers        100,000
+//                         (PAR_THRESHOLD; per-call n is verts, tris
+//                         or 3 * tris)
+//   edge_op.rs            edge-flag scans of `collapse_short_edges`,
+//                         `collapse_colinear_edges`, `swap_degenerates`
+//                         (filter; collapses/swaps stay sequential)  100,001 halfedges
+//                                                                    (FLAG_PAR_THRESHOLD)
+//   edge_op_orbits.rs     `orbit_owners` for `split_pinched_verts` and
+//                         `dedupe_edges` (walks capped at 64 steps,
+//                         then one sequential pass)                  100,001 halfedges
+//                                                                    (ORBIT_PAR_THRESHOLD)
+//                         `dedupe_edges` per-owner orbit map         12,500 owners
+//   sdf.rs                level-set voxel evaluation                 10,000 voxels
+//   minkowski.rs          per-face hull maps                         8
+//   robust/intersection_graph.rs (via progress.rs) map_ct stages     64 / 16
 
 /// Map `f` over `0..n`, in parallel when the `parallel` feature is enabled and
 /// `n >= threshold`. Results are returned in index order either way.

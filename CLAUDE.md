@@ -52,7 +52,7 @@ Do not skip the reproducing test. Even if the fix seems obvious.
 - **Exceptions:** `linalg.rs` (~2260 lines) is exempt — it is dense type definitions and
   operator overloads that are inherently verbose in Rust and would lose cohesion if split.
   The test block has been extracted to `linalg_tests.rs`. `edge_op.rs` and
-  `quickhull_algo.rs` are over (~900/~920, the latter grown by the exact-visibility test, divergence entry 11) with tightly coupled algorithms.
+  `quickhull_algo.rs` are over (~1150/~920, the latter grown by the exact-visibility test, divergence entry 11) with tightly coupled algorithms; `edge_op.rs`'s orbit-owner search and per-orbit duplicate scan already live in `edge_op_orbits.rs`, and further growth should split out more such helpers rather than raise the figure.
 
 ### Documentation
 - Every file must begin with a comment block describing its purpose and how it relates
