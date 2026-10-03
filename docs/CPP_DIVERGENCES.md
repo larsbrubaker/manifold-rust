@@ -536,6 +536,27 @@ Found by manifold-sharp while fixing QuickHull (entry 11), 2026-09-30:
   shared with manifold-sharp's `MinkowskiUnionRegressionTests` (its commit
   `1931e87`).
 
+Found while landing external PR #7 (parallel batch rounds), 2026-10-03:
+
+- **`boolean_with_token` composes disjoint operands of an Add.** When the two
+  operands' boxes do not overlap, `boolean3::boolean_with_token` returns
+  `compose_meshes(&[a, b])` (`src/boolean3.rs`, the non-overlapping fast
+  path). C++ `Boolean3` has no such shortcut: it early-outs only the
+  intersection phase (`boolean3.cpp:509`) and still assembles the result
+  through `Boolean3::Result`, which orders verts, triangles and face IDs
+  differently from `Compose`. The run table is the same either way (since the
+  compose fix below). A plain `a + b` of disjoint meshes composes in both,
+  because the CSG tree's `BatchUnion` composes leaves whose boxes do not
+  overlap before any boolean runs; the difference shows only when leaf boxes
+  overlap (as transformed boxes of rotated leaves can) while the meshes
+  themselves do not. Example: the four rotated spheres of
+  `manifold::tests::compose::test_batch_union_of_rotated_instanced_leaves_is_independent_of_scheduling`
+  agree with C++ v3.5.2 run for run, but `vert_properties`, `tri_verts` and
+  `face_id` come out in a different order (C++ whole-mesh hash
+  `0x5a5fb492e1484228`). Removing the fast path would move shipped output
+  that manifold-sharp verifies bit-for-bit, so it stays until both ports
+  change together.
+
 ## Fixed mismatches that change shipped output (bugs, not entries)
 
 Bugs that were never ledger entries but whose fix changes output manifold-sharp
