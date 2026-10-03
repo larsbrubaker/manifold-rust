@@ -127,7 +127,8 @@ fn main() {
     let model = args.first().map(String::as_str).unwrap_or("menger");
     let (size, repeats) = match model {
         "drill" => (arg(1, 224), arg(2, 3).max(1)),
-        _ => (arg(1, 4), arg(2, 3).max(1)),
+        // MengerSponge(0) would never reach its recursion's base case.
+        _ => (arg(1, 4).max(1), arg(2, 3).max(1)),
     };
     let (mut best_union, mut best_diff) = (f64::INFINITY, f64::INFINITY);
     let mut summary = String::new();
