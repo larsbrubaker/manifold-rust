@@ -87,6 +87,9 @@ pub(super) struct EarClip {
     polygon: Vec<Vert>,
     holes: Vec<usize>,
     outers: Vec<usize>,
+    /// Bounding box of each outer ring, parallel to `outers` and grown as
+    /// holes join, so the bridge searches can skip rings. Not in C++.
+    outer_bbox: Vec<Rect>,
     simples: Vec<usize>,
     hole2bbox: HashMap<usize, Rect>,
     ears_queue: std::collections::BinaryHeap<EarEntry>,
@@ -104,6 +107,7 @@ impl EarClip {
             polygon: Vec::with_capacity(num_vert + 2 * polys.len()),
             holes: Vec::new(),
             outers: Vec::new(),
+            outer_bbox: Vec::new(),
             simples: Vec::new(),
             hole2bbox: HashMap::new(),
             ears_queue: std::collections::BinaryHeap::new(),
@@ -591,6 +595,7 @@ impl EarClip {
             self.simples.push(start);
             if area > min_area {
                 self.outers.push(start);
+                self.outer_bbox.push(bbox);
             }
         }
     }

@@ -481,6 +481,17 @@ triangulator that reported degenerate (2,921,184) had visited zero verts first.
 `polygon_earclip::tests::keyholing_many_holes_keeps_its_triangles` pins the
 triangles that the visitor change left unchanged.
 
+**Related, and not a divergence:** both searches also skip any outer ring whose
+bounding box (`EarClip::outer_bbox`, not in C++) shows that no vert in it could
+pass the search's tests. That is a speed difference, not an output difference:
+a skipped ring is one the C++ walk could not have taken a connector from, so
+the bridges and triangles are the same. A trace that instruments the walks will
+see fewer rings visited. The determinant bound in `find_closer_bridge` applies
+only inside a magnitude window (|connector - start| >= 1e-60, box distance and
+epsilon <= 1e60), because outside it `ccw`'s squares can underflow or overflow
+and call an outside vert collinear; the comment there gives the derivation, and
+`keyhole_cull_keeps_a_bridge_whose_ccw_underflows` and `..._overflows` pin it.
+
 ## Known unresolved mismatches (bugs, not entries)
 
 Found while porting `TEST(Smooth, Fillet)` exactly (2026-09-29), against the C++
