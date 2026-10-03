@@ -81,6 +81,8 @@
 //     boolean / CSG pipeline is cancellable at all; those entry points ignore
 //     tokens rather than reporting a stale status, since they take none.
 
+#[cfg(test)]
+use std::sync::atomic::AtomicUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -109,6 +111,11 @@ use std::sync::Arc;
 #[derive(Clone, Debug, Default)]
 pub struct CancelToken {
     flag: Arc<AtomicBool>,
+    /// Test builds only: polls left before the token cancels itself (see
+    /// [`CancelToken::cancel_after_polls`]). Absent from every other build, so
+    /// the public type and its poll cost are unchanged.
+    #[cfg(test)]
+    polls_left: Option<Arc<AtomicUsize>>,
 }
 
 impl CancelToken {
@@ -116,6 +123,20 @@ impl CancelToken {
     pub fn new() -> Self {
         Self {
             flag: Arc::new(AtomicBool::new(false)),
+            #[cfg(test)]
+            polls_left: None,
+        }
+    }
+
+    /// Test builds only: a token whose first `polls` calls to `is_cancelled`
+    /// return `false` and whose next call cancels it, as `cancel()` would, and
+    /// returns `true`. Clones share the count, so it counts the polls of a
+    /// whole operation, which lets a test land a cancel at an exact check.
+    #[cfg(test)]
+    pub(crate) fn cancel_after_polls(polls: usize) -> Self {
+        Self {
+            polls_left: Some(Arc::new(AtomicUsize::new(polls))),
+            ..Self::new()
         }
     }
 
@@ -132,6 +153,14 @@ impl CancelToken {
     /// Whether cancellation has been requested.
     #[inline]
     pub fn is_cancelled(&self) -> bool {
+        #[cfg(test)]
+        if let Some(left) = &self.polls_left {
+            let counted =
+                left.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_sub(1));
+            if counted.is_err() {
+                self.cancel();
+            }
+        }
         self.flag.load(Ordering::Relaxed)
     }
 }

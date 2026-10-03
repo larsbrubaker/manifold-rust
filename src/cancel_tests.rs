@@ -311,7 +311,8 @@ fn cancelled_status_survives_the_csg_tree_root() {
 
 /// `add_new_edge_verts` checks the token per intersection, as C++
 /// `AddNewEdgeVerts` does: a live token fills the lists, a cancelled one
-/// leaves them empty.
+/// leaves them empty, and a token that cancels at its (k+1)th poll leaves
+/// exactly the entries of the first k intersections.
 #[test]
 fn add_new_edge_verts_stops_at_a_cancelled_token() {
     use crate::types::Halfedge;
@@ -347,4 +348,16 @@ fn add_new_edge_verts_stops_at_a_cancelled_token() {
     let cancelled = CancelToken::new();
     cancelled.cancel();
     assert_eq!(run(Some(&cancelled)), (0, 0));
+    // |i12| summed over the first k intersections, k = 0..=4. At k = 4 every
+    // intersection is polled once and none sees the cancel.
+    let prefix = [0, 1, 2, 4, 5];
+    for (k, &entries) in prefix.iter().enumerate() {
+        let token = CancelToken::cancel_after_polls(k);
+        assert_eq!(
+            run(Some(&token)),
+            (entries, 2 * entries),
+            "cancel at poll {}",
+            k + 1
+        );
+    }
 }
