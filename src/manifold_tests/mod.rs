@@ -493,6 +493,7 @@ mod api;
 mod basic;
 mod boolean;
 mod complex;
+mod compose;
 mod cross_section2;
 mod error_propagation;
 mod hull;

@@ -183,7 +183,7 @@ impl Boolean3 {
 }
 
 // ---------------------------------------------------------------------------
-// compose_meshes — concatenate disjoint meshes (unchanged from before)
+// compose_meshes — concatenate disjoint meshes (C++ CsgLeafNode::Compose)
 // ---------------------------------------------------------------------------
 
 fn extract_tri_vert(mesh: &ManifoldImpl) -> Vec<IVec3> {
@@ -284,18 +284,33 @@ pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
     let mut all_tri_refs: Vec<TriRef> = Vec::new();
     let mut merged_transforms = std::collections::BTreeMap::new();
     let mut tri_offset = 0i32;
+    // Each input keeps its own mesh IDs, even when two inputs are instanced
+    // copies of one mesh (same IDs, different transforms). C++ Compose shifts
+    // node i's meshIDs by i * meshIDCounter (csg_tree.cpp:289, 388, 400) and
+    // IncrementMeshIDs (csg_tree.cpp:417) then hands out fresh IDs in sorted
+    // order — node by node, ascending within a node. Renumbering to local IDs
+    // 1, 2, 3, ... in that same order gives increment_mesh_ids the same ranks
+    // without the C++ int overflow, and without depending on the absolute IDs,
+    // which vary with scheduling when booleans run in parallel.
+    let mut next_local = 1i32;
     for mesh in meshes {
         let mesh_tri_count = mesh.num_tri() as i32;
+        let mut local = std::collections::HashMap::new();
+        for (id, rel) in &mesh.mesh_relation.mesh_id_transform {
+            local.insert(*id, next_local);
+            merged_transforms.insert(next_local, rel.clone());
+            next_local += 1;
+        }
         for tri_ref in &mesh.mesh_relation.tri_ref {
             all_tri_refs.push(TriRef {
-                mesh_id: tri_ref.mesh_id,
+                mesh_id: local
+                    .get(&tri_ref.mesh_id)
+                    .copied()
+                    .unwrap_or(tri_ref.mesh_id),
                 original_id: tri_ref.original_id,
                 face_id: tri_ref.face_id,
                 coplanar_id: tri_ref.coplanar_id + tri_offset,
             });
-        }
-        for (id, rel) in &mesh.mesh_relation.mesh_id_transform {
-            merged_transforms.insert(*id, rel.clone());
         }
         tri_offset += mesh_tri_count;
     }

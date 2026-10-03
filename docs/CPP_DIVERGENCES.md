@@ -447,3 +447,26 @@ compiled with MSVC (`MANIFOLD_PAR=-1`):
   the last few bits and the volume by about 1e-9 relative
   (`0x40be40dfe1b35e91` here vs `0x40be40dfe1b7737f` in C++). The test asserts
   the C++ test's own `EXPECT_NEAR` bounds, which both meet.
+
+## Fixed mismatches that change shipped output (bugs, not entries)
+
+Bugs that were never ledger entries but whose fix changes output manifold-sharp
+verifies bit-for-bit, so its twin knows what to port.
+
+- **Composing instanced copies merged their runs** (fixed 2026-10-03).
+  `boolean3::compose_meshes` (behind `Manifold::compose`, the disjoint-union
+  fast path in `boolean3::boolean_with_token` and `csg_tree::batch_union`)
+  merged every input's raw mesh IDs into one map. Two copies of one mesh share
+  their mesh IDs, so they became a single MeshGL run carrying only the last
+  copy's `run_transform`. C++ `CsgLeafNode::Compose` shifts node `i`'s meshIDs
+  by `i * meshIDCounter` (`src/csg_tree.cpp:289, 388, 400`) before
+  `IncrementMeshIDs`, so each copy keeps its own run and transform, node by
+  node. The port now renumbers each input's mesh IDs to local IDs `1, 2, 3, ...`
+  in that order (ascending within an input) before `increment_mesh_ids`, which
+  gives the same ranks. Evidence: the v3.5.2 reference built as a static
+  library gives `Compose({cube, cube.Translate({3, 0, 0})})`, `cube +
+  cube.Translate({3, 0, 0})`, a three-copy `Compose` and a three-copy
+  `BatchBoolean(Add)` one run per copy in input order;
+  `manifold::tests::compose` asserts those run tables and failed on the old
+  code (one run). No other expected value in this tree moved. manifold-sharp
+  must twin this (`Boolean3.Functions.cs` `ComposeMeshes`).
