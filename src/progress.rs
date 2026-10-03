@@ -39,10 +39,17 @@
 //                                 instrumented, so its timing stays exactly
 //                                 what it was)
 //
+// Every determinate phase closes with `complete_phase`, which emits exactly
+// 1.0 — the throttle alone leaves up to `total / 100` units unreported.
+//
 // Threading model: the callback is invoked under a `Mutex`, so it is never
 // re-entered concurrently even when the `parallel` feature has rayon workers
 // driving `advance`. It *can* be invoked from a worker thread rather than the
 // caller's; consumers that need a specific thread must marshal themselves.
+// Under contention two workers can cross the throttle together and both
+// report, and the one whose increment landed first can reach the lock second;
+// `emit` drops a fraction below the last one emitted in the phase, so the
+// stream a consumer sees never goes backwards.
 
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -120,6 +127,13 @@ type Callback = Box<dyn Fn(Phase, Option<f64>) + Send + Sync>;
 /// `total / 100` items.
 const REPORTS_PER_PHASE: u64 = 100;
 
+/// What the emit lock guards: the callback, and the last fraction emitted in
+/// the current phase.
+struct Emitter {
+    callback: Callback,
+    last_emitted: f64,
+}
+
 /// A throttled sink for pipeline progress.
 ///
 /// Pass `Some(&reporter)` to a `*_with_progress` entry point; the reporter may
@@ -148,7 +162,10 @@ const REPORTS_PER_PHASE: u64 = 100;
 /// assert!(!seen.lock().unwrap().is_empty());
 /// ```
 pub struct ProgressReporter {
-    callback: Mutex<Callback>,
+    /// The callback plus the last fraction it was handed in the current
+    /// phase, under one lock so the monotonic check and the call are atomic
+    /// together (see [`ProgressReporter::emit`]).
+    callback: Mutex<Emitter>,
     /// Current phase id, as `Phase::id()`.
     phase: AtomicU32,
     /// Items completed in the current phase.
@@ -177,7 +194,10 @@ impl ProgressReporter {
         F: Fn(Phase, Option<f64>) + Send + Sync + 'static,
     {
         Self {
-            callback: Mutex::new(Box::new(callback)),
+            callback: Mutex::new(Emitter {
+                callback: Box::new(callback),
+                last_emitted: 0.0,
+            }),
             phase: AtomicU32::new(Phase::NarrowPhase.id()),
             done: AtomicU64::new(0),
             total: AtomicU64::new(0),
@@ -197,7 +217,7 @@ impl ProgressReporter {
         self.step.store(step, Ordering::Relaxed);
         self.next
             .store(if total == 0 { u64::MAX } else { step }, Ordering::Relaxed);
-        self.emit(phase, if total == 0 { None } else { Some(0.0) });
+        self.emit(phase, if total == 0 { None } else { Some(0.0) }, true);
     }
 
     /// Record `n` completed work items in the current phase, emitting a
@@ -206,7 +226,9 @@ impl ProgressReporter {
     /// Safe to call from several threads at once; the counter is atomic and the
     /// callback is serialized. Under contention two threads can both cross the
     /// threshold and both report, which is harmless — this is a UI hint, not a
-    /// ledger.
+    /// ledger. They can also reach the callback in the opposite order from
+    /// their increments; the later-arriving, smaller fraction is then dropped,
+    /// so the emitted stream never decreases within a phase.
     #[inline]
     pub fn advance(&self, n: u64) {
         let done = self.done.fetch_add(n, Ordering::Relaxed) + n;
@@ -214,6 +236,38 @@ impl ProgressReporter {
             return;
         }
         self.report_at(done);
+    }
+
+    /// Close the current phase out at exactly 1.0, unconditionally — the emit
+    /// [`advance`](Self::advance) cannot make.
+    ///
+    /// The throttle emits only when `done` crosses a step boundary, and `step`
+    /// is `total / 100`, so every unit after the last boundary is swallowed and
+    /// a determinate phase ends *near* 1.0 rather than *at* it: at
+    /// `total = 4608` the last report is 4600/4608, and only at `total <= 100`,
+    /// where `step` is 1, does a finished phase happen to land on 1.0. A UI that
+    /// hides its bar when it fills therefore never hides it.
+    ///
+    /// Every determinate phase closes with this: the five in
+    /// `robust/intersection_graph.rs` and `Cells` in `robust/cells.rs`. The
+    /// indeterminate phases (`winding`, `assemble`, `exact boolean`) do not —
+    /// with no total there is no bar to leave short, and the emit would only
+    /// repeat [`begin_phase`](Self::begin_phase)'s `None`.
+    ///
+    /// Call it once, after the phase's work is finished and its workers have
+    /// joined. It also parks the throttle (`next` becomes the "never report
+    /// again" sentinel), so a straggler `advance` cannot report a lower
+    /// fraction after the 1.0. An indeterminate phase (`total == 0`) still
+    /// reports `None`, as it does everywhere else. A cancelled or failed
+    /// operation must NOT call this: a full bar is a claim that the work was
+    /// done.
+    pub fn complete_phase(&self) {
+        let total = self.total.load(Ordering::Relaxed);
+        self.next.store(u64::MAX, Ordering::Relaxed);
+        let Some(phase) = Phase::from_id(self.phase.load(Ordering::Relaxed)) else {
+            return;
+        };
+        self.emit(phase, if total == 0 { None } else { Some(1.0) }, false);
     }
 
     /// Cold half of [`advance`], kept out of line so the common case is a
@@ -232,16 +286,33 @@ impl ProgressReporter {
         } else {
             Some((done as f64 / total as f64).clamp(0.0, 1.0))
         };
-        self.emit(phase, fraction);
+        self.emit(phase, fraction, false);
     }
 
     /// Invoke the callback. A poisoned mutex (a previous callback panicked) is
     /// deliberately ignored rather than propagated: a broken progress sink must
     /// not take down a geometry operation.
-    fn emit(&self, phase: Phase, fraction: Option<f64>) {
-        if let Ok(cb) = self.callback.lock() {
-            cb(phase, fraction);
+    ///
+    /// Order: two workers whose increments land at 50 and 51 can reach the lock
+    /// as 51 then 50. Under the lock a fraction below the last one emitted in
+    /// the phase is dropped; an equal one still goes through, so
+    /// [`complete_phase`](Self::complete_phase)'s unconditional 1.0 is never
+    /// swallowed. Opening a phase (`opens_phase`) resets the mark. `None`
+    /// fractions carry no order and always pass. Only which callbacks fire
+    /// changes, never a computed value.
+    fn emit(&self, phase: Phase, fraction: Option<f64>, opens_phase: bool) {
+        let Ok(mut emitter) = self.callback.lock() else {
+            return;
+        };
+        if opens_phase {
+            emitter.last_emitted = fraction.unwrap_or(0.0);
+        } else if let Some(f) = fraction {
+            if f < emitter.last_emitted {
+                return;
+            }
+            emitter.last_emitted = f;
         }
+        (emitter.callback)(phase, fraction);
     }
 }
 
@@ -251,6 +322,15 @@ impl ProgressReporter {
 pub fn begin_phase(progress: Option<&ProgressReporter>, phase: Phase, total: u64) {
     if let Some(p) = progress {
         p.begin_phase(phase, total);
+    }
+}
+
+/// `Option`-aware [`ProgressReporter::complete_phase`], the bookend to
+/// [`begin_phase`].
+#[inline]
+pub fn complete_phase(progress: Option<&ProgressReporter>) {
+    if let Some(p) = progress {
+        p.complete_phase();
     }
 }
 

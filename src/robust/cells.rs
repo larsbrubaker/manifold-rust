@@ -252,6 +252,13 @@ pub fn build_cells_with_progress(
         }
     }
 
+    // Every incident half-face was advanced for, cancel-free, so close the bar
+    // at exactly 1.0 — the throttle cannot, since it emits only on multiples
+    // of `total / 100` and the group that spends the last units rarely lands
+    // on one. Success only: the cancelled return above skips it, because a
+    // full bar is a claim that the work was done.
+    crate::progress::complete_phase(progress);
+
     // Compact the union-find roots into dense cell ids. Roots are already
     // node ids, so a flat table beats hashing here.
     let mut cell_of = vec![0u32; 2 * n];

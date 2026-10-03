@@ -283,6 +283,10 @@ fn classify_and_assemble(
     // cells follow combinatorially. Winding and assembly report as phase
     // transitions only: neither has a work total the caller could see a
     // fraction of without instrumenting the exact ray queries themselves.
+    // That is also why neither closes with `complete_phase` the way the
+    // determinate phases upstream do — an indeterminate phase has no bar to
+    // leave short, and `complete_phase` on one emits the same `None`
+    // `begin_phase` already emitted.
     begin_phase(progress, Phase::Winding, 0);
     let t_winding = crate::timing::start();
     let wind = cells::windings(&graph, &complex, [p_tris, q_tris]);

@@ -88,7 +88,7 @@ pub fn build_graph_with_progress(
     token: Option<&crate::cancel::CancelToken>,
     progress: Option<&crate::progress::ProgressReporter>,
 ) -> Option<IntersectionGraph> {
-    use crate::progress::{begin_phase, maybe_par_map_ct_progress, Phase};
+    use crate::progress::{begin_phase, complete_phase, maybe_par_map_ct_progress, Phase};
     let cancelled = || crate::cancel::is_cancelled(token);
     let t_all = crate::timing::start();
     let meshes: [&[[Vec3; 3]]; 2] = [p, q];
@@ -181,6 +181,10 @@ pub fn build_graph_with_progress(
         }
     }
 
+    // All |P| units spent, cancel-free: close the bar at 1.0, which the
+    // throttle alone cannot — `ProgressReporter::complete_phase` says why,
+    // for all five phases here.
+    complete_phase(progress);
     crate::timing::print("robust: pair narrow phase", t_all);
     let t_self = crate::timing::start();
 
@@ -276,6 +280,9 @@ pub fn build_graph_with_progress(
         ));
     }
 
+    // Both meshes cut, so all |P| + |Q| units are spent.
+    complete_phase(progress);
+
     crate::timing::print("robust: self-intersection cuts", t_self);
     let t_cross = crate::timing::start();
 
@@ -368,6 +375,10 @@ pub fn build_graph_with_progress(
         }
         base += len;
     }
+
+    // Every chunk mapped and interned; the endpoint sweep below is not this
+    // phase.
+    complete_phase(progress);
 
     // Intersection-segment endpoints share the id space, so the segment
     // registry keys on `(u32, u32)` too. Flat per-mesh arrays (offsets +
@@ -530,6 +541,10 @@ pub fn build_graph_with_progress(
     let n_split_hits: usize = split_hits.iter().map(|h| h.len()).sum();
     drop(split_hits);
 
+    // Both sweeps mapped and merged: the whole 2 × |reg_work| total,
+    // cancel-free.
+    complete_phase(progress);
+
     // The dedup sets have done their job; the arrangement phase below reads
     // only the id lists. Releasing them (and the candidate lists, which no
     // later phase touches) before phase 5 keeps the two peaks from stacking.
@@ -658,6 +673,10 @@ pub fn build_graph_with_progress(
             }
         }
     }
+
+    // The map spent every unit and the interning replay finished it,
+    // cancel-free.
+    complete_phase(progress);
 
     crate::timing::print("robust: arrangements", t_arr);
     crate::timing::print_count(&format!(

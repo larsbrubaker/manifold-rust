@@ -284,3 +284,146 @@ fn the_exact_engine_reports_one_indeterminate_phase() {
     assert!(out.volume() > 0.0);
     assert_eq!(sink.events(), vec![("exact boolean", None)]);
 }
+
+/// Splits a run's events into one list per contiguous stretch of the same
+/// phase — which is one phase's whole lifetime, since the pipeline never
+/// revisits a phase.
+fn phase_runs(events: &[Event]) -> Vec<Vec<Event>> {
+    let mut runs: Vec<Vec<Event>> = Vec::new();
+    for e in events {
+        match runs.last_mut() {
+            Some(run) if run[0].0 == e.0 => run.push(*e),
+            _ => runs.push(vec![*e]),
+        }
+    }
+    runs
+}
+
+/// Every determinate phase the robust pipeline reports ends on exactly 1.0,
+/// on a fixture large enough that the throttle alone could not.
+///
+/// `advance` emits only when `done` crosses a multiple of `total / 100`, so
+/// every unit after the last boundary is swallowed and a phase ends *near*
+/// 1.0 rather than *at* it; `complete_phase` closes it. The fixture is
+/// 96-segment spheres because that puts all six phases in the regime where
+/// the bug shows: each needs a total past 100 (so `step` exceeds 1) that
+/// `step` does not divide. The sequential build asserts exactly that — every
+/// phase's *second to last* report is below 1.0 — so a fixture that drifted
+/// onto a boundary fails instead of proving nothing. (At 24 segments the
+/// narrow phase's 288 units are an exact multiple of its step of 2.)
+///
+/// Only the closing 1.0 is asserted under `--features parallel`: there two
+/// workers can cross the throttle together and both report, so intermediate
+/// order and count are a UI hint, not a ledger. The phase-end emit is not —
+/// `complete_phase` runs on the calling thread after the map has joined, and
+/// parks the throttle so no straggler can report behind it.
+///
+/// Shared 1:1 with manifold-sharp's
+/// `ProgressTests.EveryDeterminateRobustPhaseEndsAtExactlyOneInBothParallelModes`,
+/// which runs both modes in one process (its parallelism is a runtime switch).
+#[test]
+fn every_determinate_robust_phase_ends_at_exactly_one_in_both_parallel_modes() {
+    let a = Manifold::sphere(1.0, 96);
+    let b = Manifold::sphere(0.8, 96).translate(Vec3::new(0.4, 0.1, 0.2));
+    assert_eq!(
+        a.num_tri(),
+        4608,
+        "the phase totals this test needs are computed from this count"
+    );
+    let parallel = cfg!(feature = "parallel");
+
+    let sink = Sink::default();
+    let reporter = sink.reporter();
+    let out = a.boolean_with_engine_and_progress(
+        &b,
+        OpType::Add,
+        BooleanEngine::Robust,
+        None,
+        Some(&reporter),
+    );
+    assert!(out.volume() > 0.0);
+
+    let mut seen = Vec::new();
+    for run in phase_runs(&sink.events()) {
+        let name = run[0].0;
+        if run[0].1.is_none() {
+            // "winding" and "assemble" have no work total, so they have no
+            // bar to leave short and deliberately never call complete_phase;
+            // a null fraction is all they ever report.
+            for (_, fraction) in &run {
+                assert_eq!(
+                    *fraction, None,
+                    "parallel={parallel}: {name:?} is an indeterminate phase"
+                );
+            }
+            continue;
+        }
+        seen.push(name);
+        assert_eq!(
+            run[run.len() - 1].1,
+            Some(1.0),
+            "parallel={parallel}: phase {name:?} ended with its bar short"
+        );
+        if !parallel {
+            let f = run[run.len() - 2].1.expect("a determinate phase");
+            assert!(
+                f < 1.0,
+                "phase {name:?} already reached 1.0 through advance, so its closing \
+                 1.0 proves nothing — the fixture no longer lands off a step boundary"
+            );
+        }
+    }
+    assert_eq!(
+        seen,
+        vec![
+            "narrow phase",
+            "self intersections",
+            "candidate points",
+            "registries",
+            "arrangements",
+            "cells",
+        ],
+        "parallel={parallel}: the determinate phases, in pipeline order, once each"
+    );
+}
+
+/// Many workers advancing one phase of 100 units (a report per unit) see a
+/// never-decreasing stream, round after round: two workers whose increments
+/// land at 50 and 51 can reach the callback lock in the other order, and the
+/// stale 50 must be dropped rather than sent backwards. Shared 1:1 with
+/// manifold-sharp's `ProgressOrderTests.RacingWorkersNeverSendTheBarBackwards`.
+#[test]
+fn racing_workers_never_send_the_bar_backwards() {
+    const ROUNDS: usize = 2000;
+    const WORKERS: usize = 4;
+    let fractions = Arc::new(Mutex::new(Vec::<f64>::new()));
+    let sink = Arc::clone(&fractions);
+    let reporter = ProgressReporter::new(move |_, fraction| {
+        sink.lock()
+            .expect("sink poisoned")
+            .push(fraction.expect("a determinate phase"));
+    });
+
+    for round in 0..ROUNDS {
+        fractions.lock().expect("sink poisoned").clear();
+        reporter.begin_phase(Phase::Arrangements, 100);
+        std::thread::scope(|s| {
+            for _ in 0..WORKERS {
+                s.spawn(|| {
+                    for _ in 0..100 / WORKERS {
+                        reporter.advance(1);
+                    }
+                });
+            }
+        });
+        let seen = fractions.lock().expect("sink poisoned").clone();
+        for i in 1..seen.len() {
+            assert!(
+                seen[i] >= seen[i - 1],
+                "round {round}: the bar went backwards at report {i} ({} after {})",
+                seen[i],
+                seen[i - 1]
+            );
+        }
+    }
+}
