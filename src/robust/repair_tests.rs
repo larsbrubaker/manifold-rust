@@ -178,6 +178,28 @@ fn manifold_repair_orientation_inverted_cube() {
 }
 
 #[test]
+fn a_repair_with_a_cancelled_token_returns_cancelled() {
+    // A cavity, so the repair cannot answer from a trivial shortcut before it
+    // polls.
+    let mut tris = cube_tris(0.0, 6.0);
+    tris.extend(flipped(&cube_tris(2.0, 4.0)));
+    let m = mesh_from_tris(&flipped(&tris));
+    let token = crate::cancel::CancelToken::new();
+    token.cancel();
+
+    let cancelled = m.repair_orientation_with_token(Some(&token));
+    assert_eq!(cancelled.status(), crate::types::Error::Cancelled);
+    assert!(cancelled.is_empty());
+    assert!(plan_repair_with_token(&tris, Some(&token)).is_none());
+
+    // A live token repairs exactly as the tokenless entry point does.
+    let live = m.repair_orientation_with_token(Some(&crate::cancel::CancelToken::new()));
+    assert_eq!(live.status(), crate::types::Error::NoError);
+    assert_eq!(signed_volume(&live), signed_volume(&m.repair_orientation()));
+    assert!((signed_volume(&live) - 208.0).abs() < 1e-9);
+}
+
+#[test]
 fn manifold_repair_preserves_cavity_and_pairing() {
     let mut tris = flipped(&cube_tris(0.0, 6.0));
     tris.extend(cube_tris(2.0, 4.0));

@@ -245,20 +245,41 @@ struct Analysis {
 }
 
 fn analyze(tris: &[[Vec3; 3]]) -> Analysis {
+    analyze_with_token(tris, None).expect("uncancellable analyze cannot cancel")
+}
+
+/// [`analyze`] polling `token` once per shell in the classification and
+/// containment loops (the containment loop is the shells x triangles part);
+/// `None` once it fires.
+fn analyze_with_token(
+    tris: &[[Vec3; 3]],
+    token: Option<&crate::cancel::CancelToken>,
+) -> Option<Analysis> {
     let (shell_of, num_shells) = connected_shells(tris);
     let mut members: Vec<Vec<usize>> = vec![Vec::new(); num_shells];
     for (t, &s) in shell_of.iter().enumerate() {
         members[s].push(t);
     }
 
-    let geoms: Vec<ShellGeom> = members.iter().map(|m| ShellGeom::new(tris, m)).collect();
-    let classified: Vec<Option<Classified>> = geoms.iter().map(classify_shell).collect();
+    let mut geoms: Vec<ShellGeom> = Vec::with_capacity(num_shells);
+    let mut classified: Vec<Option<Classified>> = Vec::with_capacity(num_shells);
+    for m in &members {
+        if crate::cancel::is_cancelled(token) {
+            return None;
+        }
+        let geom = ShellGeom::new(tris, m);
+        classified.push(classify_shell(&geom));
+        geoms.push(geom);
+    }
 
     // Containment: which *other* shells hold the point just off this shell's
     // exterior. Winding != 0 rather than >= 1, so an inverted (not-yet-
     // repaired) container still counts as containing.
     let mut containers: Vec<Vec<usize>> = vec![Vec::new(); num_shells];
     for s in 0..num_shells {
+        if crate::cancel::is_cancelled(token) {
+            return None;
+        }
         let Some(c) = &classified[s] else { continue };
         containers[s] = (0..num_shells)
             .filter(|&o| o != s)
@@ -269,12 +290,12 @@ fn analyze(tris: &[[Vec3; 3]]) -> Analysis {
             .collect();
     }
 
-    Analysis {
+    Some(Analysis {
         shell_of,
         num_shells,
         classified,
         containers,
-    }
+    })
 }
 
 /// True when the soup's surface is *already* the boundary of the solid it
@@ -314,12 +335,22 @@ pub fn shells_well_nested(tris: &[[Vec3; 3]]) -> bool {
 /// nested outward shell is a legitimate mesh on its own). See the module
 /// header for the full rule and the invariant it guarantees.
 pub fn plan_repair(tris: &[[Vec3; 3]]) -> RepairPlan {
+    plan_repair_with_token(tris, None).expect("uncancellable plan_repair cannot cancel")
+}
+
+/// [`plan_repair`] with cooperative cancellation, polled once per shell in
+/// the classification and containment loops; `None` once `token` fires. A
+/// `None` token never cancels, and is exactly [`plan_repair`].
+pub fn plan_repair_with_token(
+    tris: &[[Vec3; 3]],
+    token: Option<&crate::cancel::CancelToken>,
+) -> Option<RepairPlan> {
     let Analysis {
         shell_of,
         num_shells,
         classified,
         containers,
-    } = analyze(tris);
+    } = analyze_with_token(tris, token)?;
     let depth = |s: usize| containers[s].len();
 
     let mut flip_shell = vec![false; num_shells];
@@ -352,11 +383,11 @@ pub fn plan_repair(tris: &[[Vec3; 3]]) -> RepairPlan {
         flipped_shells += 1;
     }
 
-    RepairPlan {
+    Some(RepairPlan {
         flip: shell_of.iter().map(|&s| flip_shell[s]).collect(),
         num_shells,
         flipped_shells,
-    }
+    })
 }
 
 /// Rewind the flagged triangles of `imp` in place: (v0, v1, v2) becomes

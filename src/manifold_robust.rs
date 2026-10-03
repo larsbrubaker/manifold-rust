@@ -55,11 +55,25 @@ impl Manifold {
     /// untouched, only triangle winding changes. Returns `self` unchanged
     /// when nothing needs flipping.
     pub fn repair_orientation(&self) -> Self {
+        self.repair_orientation_with_token(None)
+    }
+
+    /// [`Manifold::repair_orientation`] with cooperative cancellation,
+    /// polled once per shell of the analysis (which costs about shells x
+    /// triangles). Returns an empty manifold with
+    /// [`crate::types::Error::Cancelled`] once `token` is cancelled; `None`
+    /// is exactly `repair_orientation`.
+    pub fn repair_orientation_with_token(
+        &self,
+        token: Option<&crate::cancel::CancelToken>,
+    ) -> Self {
         if self.is_empty() {
             return self.clone();
         }
         let tris = crate::robust::soup::impl_to_tris(&self.imp);
-        let plan = crate::robust::repair::plan_repair(&tris);
+        let Some(plan) = crate::robust::repair::plan_repair_with_token(&tris, token) else {
+            return Self::from_impl(crate::boolean3::cancelled_impl());
+        };
         if plan.is_noop() {
             return self.clone();
         }
