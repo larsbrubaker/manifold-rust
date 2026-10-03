@@ -513,6 +513,27 @@ compiled with MSVC (`MANIFOLD_PAR=-1`):
   (`0x40be40dfe1b35e91` here vs `0x40be40dfe1b7737f` in C++). The test asserts
   the C++ test's own `EXPECT_NEAR` bounds, which both meet.
 
+Found by manifold-sharp while fixing QuickHull (entry 11), 2026-09-30:
+
+- **`swap_degenerates` cuts solid beside a zero-thickness fin.** On the
+  operand pair in `src/testdata/minkowski-641145-union-{a,b}.txt` (the 19th
+  pairwise union of Thingi10K 641145's Minkowski sum before entry 11, both
+  `NoError`) the exact union comes out 3.9e-3 relative short of
+  inclusion-exclusion, with 4.2e-4 of B outside it (manifold-sharp, which
+  traced it, reports the same in C++ v3.5.2). The boolean itself is right; `simplify_topology`'s
+  `swap_degenerates` loses the solid. `set_normals_and_coplanar`'s flood fill
+  (C++ `SetNormalsAndCoplanar`, the same orientation-blind fill entry 1
+  describes) hands a sound triangle 0.041 tall the reversed normal of an
+  opposite-facing coplanar seed; projected through it the triangle reads as
+  inverted, so `recursive_edge_swap` swaps its long edge into a neighbour in
+  another plane and cuts out a wedge. Two narrow fixes were rejected (they
+  break `test_cpp_simplify` and `test_cpp_nonconvex_convex_minkowski_sum`).
+  Nothing in this crate produces these operands since entry 11, but the
+  defect stands. Pinned, ignored, by
+  `minkowski::union_regression_tests::exact_union_of_thingi641145_partial_unions_contains_both_operands`,
+  shared with manifold-sharp's `MinkowskiUnionRegressionTests` (its commit
+  `1931e87`).
+
 ## Fixed mismatches that change shipped output (bugs, not entries)
 
 Bugs that were never ledger entries but whose fix changes output manifold-sharp

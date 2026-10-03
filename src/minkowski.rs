@@ -206,6 +206,10 @@ pub fn minkowski_difference(a: &ManifoldImpl, b: &ManifoldImpl) -> ManifoldImpl 
 }
 
 #[cfg(test)]
+#[path = "minkowski_union_regression_tests.rs"]
+mod union_regression_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::linalg::{mat4_to_mat3x4, scaling_matrix, translation_matrix, Mat3x4};
