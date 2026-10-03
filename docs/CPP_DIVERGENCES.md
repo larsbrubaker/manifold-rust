@@ -418,8 +418,10 @@ orientation gives both faces the same answer, so no zero-area face is built.
 
 **What is observably different:** hulls whose points hold exactly collinear or
 coplanar sets can come out with different triangles. No existing expected value
-in this tree moved. manifold-sharp made the same fix in its commit `b178563` (its
-`RUST_DIVERGENCES.md` entry 7), so the two ports agree.
+in this tree moved. manifold-sharp made the same fix in its commit `1931e87` (its
+`RUST_DIVERGENCES.md` entry 7), so the two ports agree. (This tree's commit
+`a69e579` cites it as `b178563`, its hash before manifold-sharp's history was
+rewritten; `b178563` is on no branch there.)
 
 **Evidence:** `quickhull::tests::test_hull_of_a_flat_triangle_swept_by_sphere_is_convex`
 (Thingi10K 63451 triangle 163 swept by `sphere(0.3, 8)`) and
