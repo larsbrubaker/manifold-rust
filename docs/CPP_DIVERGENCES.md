@@ -7,8 +7,8 @@ justified it. Trace-diff debugging against the C++ must expect these.
 Two kinds of entry live here, and they are not the same claim:
 
 - **Justified divergence** — an accuracy fix, a real bug fix in the C++, or a
-  measured improvement. CLAUDE.md's three qualifying reasons. Entries 1, 3, 4
-  and 11.
+  measured improvement. CLAUDE.md's three qualifying reasons. Entries 1, 3, 4,
+  11 and 12.
 - **Inherited divergence, documented and scheduled for coordinated
   harmonization** — an output shape this port already shipped, which we would
   resolve toward the C++ on the merits but cannot change unilaterally, because a
@@ -49,6 +49,7 @@ belongs in any category for convenience.
 | 9 | API shape | `Manifold::slice` / `project` return a `CrossSection`, not `Polygons` |
 | 10 | Extension | `CrossSection::minkowski_sum` (no C++ counterpart) |
 | 11 | Justified | QuickHull decides above-a-face exactly |
+| 12 | Justified | Batch-boolean rounds renumber their mesh IDs in pair order |
 
 Anything else that differs from the C++ is a bug, not an entry. The ones known
 and not yet fixed are listed under *Known unresolved mismatches* at the end, so
@@ -426,6 +427,39 @@ in this tree moved. manifold-sharp made the same fix in its commit `b178563` (it
 `sphere(0.05781898171099809, 12)`): an input point lay 0.581 and 0.2336 outside a
 hull face before the fix, under 1e-12 after. Both tests are shared with
 manifold-sharp's `QuickHullContainmentTests`.
+
+## 12. Batch-boolean rounds renumber their mesh IDs in pair order (2026-10-03)
+
+**What differs:** after each round of `csg_tree::batch_boolean`,
+`renumber_round_mesh_ids` (`src/csg_tree.rs`) reserves one block of mesh IDs and
+moves the IDs that the round's booleans reserved into it, in pair order, each
+result's in their existing order. C++ `BatchBoolean` (`src/csg_tree.cpp:449-479`)
+keeps the IDs each `SimpleBoolean` reserved.
+
+**Why:** a race in the C++ parallel build, which this port would otherwise have
+made worse. With `MANIFOLD_PAR` the C++ runs a round's pairs in a
+`tbb::task_group`, and each boolean's `IncrementMeshIDs` takes its IDs from the
+process-wide `meshIDCounter_` (`src/impl.cpp:85-86, 758`), so which pair gets
+which IDs follows the scheduler. Their order does not, because every C++ pair,
+disjoint or not, goes through `UpdateReference` (`src/boolean_result.cpp:950`),
+which places Q's IDs after P's. This port composes a disjoint union's operands
+instead (`boolean3::boolean_with_token`) and keeps their IDs sorted by value, so
+the order followed the scheduler too, and with it the run and triangle order of
+`MeshGL` whenever runs share an original ID (one mesh instanced several times).
+The `parallel` feature promises output bit-identical to the sequential build
+(`src/lib.rs`, `src/par.rs`).
+
+**What is observably different:** mesh ID values only; their order, and so every
+`MeshGL` field, is what the sequential build gave before. The values never
+matched the C++ anyway: `update_reference` reserves the IDs it shifts Q's by
+(`src/boolean_result_assemble.rs:29`), where the C++ reads the counter
+(`src/boolean_result.cpp:523`). Renumbering adds one reservation per round.
+
+**Evidence:** `csg_tree::tests::test_batch_rounds_assign_mesh_ids_in_pair_order`
+unions eight instances of one sphere, in overlapping pairs 10 apart, and compares
+the mesh relation and the whole `MeshGL64` across thread counts. Without the
+renumbering, 18 to 24 of 25 evaluations at each of 2, 3, 4 and 8 threads gave a
+different run order from the one-thread evaluation.
 
 ## Known unresolved mismatches (bugs, not entries)
 

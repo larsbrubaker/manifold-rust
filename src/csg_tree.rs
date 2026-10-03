@@ -28,7 +28,7 @@ use std::sync::Arc;
 
 use crate::boolean3;
 use crate::cancel::{is_cancelled, CancelToken};
-use crate::impl_mesh::ManifoldImpl;
+use crate::impl_mesh::{reserve_ids, ManifoldImpl};
 use crate::linalg::{mat3x4_to_mat4, mat4_to_mat3x4, Mat3x4, Vec3};
 use crate::types::{Box as BBox, Error, OpType};
 
@@ -437,7 +437,13 @@ fn batch_boolean(
     // C++ processes up to 4 pairs per round (for its parallel lane), pushing
     // the results back only at the end of the round — even in sequential
     // builds. The round structure changes which meshes pair up, so mirror it.
-    let mut tmp: Vec<MeshEntry> = Vec::new();
+    //
+    // With `parallel` the pairs run side by side, as in C++'s `tbb::task_group`
+    // (csg_tree.cpp:451-479). They are chosen before any runs and pushed back in
+    // pair order with the sequential serials, so every later pairing is the
+    // same at any thread count. Their mesh IDs are renumbered in pair order
+    // (`renumber_round_mesh_ids`), so those are the same too.
+    let mut pairs: Vec<(MeshEntry, MeshEntry)> = Vec::with_capacity(4);
     while heap.len() > 1 {
         // Once-per-round check, matching C++ BatchBoolean's per-iteration gate
         // (csg_tree.cpp:460).
@@ -450,16 +456,76 @@ fn batch_boolean(
             }
             let a = heap.pop().unwrap();
             let b = heap.pop().unwrap();
-            let result = simple_boolean(&a.0, &b.0, op, token);
-            tmp.push(MeshEntry(result, next_serial));
-            next_serial += 1;
+            pairs.push((a, b));
         }
-        for entry in tmp.drain(..) {
-            heap.push(entry);
+        // Every mesh ID at or above this was reserved by the round's booleans
+        // (`reserve_ids(0)` reads the counter without moving it).
+        let first_round_id = reserve_ids(0);
+        let mut results = crate::par::maybe_par_map(pairs.len(), 2, |i| {
+            simple_boolean(&pairs[i].0 .0, &pairs[i].1 .0, op, token)
+        });
+        pairs.clear();
+        renumber_round_mesh_ids(&mut results, first_round_id);
+        for result in results {
+            heap.push(MeshEntry(result, next_serial));
+            next_serial += 1;
         }
     }
 
     heap.pop().unwrap().0
+}
+
+/// Gives the mesh IDs a batch round reserved fresh values in pair order: all
+/// of the first result's, then the second's, and so on, each result's in their
+/// existing order. IDs below `first_round_id` came in with the operands (a
+/// pass-through result keeps them) and are left alone.
+///
+/// Each boolean reserves IDs from the process-wide counter, in
+/// `update_reference` and `increment_mesh_ids`, so when a round's pairs run
+/// side by side the values they get follow the scheduler. So does their order,
+/// which the output shows: the disjoint-union shortcut in
+/// `boolean3::boolean_with_token` composes both operands' IDs sorted by value,
+/// and `MeshGL` orders runs by `(originalID, meshID)`, so the run and triangle
+/// order of a later result changed with the thread count. The sizes are known
+/// only once the booleans have run, hence a second reservation after the round
+/// rather than one before it. Sequential builds renumber too, so they give the
+/// same IDs, value for value, as parallel ones (docs/CPP_DIVERGENCES.md entry
+/// 12).
+fn renumber_round_mesh_ids(results: &mut [CsgLeafNode], first_round_id: u32) {
+    let first_round_id = first_round_id as i32;
+    // The round's IDs in one result, ascending (the map is ordered).
+    let round_ids = |leaf: &CsgLeafNode| -> Vec<i32> {
+        let ids = leaf.p_impl.mesh_relation.mesh_id_transform.keys();
+        ids.copied().filter(|&id| id >= first_round_id).collect()
+    };
+    let total: usize = results.iter().map(|leaf| round_ids(leaf).len()).sum();
+    if total == 0 {
+        return;
+    }
+    let mut next_id = reserve_ids(total as u32) as i32;
+    for leaf in results.iter_mut() {
+        let old_ids = round_ids(leaf);
+        if old_ids.is_empty() {
+            continue;
+        }
+        // The k-th of the result's old IDs becomes `next_id + k`. A result has
+        // few IDs and many triangles, so a binary search per triangle beats
+        // hashing.
+        let renumber = |id: i32| match old_ids.binary_search(&id) {
+            Ok(k) => next_id + k as i32,
+            Err(_) => id,
+        };
+        // A boolean's result is a fresh leaf, so this does not copy.
+        let relation = &mut Arc::make_mut(&mut leaf.p_impl).mesh_relation;
+        relation.mesh_id_transform = std::mem::take(&mut relation.mesh_id_transform)
+            .into_iter()
+            .map(|(id, rel)| (renumber(id), rel))
+            .collect();
+        for tri_ref in &mut relation.tri_ref {
+            tri_ref.mesh_id = renumber(tri_ref.mesh_id);
+        }
+        next_id += old_ids.len() as i32;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -537,174 +603,6 @@ fn batch_union(children: &mut Vec<CsgLeafNode>, token: Option<&CancelToken>) -> 
 }
 
 // ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::linalg::{mat4_to_mat3x4, translation_matrix, Vec3};
-
-    #[test]
-    fn test_csg_tree_union_disjoint() {
-        let a = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.0, 0.0, 0.0,
-        ))));
-        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            3.0, 0.0, 0.0,
-        ))));
-        let tree = CsgNode::op(OpType::Add, CsgNode::leaf(a), CsgNode::leaf(b));
-        let result = tree.evaluate();
-        assert_eq!(result.num_tri(), 24);
-    }
-
-    #[test]
-    fn test_csg_tree_union_overlapping() {
-        let a = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.0, 0.0, 0.0,
-        ))));
-        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.5, 0.0, 0.0,
-        ))));
-        let tree = CsgNode::op(OpType::Add, CsgNode::leaf(a), CsgNode::leaf(b));
-        let result = tree.evaluate();
-        assert!(
-            result.num_tri() > 0,
-            "Overlapping union should produce non-empty mesh"
-        );
-    }
-
-    #[test]
-    fn test_csg_tree_intersection() {
-        let a = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.0, 0.0, 0.0,
-        ))));
-        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.5, 0.0, 0.0,
-        ))));
-        let tree = CsgNode::op(OpType::Intersect, CsgNode::leaf(a), CsgNode::leaf(b));
-        let result = tree.evaluate();
-        assert!(
-            result.num_tri() > 0,
-            "Overlapping intersection should produce non-empty mesh"
-        );
-    }
-
-    #[test]
-    fn test_csg_tree_subtract() {
-        let a = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.0, 0.0, 0.0,
-        ))));
-        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.5, 0.0, 0.0,
-        ))));
-        let tree = CsgNode::op(OpType::Subtract, CsgNode::leaf(a), CsgNode::leaf(b));
-        let result = tree.evaluate();
-        assert!(
-            result.num_tri() > 0,
-            "Subtraction should produce non-empty mesh"
-        );
-    }
-
-    #[test]
-    fn test_batch_boolean_three_cubes() {
-        let a = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-            Vec3::new(0.0, 0.0, 0.0),
-        ))));
-        let b = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-            Vec3::new(0.5, 0.0, 0.0),
-        ))));
-        let c = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-            Vec3::new(1.0, 0.0, 0.0),
-        ))));
-        let mut children = vec![a, b, c];
-        let result = batch_boolean(OpType::Add, &mut children, None);
-        let mesh = result.get_impl();
-        assert!(
-            mesh.num_tri() > 0,
-            "BatchBoolean of 3 overlapping cubes should produce non-empty mesh"
-        );
-    }
-
-    #[test]
-    fn test_batch_union_disjoint() {
-        let a = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-            Vec3::new(0.0, 0.0, 0.0),
-        ))));
-        let b = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-            Vec3::new(3.0, 0.0, 0.0),
-        ))));
-        let c = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-            Vec3::new(6.0, 0.0, 0.0),
-        ))));
-        let mut children = vec![a, b, c];
-        let result = batch_union(&mut children, None);
-        let mesh = result.get_impl();
-        // Three disjoint cubes should compose without boolean, giving 36 tris
-        assert_eq!(
-            mesh.num_tri(),
-            36,
-            "BatchUnion of 3 disjoint cubes should have 36 tris"
-        );
-    }
-
-    #[test]
-    fn test_csg_n_ary_union() {
-        // N-ary union of 4 disjoint cubes
-        let nodes: Vec<CsgNode> = (0..4)
-            .map(|i| {
-                CsgNode::leaf(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-                    Vec3::new(i as f64 * 3.0, 0.0, 0.0),
-                ))))
-            })
-            .collect();
-        let tree = CsgNode::op_n(OpType::Add, nodes);
-        let result = tree.evaluate();
-        assert_eq!(
-            result.num_tri(),
-            48,
-            "N-ary union of 4 disjoint cubes should have 48 tris"
-        );
-    }
-
-    #[test]
-    fn test_lazy_leaf_transform_applied_on_evaluate() {
-        // Regression: get_impl discarded ManifoldImpl::transform's return value
-        // (it is not in-place), so lazily-transformed leaves evaluated at the
-        // origin. Two disjoint cubes — one translated via the *leaf* transform,
-        // not baked into the mesh — must union to 24 tris, not collapse to 12.
-        let cube = ManifoldImpl::cube(&Mat3x4::identity());
-        let a = CsgLeafNode::new(cube.clone());
-        let b = CsgLeafNode::new(cube)
-            .apply_transform(mat4_to_mat3x4(translation_matrix(Vec3::new(3.0, 0.0, 0.0))));
-        let bbox = b.get_impl().bbox;
-        assert!(
-            bbox.min.x >= 2.9 && bbox.max.x <= 4.1,
-            "lazy transform not applied by get_impl: bbox.x = [{}, {}]",
-            bbox.min.x,
-            bbox.max.x
-        );
-        let tree = CsgNode::op(OpType::Add, CsgNode::leaf_node(a), CsgNode::leaf_node(b));
-        assert_eq!(tree.evaluate().num_tri(), 24);
-    }
-
-    #[test]
-    fn test_tree_transforms() {
-        // Test that transforms compose correctly through the tree
-        let a = ManifoldImpl::cube(&Mat3x4::identity());
-        let leaf = CsgLeafNode::new(a);
-        let translated =
-            leaf.apply_transform(mat4_to_mat3x4(translation_matrix(Vec3::new(5.0, 0.0, 0.0))));
-        let bbox = translated.get_bounding_box();
-        assert!(
-            bbox.min.x > 4.0,
-            "Translated bbox min.x should be > 4.0, got {}",
-            bbox.min.x
-        );
-        assert!(
-            bbox.max.x < 6.5,
-            "Translated bbox max.x should be < 6.5, got {}",
-            bbox.max.x
-        );
-    }
-}
+#[path = "csg_tree_tests.rs"]
+mod tests;
