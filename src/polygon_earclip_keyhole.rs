@@ -69,6 +69,11 @@ impl EarClip {
             0
         };
         let mut connector: usize = INVALID;
+        let mut ring: usize = INVALID;
+        // A ring wholly above or below start.y -+ eps has no edge with a
+        // finite `vert_interp_y2x`, so it cannot take the connector. The
+        // margin only widens that test, so no ring that could is skipped.
+        let slack = 2.0 * self.epsilon.abs() + 1e-9 * (1.0 + start_pos.y.abs());
 
         // Port of the C++ CheckEdge lambda: take `edge` as the new connector
         // when the horizontal ray from `start` crosses it (finite x), `start`
@@ -77,8 +82,12 @@ impl EarClip {
         // non-CCW result) the vertical-ordering InsideEdge tie-break holds.
         // A degenerate ring is skipped whole, as `loop_verts` returning `None`
         // skipped it, so the connector is restored if the walk stops part-way.
-        for &outer_start in &self.outers {
-            let before = connector;
+        for (k, &outer_start) in self.outers.iter().enumerate() {
+            let rb = &self.outer_bbox[k];
+            if rb.min.y > start_pos.y + slack || rb.max.y < start_pos.y - slack {
+                continue;
+            }
+            let before = (connector, ring);
             let complete = self.for_each_loop_vert(outer_start, |edge| {
                 let x = self.vert_interp_y2x(edge, start_pos, on_top);
                 if x.is_finite()
@@ -97,10 +106,11 @@ impl EarClip {
                         }))
                 {
                     connector = edge;
+                    ring = k;
                 }
             });
             if !complete {
-                connector = before;
+                (connector, ring) = before;
             }
         }
 
@@ -109,12 +119,17 @@ impl EarClip {
             return;
         }
 
-        connector = self.find_closer_bridge(start, connector);
+        let (connector, ring) = self.find_closer_bridge(start, connector, ring);
         self.join_polygons(start, connector);
+        // The hole's verts are now part of that ring.
+        let rb = &mut self.outer_bbox[ring];
+        rb.union_point(bbox.min);
+        rb.union_point(bbox.max);
     }
 
     /// Refine keyhole connector: find any reflex vert closer to start.
-    fn find_closer_bridge(&self, start: usize, edge: usize) -> usize {
+    /// Also returns the `outers` index of the connector's ring.
+    fn find_closer_bridge(&self, start: usize, edge: usize, edge_ring: usize) -> (usize, usize) {
         let start_pos = self.polygon[start].pos;
         let edge_right = self.polygon[edge].right;
         let mut connector = if self.polygon[edge].pos.x < start_pos.x {
@@ -130,7 +145,7 @@ impl EarClip {
         };
 
         if (self.polygon[connector].pos.y - start_pos.y).abs() <= self.epsilon {
-            return connector;
+            return (connector, edge_ring);
         }
         let above: f64 = if self.polygon[connector].pos.y > start_pos.y {
             1.0
@@ -138,9 +153,60 @@ impl EarClip {
             -1.0
         };
 
-        // Degenerate rings are skipped whole, as in `cut_keyhole`.
-        for &outer_start in &self.outers {
-            let before = connector;
+        // Degenerate rings are skipped whole, as in `cut_keyhole`. A vert must
+        // be right of start, on the `above` side and not outside start ->
+        // connector (`ccw`), so a ring whose box shows that every vert fails
+        // one of those tests is skipped. The first two compare coordinates,
+        // and their margins only widen them, so they hold at any scale.
+        let eps = self.epsilon.abs();
+        let slack = 2.0 * eps + 1e-9 * (1.0 + start_pos.x.abs() + start_pos.y.abs());
+        let mut ring = edge_ring;
+        for (k, &outer_start) in self.outers.iter().enumerate() {
+            let rb = &self.outer_bbox[k];
+            if rb.max.x < start_pos.x - slack
+                || (above > 0.0 && rb.max.y < start_pos.y - slack)
+                || (above < 0.0 && rb.min.y > start_pos.y + slack)
+            {
+                continue;
+            }
+            let v2 = self.polygon[connector].pos - start_pos;
+            let len2 = (v2.x * v2.x + v2.y * v2.y).sqrt();
+            let mut best = f64::NEG_INFINITY;
+            let mut dist = len2;
+            for c in [
+                Vec2::new(rb.min.x, rb.min.y),
+                Vec2::new(rb.max.x, rb.min.y),
+                Vec2::new(rb.min.x, rb.max.y),
+                Vec2::new(rb.max.x, rb.max.y),
+            ] {
+                let v1 = c - start_pos;
+                best = best.max(above * (v1.x * v2.y - v1.y * v2.x));
+                dist = dist.max((v1.x * v1.x + v1.y * v1.y).sqrt());
+            }
+            // The `ccw` test, from the box's corners. `ccw` takes the cross
+            // product of vert - start with v2, which is linear in the vert, and
+            // rounding is monotonic, so each vert's rounded vert - start lies in
+            // the box of the corners' rounded differences: no vert's `above *
+            // cross` exceeds `best`. Below -margin, every vert's cross product
+            // has the wrong sign by more than dist * eps, twice what `ccw` calls
+            // collinear, plus 1e-9 * dist * len2, far above the rounding of the
+            // products. Then `ccw` returns -above for every vert, which fails
+            // whatever the tie-break says.
+            //
+            // That holds only while `ccw`'s own arithmetic neither overflows nor
+            // underflows. If `area * area` underflows to zero, or `base2 * tol *
+            // tol` overflows to infinity, `ccw` returns 0 for a vert that turns
+            // clearly the wrong way, and the tie-break can take it. So the cull
+            // applies only where neither can happen: dist, len2 and eps at most
+            // 1e75 (under 2^250) keep both sides of its comparison below 2^1004,
+            // and a margin of at least 1e-150 (over 2^-500) keeps `area * area`
+            // a normal number. Outside that range the ring is walked. NaN fails
+            // these comparisons, so it is walked too.
+            let margin = dist * eps + 1e-9 * dist * len2;
+            if dist <= 1e75 && eps <= 1e75 && margin >= 1e-150 && best < -margin {
+                continue;
+            }
+            let before = (connector, ring);
             let complete = self.for_each_loop_vert(outer_start, |vert| {
                 let inside = above
                     * ccw(
@@ -159,14 +225,15 @@ impl EarClip {
                     && self.vert_is_reflex(vert)
                 {
                     connector = vert;
+                    ring = k;
                 }
             });
             if !complete {
-                connector = before;
+                (connector, ring) = before;
             }
         }
 
-        connector
+        (connector, ring)
     }
 
     /// Create a keyhole between hole `start` and outer polygon `connector`.

@@ -195,3 +195,130 @@ fn keyholing_skips_an_outer_ring_collapsed_by_an_earlier_hole() {
     assert!(!ear_clip.for_each_loop_vert(collapsed, |v| visited.push(v)));
     assert!(visited.is_empty(), "visited {visited:?}");
 }
+
+/// Pins the triangles of offset rows of rings with holes and islands, where
+/// each hole sees several candidate rings, at a fixed and the automatic epsilon.
+#[test]
+fn keyholing_many_outer_rings_keeps_its_triangles() {
+    let mut polys = Vec::new();
+    for row in 0..9 {
+        for col in 0..12 {
+            let x0 = 5.0 * f64::from(col) + if row % 2 == 1 { 1.25 } else { 0.0 };
+            let y0 = 3.75 * f64::from(row) + 0.25 * f64::from(col % 3);
+            let (w, h) = (4.0, 4.5);
+            polys.push(vec![
+                Vec2::new(x0, y0),
+                Vec2::new(x0 + w, y0),
+                Vec2::new(x0 + w, y0 + h),
+                Vec2::new(x0, y0 + h),
+            ]);
+            if (row + col) % 3 == 0 {
+                polys.push(octagon(x0 + 2.0, y0 + 1.25, 0.75, true));
+                polys.push(octagon(x0 + 2.0, y0 + 3.25, 0.75, true));
+            } else {
+                polys.push(octagon(x0 + 2.0, y0 + 2.25, 1.5, true));
+                if col % 2 == 0 {
+                    polys.push(octagon(x0 + 2.0, y0 + 2.25, 0.5, false));
+                }
+            }
+        }
+    }
+    // The two epsilons happen to pick the same triangles here.
+    for epsilon in [1e-9, -1.0] {
+        let tris = crate::polygon::triangulate(&polys, epsilon, true);
+        assert_eq!(tris.len(), 1872);
+        assert_eq!(fnv(&tris), 0x57ad_354c_2a93_a394, "hash {:#x}", fnv(&tris));
+    }
+}
+
+fn tri_list(polys: &crate::types::Polygons, epsilon: f64) -> Vec<[i32; 3]> {
+    crate::polygon::triangulate(polys, epsilon, true)
+        .iter()
+        .map(|t| [t.x, t.y, t.z])
+        .collect()
+}
+
+/// The ring-box skip in `find_closer_bridge` must keep `ccw`'s results where
+/// they come from underflow. The hole starts at the origin, and the connector
+/// is (L, 2L) with L = 1e-84 and epsilon 0. The second ring's box,
+/// [0.1L, 0.5L] x [1.2L, 5e-77], lies clearly on the wrong side of that line,
+/// but its reflex vert (0.4L, 1.5L) has a cross product of -0.7L^2, whose
+/// square underflows to 0, so `ccw` calls it collinear and the tie-break
+/// takes it as the connector. Skipping the ring by its box changed the bridge.
+/// The triangles were taken on `main`.
+#[test]
+fn keyholing_keeps_a_bridge_ccw_finds_through_underflow() {
+    let polys = vec![
+        vec![
+            Vec2::new(1e-84, -1e-60),
+            Vec2::new(1e-84, 2e-84),
+            Vec2::new(-1e-60, 2e-84),
+            Vec2::new(-1e-60, -1e-60),
+        ],
+        vec![
+            Vec2::new(1e-85, 1.2e-84),
+            Vec2::new(5e-85, 1.2e-84),
+            Vec2::new(5e-85, 5e-77),
+            Vec2::new(4e-85, 1.5e-84),
+            Vec2::new(1e-85, 5e-77),
+        ],
+        vec![
+            Vec2::new(0.0, 0.0),
+            Vec2::new(-1e-70, -1e-70),
+            Vec2::new(-1e-70, 1e-70),
+        ],
+    ];
+    let expected = [
+        [3, 0, 1],
+        [2, 3, 1],
+        [7, 8, 4],
+        [5, 6, 7],
+        [9, 7, 4],
+        [5, 7, 9],
+        [4, 5, 9],
+        [11, 9, 10],
+    ];
+    assert_eq!(tri_list(&polys, 0.0), expected);
+}
+
+/// The overflow counterpart of the test above, with L = 1e80 and epsilon
+/// 1e74. The reflex vert (0.4L, 1.5L) sits in a ring of size 2e75 that lies
+/// clearly on the wrong side of start -> connector, but in `ccw` both
+/// `area * area * 4` and `base2 * tol * tol` overflow to infinity, so it
+/// returns 0 and the tie-break takes the vert. The triangles were taken on
+/// `main`.
+#[test]
+fn keyholing_keeps_a_bridge_ccw_finds_through_overflow() {
+    let l = 1e80;
+    let d = 1e75;
+    let (vx, vy) = (0.4 * l, 1.5 * l);
+    let polys = vec![
+        vec![
+            Vec2::new(l, -3.0 * l),
+            Vec2::new(l, 2.0 * l),
+            Vec2::new(-3.0 * l, 2.0 * l),
+            Vec2::new(-3.0 * l, -3.0 * l),
+        ],
+        vec![
+            Vec2::new(vx - d, vy - d),
+            Vec2::new(vx + d, vy - d),
+            Vec2::new(vx + d, vy + d),
+            Vec2::new(vx, vy),
+            Vec2::new(vx - d, vy + d),
+        ],
+        vec![Vec2::new(0.0, 0.0), Vec2::new(-d, -d), Vec2::new(-d, d)],
+    ];
+    let expected = [
+        [11, 9, 7],
+        [3, 0, 1],
+        [1, 2, 3],
+        [11, 7, 8],
+        [5, 6, 7],
+        [7, 9, 10],
+        [10, 11, 8],
+        [4, 5, 7],
+        [7, 10, 8],
+        [8, 4, 7],
+    ];
+    assert_eq!(tri_list(&polys, 1e74), expected);
+}
