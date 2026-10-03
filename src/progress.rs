@@ -32,6 +32,8 @@
 // Who reports what:
 //   robust/intersection_graph.rs  NarrowPhase, SelfIntersections,
 //                                 CandidatePoints, Registries, Arrangements
+//   robust/coplanar_clip.rs       CoplanarOverlaps (only when there are
+//                                 coplanar overlap regions)
 //   robust/cells.rs               Cells (per arrangement edge)
 //   robust/mod.rs                 Winding, Assemble (phase transitions only)
 //   boolean3.rs                   ExactBoolean (one indeterminate phase; the
@@ -55,7 +57,9 @@
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::Mutex;
 
-/// Coarse pipeline stages, in the order the robust engine runs them.
+/// Coarse pipeline stages. Ids 0-7 are the order the robust engine runs
+/// them; later ids are appended, so an id is not a pipeline position — ask
+/// [`Phase::pipeline_position`] for that.
 ///
 /// Ids are part of the FFI surface (`manifold_rs_progress_phase_name`), so new
 /// phases are appended rather than inserted.
@@ -76,10 +80,15 @@ pub enum Phase {
     /// hulls and batch reductions. Shares its id with manifold-sharp's
     /// `Phase.Minkowski`.
     Minkowski = 9,
+    /// The robust engine's phase 3: cross-copying primitives through coplanar
+    /// overlap regions, counted in regions. Reported only when there are
+    /// coplanar regions, between `SelfIntersections` and `CandidatePoints`.
+    /// Shares its id with manifold-sharp's `Phase.CoplanarOverlaps`.
+    CoplanarOverlaps = 10,
 }
 
 impl Phase {
-    pub const ALL: [Phase; 10] = [
+    pub const ALL: [Phase; 11] = [
         Phase::NarrowPhase,
         Phase::SelfIntersections,
         Phase::CandidatePoints,
@@ -90,7 +99,37 @@ impl Phase {
         Phase::Assemble,
         Phase::ExactBoolean,
         Phase::Minkowski,
+        Phase::CoplanarOverlaps,
     ];
+
+    /// Every phase in the order a single boolean runs them — the order a
+    /// consumer sees. Ids 0-7 are this order, but appended ids are not
+    /// pipeline positions (`CoplanarOverlaps`, id 10, runs third). The
+    /// engine-exclusive tail (`ExactBoolean`, `Minkowski`) never shares a run
+    /// with the robust phases, so its place after them is a convention, not
+    /// an observation.
+    pub const PIPELINE_ORDER: [Phase; 11] = [
+        Phase::NarrowPhase,
+        Phase::SelfIntersections,
+        Phase::CoplanarOverlaps,
+        Phase::CandidatePoints,
+        Phase::Registries,
+        Phase::Arrangements,
+        Phase::Cells,
+        Phase::Winding,
+        Phase::Assemble,
+        Phase::ExactBoolean,
+        Phase::Minkowski,
+    ];
+
+    /// The phase's index in [`Phase::PIPELINE_ORDER`]: compare these, never
+    /// ids, to ask whether one phase runs before another.
+    pub fn pipeline_position(self) -> usize {
+        Phase::PIPELINE_ORDER
+            .iter()
+            .position(|&p| p == self)
+            .expect("every phase is in PIPELINE_ORDER")
+    }
 
     /// Stable display name. `&'static str` so a reporter callback never has to
     /// allocate to forward it.
@@ -106,6 +145,7 @@ impl Phase {
             Phase::Assemble => "assemble",
             Phase::ExactBoolean => "exact boolean",
             Phase::Minkowski => "minkowski",
+            Phase::CoplanarOverlaps => "coplanar overlaps",
         }
     }
 
@@ -256,7 +296,8 @@ impl ProgressReporter {
     /// hides its bar when it fills therefore never hides it.
     ///
     /// Every determinate phase closes with this: the five in
-    /// `robust/intersection_graph.rs`, `Cells` in `robust/cells.rs`, and
+    /// `robust/intersection_graph.rs`, `CoplanarOverlaps` in
+    /// `robust/coplanar_clip.rs`, `Cells` in `robust/cells.rs`, and
     /// `Minkowski`, which spends its closing merge's unit here. The
     /// indeterminate phases (`winding`, `assemble`, `exact boolean`) do not —
     /// with no total there is no bar to leave short, and the emit would only

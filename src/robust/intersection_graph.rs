@@ -38,10 +38,7 @@ use super::arrangement::{self, ArrangementInput};
 use super::exact::rational::{r3_eq, R3};
 use super::tri_tri::{tri_tri_intersect, TriTriIsect};
 
-use super::graph_geom::{
-    approx3, box3_contains, clip_segment_to_polygon, point_in_polygon_coplanar, point_on_segment_f,
-    seg_box3,
-};
+use super::graph_geom::{approx3, box3_contains, point_on_segment_f, seg_box3};
 use super::graph_types::{bit_edge_key, geo_edge_key, BitEdgeKey, GeoEdgeKey, PointTable};
 
 // `tri_box` / `is_degenerate` / `real_self_contact` / `SelfCutStats` stay
@@ -53,9 +50,9 @@ pub use super::graph_types::{edge_key, EdgeKey, IntersectionGraph, Piece, VertIn
 /// A pair's primitives after distribution: segments (including coplanar
 /// boundary edges) and isolated points.
 #[derive(Clone, Debug, Default)]
-struct TriPrims {
-    points: Vec<(R3, usize)>,
-    segments: Vec<(R3, R3, usize)>,
+pub(super) struct TriPrims {
+    pub(super) points: Vec<(R3, usize)>,
+    pub(super) segments: Vec<(R3, R3, usize)>,
 }
 
 /// Build the intersection graph for soups `p` and `q` (each triangle wound
@@ -287,36 +284,15 @@ pub fn build_graph_with_progress(
     let t_cross = crate::timing::start();
 
     // 3. Cross-copy primitives through coplanar overlap regions so both
-    // sides see identical geometry inside the shared area. Clip against the
-    // region to avoid dragging unrelated geometry across.
-    for (pi, qi, poly) in &coplanar_regions {
-        if cancelled() {
-            return None;
-        }
-        let from_p: TriPrims = prims[0][*pi].clone();
-        let from_q: TriPrims = prims[1][*qi].clone();
-        let copy = |src: &TriPrims, dst: &mut TriPrims| {
-            for (a, b, prov) in &src.segments {
-                if let Some((ca, cb)) = clip_segment_to_polygon(a, b, poly) {
-                    if !dst.segments.iter().any(|(x, y, pv)| {
-                        pv == prov && ((x, y) == (&ca, &cb) || (x, y) == (&cb, &ca))
-                    }) {
-                        dst.segments.push((ca, cb, *prov));
-                    }
-                }
-            }
-            for (pt, prov) in &src.points {
-                if clip_segment_to_polygon(pt, pt, poly).is_some()
-                    || point_in_polygon_coplanar(pt, poly)
-                {
-                    if !dst.points.iter().any(|(x, pv)| pv == prov && x == pt) {
-                        dst.points.push((pt.clone(), *prov));
-                    }
-                }
-            }
-        };
-        copy(&from_p, &mut prims[1][*qi]);
-        copy(&from_q, &mut prims[0][*pi]);
+    // sides see identical geometry inside the shared area (robust/
+    // coplanar_clip.rs; its own progress phase when there are regions).
+    if !super::coplanar_clip::cross_copy_coplanar_regions(
+        &mut prims,
+        &coplanar_regions,
+        token,
+        progress,
+    ) {
+        return None;
     }
 
     crate::timing::print("robust: coplanar cross-copy", t_cross);

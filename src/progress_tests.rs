@@ -48,13 +48,36 @@ impl Sink {
     }
 }
 
-/// Phase id of a reported name, for the monotonicity check.
-fn phase_id(name: &str) -> u32 {
-    Phase::ALL
+/// The phase a reported name belongs to, for the monotonicity check.
+fn phase_named(name: &str) -> Phase {
+    *Phase::ALL
         .iter()
         .find(|p| p.name() == name)
         .unwrap_or_else(|| panic!("unknown phase name {name:?}"))
-        .id()
+}
+
+/// The monotonicity check: phases never go backwards and every fraction is in
+/// [0, 1]. "Backwards" is by [`Phase::pipeline_position`], which on phases
+/// 0-7 is the id and on appended phases is where they actually run. Returns
+/// the distinct phases seen, in order.
+fn assert_phases_in_pipeline_order_with_valid_fractions(events: &[Event]) -> Vec<&'static str> {
+    let mut last = 0usize;
+    let mut seen = Vec::new();
+    for (name, fraction) in events {
+        let position = phase_named(name).pipeline_position();
+        assert!(
+            position >= last,
+            "phase {name:?} (position {position}) went backwards from {last}"
+        );
+        if position != last || seen.is_empty() {
+            seen.push(*name);
+        }
+        last = position;
+        if let Some(f) = fraction {
+            assert!((0.0..=1.0).contains(f), "fraction {f} out of range");
+        }
+    }
+    seen
 }
 
 fn cube(offset: f64) -> Manifold {
@@ -137,22 +160,7 @@ fn robust_boolean_reports_monotonic_phases_with_valid_fractions() {
 
     let events = sink.events();
     assert!(!events.is_empty(), "a robust boolean must report something");
-    let mut last = 0u32;
-    let mut seen = Vec::new();
-    for (name, fraction) in &events {
-        let id = phase_id(name);
-        assert!(
-            id >= last,
-            "phase {name:?} ({id}) went backwards from {last}"
-        );
-        if id != last || seen.is_empty() {
-            seen.push(*name);
-        }
-        last = id;
-        if let Some(f) = fraction {
-            assert!((0.0..=1.0).contains(f), "fraction {f} out of range");
-        }
-    }
+    let seen = assert_phases_in_pipeline_order_with_valid_fractions(&events);
     // Every robust phase should appear for an input that actually intersects.
     for expected in [
         "narrow phase",
@@ -426,4 +434,29 @@ fn racing_workers_never_send_the_bar_backwards() {
             );
         }
     }
+}
+
+/// A robust boolean whose operands have coplanar overlap regions reports the
+/// appended coplanar overlaps phase (id 10) between self intersections (1)
+/// and candidate points (2), and the order check accepts it because it
+/// compares pipeline positions; an ascending-id check fails here. Shared 1:1
+/// with manifold-sharp's
+/// `ProgressTests.RobustBooleanOverCoplanarFacesReportsPhasesInPipelineOrder`.
+#[test]
+fn robust_boolean_over_coplanar_faces_reports_phases_in_pipeline_order() {
+    let (body, slab) = crate::robust::coplanar_cross_copy_tests::fixture();
+    let sink = Sink::default();
+    let reporter = sink.reporter();
+    body.boolean_with_engine_and_progress(
+        &slab,
+        OpType::Add,
+        BooleanEngine::Robust,
+        None,
+        Some(&reporter),
+    );
+    let seen = assert_phases_in_pipeline_order_with_valid_fractions(&sink.events());
+    assert!(
+        seen.contains(&Phase::CoplanarOverlaps.name()),
+        "the fixture must exercise the appended phase (saw {seen:?})"
+    );
 }

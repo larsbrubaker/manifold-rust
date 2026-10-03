@@ -1,14 +1,13 @@
 // robust/graph_geom.rs — Geometric helpers of the intersection-graph build:
-// triangle boxes and degeneracy, the filtered point-on-segment test used by
-// the split registries, and the exact coplanar clip/containment tests used by
-// the cross-copy step.
+// triangle boxes and degeneracy, and the filtered point-on-segment test used
+// by the split registries. (The exact coplanar clip/containment tests the
+// cross-copy step uses live on `CoplanarClipRegion` in
+// robust/coplanar_clip.rs, which prepares each polygon once.)
 //
 // Split out of robust/intersection_graph.rs (its only caller besides
 // robust/graph_self_cut.rs and robust/soup.rs, which reach `tri_box` /
 // `is_degenerate` through the `intersection_graph` re-exports). The exact
 // predicates themselves live in robust/exact/{approx,predicates}.rs.
-
-use super::exact::backend::{rat_is_zero, rat_one, rat_zero, Rational};
 
 use crate::linalg::Vec3;
 use crate::types::Box;
@@ -96,82 +95,4 @@ pub(super) fn point_on_segment_f(
         Some(false) => false,
         _ => point_on_segment(p, a, b),
     }
-}
-
-/// Clip segment (a,b) to a convex coplanar polygon (2D test via projection
-/// on the polygon's own plane). Returns a positive-length sub-segment or
-/// None. Used to cross-copy primitives into coplanar overlap regions.
-pub(super) fn clip_segment_to_polygon(a: &R3, b: &R3, poly: &[R3]) -> Option<(R3, R3)> {
-    use super::exact::predicates::{orient2d_r, tri_normal_r};
-    use super::exact::rational::R2;
-    use super::exact::Sign;
-    use super::tri_tri::dominant_axis;
-
-    debug_assert!(poly.len() >= 3);
-    let n = tri_normal_r(&poly[0], &poly[1], &poly[2]);
-    let axis = dominant_axis(&n);
-    let mut pts2: Vec<R2> = poly.iter().map(|p| p.project_drop(axis)).collect();
-    if orient2d_r(&pts2[0], &pts2[1], &pts2[2]) == Sign::Neg {
-        pts2.reverse();
-    }
-    let a2 = a.project_drop(axis);
-    let b2 = b.project_drop(axis);
-    let dir = b2.sub(&a2);
-
-    // Parametric clip of [0,1] against each CCW edge halfplane.
-    let mut t0 = rat_zero();
-    let mut t1 = rat_one();
-    for i in 0..pts2.len() {
-        let e0 = &pts2[i];
-        let e1 = &pts2[(i + 1) % pts2.len()];
-        let edge = e1.sub(e0);
-        // Signed distance numerators of a2 + t*dir against the edge line:
-        // f(t) = cross(edge, a2 + t*dir - e0) = fa + t * fd.
-        let fa = edge.cross(&a2.sub(e0));
-        let fd = edge.cross(&dir);
-        if rat_is_zero(&fd) {
-            if fa < rat_zero() {
-                return None; // parallel and strictly outside
-            }
-            continue;
-        }
-        let t_hit = -&fa / &fd;
-        if fd > rat_zero() {
-            // entering: f grows with t → require t >= t_hit
-            if t_hit > t0 {
-                t0 = t_hit;
-            }
-        } else if t_hit < t1 {
-            t1 = t_hit;
-        }
-        if t0 >= t1 {
-            return None;
-        }
-    }
-    if t0 >= t1 {
-        return None;
-    }
-    let seg = |t: &Rational| a.add(&b.sub(a).scale(t));
-    Some((seg(&t0), seg(&t1)))
-}
-
-/// Exact point-in-convex-polygon test for a point on the polygon's plane.
-pub(super) fn point_in_polygon_coplanar(p: &R3, poly: &[R3]) -> bool {
-    use super::exact::predicates::{orient2d_r, tri_normal_r};
-    use super::exact::Sign;
-    use super::tri_tri::dominant_axis;
-
-    let n = tri_normal_r(&poly[0], &poly[1], &poly[2]);
-    let axis = dominant_axis(&n);
-    let mut pts2: Vec<_> = poly.iter().map(|q| q.project_drop(axis)).collect();
-    if orient2d_r(&pts2[0], &pts2[1], &pts2[2]) == Sign::Neg {
-        pts2.reverse();
-    }
-    let p2 = p.project_drop(axis);
-    for i in 0..pts2.len() {
-        if orient2d_r(&pts2[i], &pts2[(i + 1) % pts2.len()], &p2) == Sign::Neg {
-            return false;
-        }
-    }
-    true
 }

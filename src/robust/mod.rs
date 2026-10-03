@@ -21,7 +21,8 @@
 //   intersection_graph — broad phase, prim distribution, piece emission
 //                        (split helpers: graph_types — edge keys, vertex
 //                        interner, Piece/IntersectionGraph; graph_geom —
-//                        boxes, clips, filtered on-segment tests;
+//                        boxes, filtered on-segment tests; coplanar_clip —
+//                        the coplanar cross-copy and its prepared clips;
 //                        graph_self_cut — same-mesh narrow phase)
 //   cells              — arrangement cell complex + winding propagation
 //                        (cells_extract — containment predicate + boundary
@@ -54,6 +55,7 @@ pub mod assemble;
 pub mod cdt;
 pub mod cells;
 pub mod cells_extract;
+mod coplanar_clip;
 pub mod exact;
 mod graph_geom;
 mod graph_self_cut;
@@ -400,3 +402,7 @@ mod rebuild_tests;
 #[cfg(test)]
 #[path = "thingi_tests.rs"]
 mod thingi_tests;
+
+#[cfg(test)]
+#[path = "coplanar_cross_copy_tests.rs"]
+pub(crate) mod coplanar_cross_copy_tests;
