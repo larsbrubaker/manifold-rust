@@ -437,7 +437,15 @@ fn batch_boolean(
     // C++ processes up to 4 pairs per round (for its parallel lane), pushing
     // the results back only at the end of the round — even in sequential
     // builds. The round structure changes which meshes pair up, so mirror it.
-    let mut tmp: Vec<MeshEntry> = Vec::new();
+    //
+    // With `parallel` the pairs run side by side, as in C++'s `tbb::task_group`
+    // (csg_tree.cpp:451-479). They are chosen before any runs and pushed back in
+    // pair order with the sequential serials, so every later pairing is the
+    // same at any thread count. Only the absolute mesh-ID values may vary with
+    // scheduling (each boolean reserves IDs from the process-wide counter), and
+    // MeshGL never exposes them: its runs are ranked by relative order, which
+    // update_reference and compose_meshes fix independent of those values.
+    let mut pairs: Vec<(MeshEntry, MeshEntry)> = Vec::with_capacity(4);
     while heap.len() > 1 {
         // Once-per-round check, matching C++ BatchBoolean's per-iteration gate
         // (csg_tree.cpp:460).
@@ -450,12 +458,15 @@ fn batch_boolean(
             }
             let a = heap.pop().unwrap();
             let b = heap.pop().unwrap();
-            let result = simple_boolean(&a.0, &b.0, op, token);
-            tmp.push(MeshEntry(result, next_serial));
-            next_serial += 1;
+            pairs.push((a, b));
         }
-        for entry in tmp.drain(..) {
-            heap.push(entry);
+        let results = crate::par::maybe_par_map(pairs.len(), 2, |i| {
+            simple_boolean(&pairs[i].0 .0, &pairs[i].1 .0, op, token)
+        });
+        pairs.clear();
+        for result in results {
+            heap.push(MeshEntry(result, next_serial));
+            next_serial += 1;
         }
     }
 
@@ -706,5 +717,46 @@ mod tests {
             "Translated bbox max.x should be < 6.5, got {}",
             bbox.max.x
         );
+    }
+
+    /// Pins a union of 64 overlapping cubes to the sequential rounds' output,
+    /// and with `parallel` on 1 and 8 threads. Coordinates are exact, so the
+    /// hash holds on every platform.
+    #[test]
+    fn test_batch_union_rounds_keep_the_sequential_output() {
+        let union = || {
+            let leaves = (0..64)
+                .map(|i| {
+                    let at = Vec3::new(f64::from(i % 8) * 0.5, f64::from(i / 8) * 0.5, 0.0);
+                    CsgNode::leaf(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(at))))
+                })
+                .collect();
+            let gl =
+                crate::manifold::Manifold::from_impl(CsgNode::op_n(OpType::Add, leaves).evaluate())
+                    .get_mesh_gl64(-1);
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            let bytes = gl
+                .vert_properties
+                .iter()
+                .flat_map(|x| x.to_bits().to_le_bytes());
+            let ints = gl.tri_verts.iter().chain(&gl.run_index);
+            for b in bytes.chain(ints.flat_map(|x| x.to_le_bytes())) {
+                h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+            }
+            h
+        };
+        #[cfg(feature = "parallel")]
+        for threads in [1, 8] {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            assert_eq!(
+                pool.install(union),
+                0x0045_f3cc_e459_28c2,
+                "{threads} threads"
+            );
+        }
+        assert_eq!(union(), 0x0045_f3cc_e459_28c2);
     }
 }
