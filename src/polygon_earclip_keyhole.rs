@@ -31,13 +31,13 @@ impl EarClip {
         // lies inside THAT edge's wedge, and it beats the current connector —
         // either the crossing point is CCW of the connector edge, or (for any
         // non-CCW result) the vertical-ordering InsideEdge tie-break holds.
-        let outers: Vec<usize> = self.outers.clone();
-        for outer_start in &outers {
-            let verts = match self.loop_verts(*outer_start) {
-                None => continue,
-                Some(v) => v,
-            };
-            for &edge in &verts {
+        // A degenerate ring is skipped whole, as `loop_verts` returning `None`
+        // skipped it, so the connector is restored if the walk stops part-way.
+        // C++ `Loop` keeps what it saw before the degenerate vert; see
+        // docs/CPP_DIVERGENCES.md entry 12.
+        for &outer_start in &self.outers {
+            let before = connector;
+            let complete = self.for_each_loop_vert(outer_start, |edge| {
                 let x = self.vert_interp_y2x(edge, start_pos, on_top);
                 if x.is_finite()
                     && self.vert_inside_edge(start, edge, true)
@@ -56,6 +56,9 @@ impl EarClip {
                 {
                     connector = edge;
                 }
+            });
+            if !complete {
+                connector = before;
             }
         }
 
@@ -93,13 +96,10 @@ impl EarClip {
             -1.0
         };
 
-        let outers: Vec<usize> = self.outers.clone();
-        for outer_start in &outers {
-            let verts = match self.loop_verts(*outer_start) {
-                None => continue,
-                Some(v) => v,
-            };
-            for &vert in &verts {
+        // Degenerate rings are skipped whole, as in `cut_keyhole`.
+        for &outer_start in &self.outers {
+            let before = connector;
+            let complete = self.for_each_loop_vert(outer_start, |vert| {
                 let inside = above
                     * ccw(
                         start_pos,
@@ -118,6 +118,9 @@ impl EarClip {
                 {
                     connector = vert;
                 }
+            });
+            if !complete {
+                connector = before;
             }
         }
 

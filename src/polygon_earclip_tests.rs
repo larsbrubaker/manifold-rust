@@ -70,3 +70,63 @@ fn multi_hole_triangulation_has_no_inverted_triangles() {
         expected_area
     );
 }
+
+/// FNV-1a over a triangle list, pinning the triangles and their order.
+fn fnv(tris: &[IVec3Out]) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for t in tris {
+        for c in [t.x, t.y, t.z] {
+            for b in c.to_le_bytes() {
+                h ^= u64::from(b);
+                h = h.wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+    }
+    h
+}
+
+fn octagon(cx: f64, cy: f64, r: f64, hole: bool) -> Vec<Vec2> {
+    let mut ring: Vec<Vec2> = [
+        (1.0, -0.5),
+        (0.5, -1.0),
+        (-0.5, -1.0),
+        (-1.0, -0.5),
+        (-1.0, 0.5),
+        (-0.5, 1.0),
+        (0.5, 1.0),
+        (1.0, 0.5),
+    ]
+    .iter()
+    .map(|&(x, y)| Vec2::new(cx + r * x, cy + r * y))
+    .collect();
+    if !hole {
+        ring.reverse();
+    }
+    ring
+}
+
+/// Pins the triangles of a 24x24 grid of octagonal holes, every other row
+/// shifted so the bridges run between holes rather than to the outer edge.
+#[test]
+fn keyholing_many_holes_keeps_its_triangles() {
+    let n = 24;
+    let size = 3.0 * f64::from(n) + 3.0;
+    let mut polys = vec![vec![
+        Vec2::new(0.0, 0.0),
+        Vec2::new(size, 0.0),
+        Vec2::new(size, size),
+        Vec2::new(0.0, size),
+    ]];
+    for i in 0..n {
+        for j in 0..n {
+            let cx = 3.0 * f64::from(i) + 2.0 + if j % 2 == 1 { 0.75 } else { 0.0 };
+            let cy = 3.0 * f64::from(j) + 2.0;
+            polys.push(octagon(cx, cy, 1.0, true));
+        }
+    }
+    let tris = crate::polygon::triangulate(&polys, 1e-9, true);
+    // Every vert is kept, so v + 2h - 2 triangles.
+    let verts = 4 + 8 * n * n;
+    assert_eq!(tris.len() as i32, verts + 2 * n * n - 2);
+    assert_eq!(fnv(&tris), 0xb444_9c9b_cd61_b83e, "hash {:#x}", fnv(&tris));
+}

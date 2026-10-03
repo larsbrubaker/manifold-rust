@@ -14,8 +14,8 @@ Two kinds of entry live here, and they are not the same claim:
   resolve toward the C++ on the merits but cannot change unilaterally, because a
   downstream consumer verifies against this tree bit-for-bit. These are
   *disclosures*, not justifications: the entry states what differs, why it
-  cannot be fixed here alone, and what a coordinated fix would take. Entry 2
-  (entries 5 and 6 were of this kind and are retired).
+  cannot be fixed here alone, and what a coordinated fix would take. Entries 2
+  and 12 (entries 5 and 6 were of this kind and are retired).
 
 A third, narrower kind records where the C++ output is itself not pinned:
 
@@ -49,6 +49,7 @@ belongs in any category for convenience.
 | 9 | API shape | `Manifold::slice` / `project` return a `CrossSection`, not `Polygons` |
 | 10 | Extension | `CrossSection::minkowski_sum` (no C++ counterpart) |
 | 11 | Justified | QuickHull decides above-a-face exactly |
+| 12 | Inherited (latent) | Keyhole bridge searches skip a degenerate outer ring whole |
 
 Anything else that differs from the C++ is a bug, not an entry. The ones known
 and not yet fixed are listed under *Known unresolved mismatches* at the end, so
@@ -426,6 +427,59 @@ in this tree moved. manifold-sharp made the same fix in its commit `b178563` (it
 `sphere(0.05781898171099809, 12)`): an input point lay 0.581 and 0.2336 outside a
 hull face before the fix, under 1e-12 after. Both tests are shared with
 manifold-sharp's `QuickHullContainmentTests`.
+
+## 12. The keyhole bridge searches skip a degenerate outer ring whole (2026-10-03)
+
+**What differs:** `EarClip::cut_keyhole` and `find_closer_bridge`
+(`src/polygon_earclip_keyhole.rs`) walk every outer ring with
+`for_each_loop_vert`. When the walk reports the ring degenerate (a vert with
+`right == left`), the search restores the connector it had before that ring, so
+a degenerate ring contributes nothing. The C++ (`src/polygon.cpp:544`, `Loop`)
+applies the function to each vert up to the degenerate one and returns
+`polygon_.end()`; its two callers here (`CutKeyhole`, `:724`, and
+`FindCloserBridge`, `:773`) ignore that return value, so whatever the lambda
+did before the degenerate vert stands.
+
+**Why we keep it.** It is inherited. The first Rust port collected each ring
+with `loop_verts`, which returns `None` for a degenerate ring, and the searches
+skipped it with `continue`; that shipped in every release so far, and
+manifold-sharp transcribes it (`ManifoldSharp/PolygonEarclip.Algorithm.cs`,
+which verifies against this tree bit-for-bit). External PR #6 replaced the
+collection with a visitor for speed and kept the skip-whole behaviour exactly
+by saving and restoring the connector around each ring, rather than moving
+toward the C++ in a speed change.
+
+**What is observably different: nothing, and here is why.** The two behaviours
+can differ only if a walk applies the function to at least one vert and then
+meets a degenerate one. That cannot happen. `Link` (`polygon.cpp:531`) and
+`JoinPolygons` (`:789`-`:792`) are the only pointer writes, and both keep every
+unclipped vert's `left->right` and `right->left` pointing back at it. So the
+unclipped verts form closed rings, and a vert with `right == left` belongs to a
+ring of one or two verts in which every vert has `right == left`. `Loop` checks
+`right == left` on each unclipped vert *before* calling the function on it, and
+once it reaches an unclipped vert it only follows `right` within that vert's
+ring. A degenerate ring therefore returns at the first vert the function would
+have seen, in both the C++ and the port, and no vert is ever visited. The
+save-and-restore never changes the connector. It stays as a guard in case the
+walk or the ring invariant changes.
+
+The entry is filed as inherited, not as "no difference", because the code shape
+does differ from the C++ and a trace-diff session reading the two side by side
+should not have to re-derive the argument above. Harmonizing is free: dropping
+the restore (taking the C++ shape) cannot change any output, so manifold-sharp
+can follow at its own pace and neither tree's pins move.
+
+**Evidence:** the invariant argument above, from `polygon.cpp:531-566` and
+`:785-797`. A throwaway fuzz (not committed) instrumented `for_each_loop_vert`
+to count degenerate walks and walks that had called the function before
+reporting degenerate. It triangulated 2,000,000 random sets of 1-5 rings with
+1-6 verts each on a 5x5 integer grid, a third of the rings being reversed or
+rotated copies of earlier ones (coincident outer and hole rings collapse to
+two-vert rings when joined), at epsilon 0, 1e-9, 0.3 and automatic. The bridge
+searches met a degenerate outer ring 181,312 times; every walk anywhere in the
+triangulator that reported degenerate (2,921,184) had visited zero verts first.
+`polygon_earclip::tests::keyholing_many_holes_keeps_its_triangles` pins the
+triangles that the visitor change left unchanged.
 
 ## Known unresolved mismatches (bugs, not entries)
 

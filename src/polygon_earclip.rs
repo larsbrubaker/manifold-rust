@@ -168,10 +168,18 @@ impl EarClip {
         self.polygon[left].right_dir = safe_normalize_2d(dir);
     }
 
-    /// Apply `f` to each unclipped vert in the polygon ring starting from `first`.
-    /// Returns `Some(last_v)` on success (last_v == first), or `None` if degenerate.
+    /// The unclipped verts of the ring starting from `first`, or `None` if
+    /// the ring is degenerate.
     fn loop_verts(&self, first: usize) -> Option<Vec<usize>> {
         let mut result = Vec::new();
+        self.for_each_loop_vert(first, |v| result.push(v))
+            .then_some(result)
+    }
+
+    /// Apply `f` to each vert `loop_verts` would return, without collecting
+    /// them, as C++ `Loop` does. Returns `false` if the ring is degenerate,
+    /// after `f` has already seen the verts before the degenerate one.
+    fn for_each_loop_vert(&self, first: usize, mut f: impl FnMut(usize)) -> bool {
         let mut v = first;
         let mut cur_first = first;
         loop {
@@ -180,22 +188,22 @@ impl EarClip {
                 if !self.clipped(cur_first) {
                     v = cur_first;
                     if self.polygon[v].right == self.polygon[v].left {
-                        return None;
+                        return false;
                     }
-                    result.push(v);
+                    f(v);
                 }
             } else {
                 if self.polygon[v].right == self.polygon[v].left {
-                    return None;
+                    return false;
                 }
-                result.push(v);
+                f(v);
             }
             v = self.polygon[v].right;
             if v == cur_first {
                 break;
             }
         }
-        Some(result)
+        true
     }
 
     // -----------------------------------------------------------------------
