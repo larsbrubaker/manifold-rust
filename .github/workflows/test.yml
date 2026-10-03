@@ -32,6 +32,12 @@ jobs:
       - name: Run tests
         run: cargo test --release
 
+      # The `parallel` feature compiles different code paths (src/par.rs) and
+      # feature-gated tests; their output must equal the sequential build's,
+      # which the pinned hashes in src/par_tests.rs check in both runs.
+      - name: Run tests with the parallel feature
+        run: cargo test --release --features parallel
+
       # The step above only covers the root package. The FFI crate is named
       # explicitly rather than using --workspace, which would also pull in the
       # wasm demo member (a wasm32 cdylib with no host tests).
