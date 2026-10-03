@@ -170,3 +170,127 @@ fn test_union_keeps_concave_corner() {
         );
     }
 }
+
+/// The owners the sequential scans find: each orbit's smallest eligible
+/// halfedge, walked with visited flags in ascending order.
+#[cfg(feature = "parallel")]
+fn sequential_orbit_owners(
+    halfedge: &[Halfedge],
+    eligible: &dyn Fn(&Halfedge) -> bool,
+) -> Vec<usize> {
+    let mut visited = vec![false; halfedge.len()];
+    let mut owners = Vec::new();
+    for i in 0..halfedge.len() {
+        if visited[i] || !eligible(&halfedge[i]) {
+            continue;
+        }
+        owners.push(i);
+        let mut current = i;
+        loop {
+            visited[current] = true;
+            current = next_halfedge(halfedge[current].paired_halfedge) as usize;
+            if current == i {
+                break;
+            }
+        }
+    }
+    owners
+}
+
+/// `orbit_owners` must give each orbit's smallest eligible halfedge, as the
+/// sequential scans do, on cubes touching along edges, for two rules.
+#[cfg(feature = "parallel")]
+#[test]
+fn test_orbit_owners_match_the_sequential_scan() {
+    let cube = crate::manifold::Manifold::cube(Vec3::splat(1.0), false);
+    let mut model = crate::manifold::Manifold::empty();
+    for x in 0..4 {
+        for y in 0..4 {
+            for z in 0..4 {
+                if (x + y + z) % 2 == 0 {
+                    let at = Vec3::new(f64::from(x), f64::from(y), f64::from(z));
+                    model = model.union(&cube.translate(at));
+                }
+            }
+        }
+    }
+    let halfedge = &model.as_impl().halfedge;
+    let rules: [&(dyn Fn(&Halfedge) -> bool + Sync); 2] = [&|h| h.start_vert >= 0, &|h| {
+        h.start_vert >= 0 && h.end_vert % 3 != 0
+    }];
+    for eligible in rules {
+        let expected = sequential_orbit_owners(halfedge, eligible);
+        assert_eq!(orbit_owners(halfedge, 0, eligible), Some(expected));
+    }
+}
+
+/// The halfedges of a bicone: two fans of `k` triangles around a ring, so
+/// both apexes have valence `k`. The top fan is stored in reverse, so the walk
+/// around the top apex meets its halfedges in ascending order.
+#[cfg(feature = "parallel")]
+fn bicone_halfedges(k: usize) -> Vec<Halfedge> {
+    let (top, bottom) = (k as i32, k as i32 + 1);
+    let ring = |t: usize| (t % k) as i32;
+    let top_tri = |t: usize| k - 1 - t % k;
+    let bottom_tri = |t: usize| k + t % k;
+    let mut halfedge = vec![
+        Halfedge {
+            start_vert: -1,
+            end_vert: -1,
+            paired_halfedge: -1,
+            prop_vert: -1,
+        };
+        6 * k
+    ];
+    let mut set = |tri: usize, verts: [i32; 3], pairs: [usize; 3]| {
+        for j in 0..3 {
+            halfedge[3 * tri + j] = Halfedge {
+                start_vert: verts[j],
+                end_vert: verts[(j + 1) % 3],
+                paired_halfedge: pairs[j] as i32,
+                prop_vert: verts[j],
+            };
+        }
+    };
+    for t in 0..k {
+        // Top (apex, r_t, r_t+1), bottom (apex, r_t+1, r_t).
+        set(
+            top_tri(t),
+            [top, ring(t), ring(t + 1)],
+            [
+                3 * top_tri(t + k - 1) + 2,
+                3 * bottom_tri(t) + 1,
+                3 * top_tri(t + 1),
+            ],
+        );
+        set(
+            bottom_tri(t),
+            [bottom, ring(t + 1), ring(t)],
+            [
+                3 * bottom_tri(t + 1) + 2,
+                3 * top_tri(t) + 1,
+                3 * bottom_tri(t + k - 1),
+            ],
+        );
+    }
+    halfedge
+}
+
+/// Two vertices of valence 100,000, in a mesh above `ORBIT_PAR_THRESHOLD`.
+/// If every halfedge walked its orbit until it met a smaller one, this would
+/// take 1e10 steps; walks stop at `OWNER_WALK_CAP` and each long orbit is
+/// walked once.
+#[cfg(feature = "parallel")]
+#[test]
+fn test_orbit_owners_of_a_high_valence_vertex() {
+    let halfedge = bicone_halfedges(100_000);
+    assert!(halfedge.len() >= ORBIT_PAR_THRESHOLD);
+    let rules: [&(dyn Fn(&Halfedge) -> bool + Sync); 2] = [&|h| h.start_vert >= 0, &|h| {
+        h.start_vert >= 0 && h.end_vert % 3 != 0
+    }];
+    for eligible in rules {
+        let expected = sequential_orbit_owners(&halfedge, eligible);
+        let owners = orbit_owners(&halfedge, ORBIT_PAR_THRESHOLD, eligible);
+        assert_eq!(owners, Some(expected));
+    }
+}
