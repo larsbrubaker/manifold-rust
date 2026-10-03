@@ -15,7 +15,7 @@
 // Tests for the robust engine's phase 3, the coplanar cross-copy
 // (robust/intersection_graph.rs, `cross_copy_coplanar_regions`). They pin two
 // things: that the cross-copy's optimizations (per-region clip setup,
-// bounding-box reject, hashed dedupe — robust/coplanar_clip_region.rs) leave
+// bounding-box reject, hashed dedupe — robust/coplanar_clip.rs) leave
 // the robust result bit-for-bit where the straight per-call version put it,
 // and that the step reports its own progress phase rather than running
 // silently under "self intersections". Shared 1:1 with manifold-sharp's

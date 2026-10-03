@@ -18,7 +18,7 @@
 // instead of once per call.
 //
 // `clip_segment_to_polygon` and `point_in_polygon_coplanar` (graph_geom.rs,
-// now thin wrappers over `CoplanarClipRegion`) recomputed the polygon's
+// since removed in favour of `CoplanarClipRegion`) recomputed the polygon's
 // normal, dominant axis, 2D projection and orientation on every segment they
 // clipped. Phase 3 clips every primitive of a triangle against the same
 // overlap polygon, and a coplanar triangle can carry hundreds of primitives
