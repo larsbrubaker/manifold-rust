@@ -2,7 +2,8 @@
 // MengerSponge(n) (samples/src/menger_sponge.cpp). `drill S`: a sphere of S
 // segments minus the union of 49 tilted cylinders. Prints the union and
 // difference times, the triangle count and an FNV-1a hash of the MeshGL64
-// (less `run_original_id`), to compare builds and thread counts.
+// (every field but `run_original_id`, as in src/par_tests.rs), to compare
+// builds and thread counts.
 //
 // Run with: cargo run --release [--features parallel] --example boolean_perf [menger N | drill S] [repeats]
 
@@ -74,6 +75,14 @@ fn drill(segments: i32) -> (Manifold, f64, f64) {
     (r, union, start.elapsed().as_secs_f64())
 }
 
+/// FNV-1a (64-bit) over every field of the output `MeshGL64` but
+/// `run_original_id`, which comes from the process-wide ID counter. In struct
+/// order: `num_prop`; then `vert_properties`, `tri_verts`, `merge_from_vert`,
+/// `merge_to_vert`, `run_index`, `run_transform`, `face_id`,
+/// `halfedge_tangent` and `run_flags`, each as its length then its elements;
+/// then `tolerance`. Lengths and integers are u64 little-endian, floats their
+/// IEEE bits as u64 little-endian, `run_flags` one byte each.
+/// `src/par_tests.rs` hashes the same way.
 fn fingerprint(m: &Manifold) -> u64 {
     let gl = m.get_mesh_gl64(-1);
     let mut h: u64 = 0xcbf2_9ce4_8422_2325;
@@ -83,20 +92,30 @@ fn fingerprint(m: &Manifold) -> u64 {
             h = h.wrapping_mul(0x0100_0000_01b3);
         }
     };
-    for x in &gl.vert_properties {
-        eat(&x.to_bits().to_le_bytes());
-    }
-    for list in [
-        &gl.tri_verts,
-        &gl.merge_from_vert,
-        &gl.merge_to_vert,
-        &gl.run_index,
-    ] {
+    let ints = |eat: &mut dyn FnMut(&[u8]), list: &[u64]| {
         eat(&(list.len() as u64).to_le_bytes());
         for x in list {
             eat(&x.to_le_bytes());
         }
-    }
+    };
+    let floats = |eat: &mut dyn FnMut(&[u8]), list: &[f64]| {
+        eat(&(list.len() as u64).to_le_bytes());
+        for x in list {
+            eat(&x.to_bits().to_le_bytes());
+        }
+    };
+    eat(&gl.num_prop.to_le_bytes());
+    floats(&mut eat, &gl.vert_properties);
+    ints(&mut eat, &gl.tri_verts);
+    ints(&mut eat, &gl.merge_from_vert);
+    ints(&mut eat, &gl.merge_to_vert);
+    ints(&mut eat, &gl.run_index);
+    floats(&mut eat, &gl.run_transform);
+    ints(&mut eat, &gl.face_id);
+    floats(&mut eat, &gl.halfedge_tangent);
+    eat(&(gl.run_flags.len() as u64).to_le_bytes());
+    eat(&gl.run_flags);
+    eat(&gl.tolerance.to_bits().to_le_bytes());
     h
 }
 
