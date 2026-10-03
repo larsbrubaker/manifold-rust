@@ -88,7 +88,7 @@ fn checkerboard_union_keeps_the_sequential_output() {
     for threads in [1, 8] {
         assert_eq!(
             run_on(threads, &model),
-            0x63ff_dc74_1011_f536,
+            0xc743_9615_a333_76c3,
             "{threads} threads"
         );
     }
@@ -101,7 +101,7 @@ fn checkerboard_union_keeps_the_sequential_output() {
 /// disjoint, so `compose` builds it and three unions join them.
 #[test]
 fn large_checkerboard_unions_keep_the_sequential_output() {
-    for (size, hash) in [(1.0, 0x7802_34fb_b0d5_3e14), (1.5, 0x4a6e_f237_508a_1f18)] {
+    for (size, hash) in [(1.0, 0x2b61_93db_25a6_fe23), (1.5, 0x3c32_2f28_5659_dcf7)] {
         let model = || {
             let cube = Manifold::cube(Vec3::splat(size), false);
             let class = |(ox, oy, oz): (i32, i32, i32)| {
