@@ -38,6 +38,7 @@
 //                                 exact engine's internals are not
 //                                 instrumented, so its timing stays exactly
 //                                 what it was)
+//   minkowski.rs                  Minkowski (hulls and batch reductions)
 //
 // Every determinate phase closes with `complete_phase`, which emits exactly
 // 1.0 — the throttle alone leaves up to `total / 100` units unreported.
@@ -71,10 +72,14 @@ pub enum Phase {
     Assemble = 7,
     /// The exact engine, reported as one indeterminate phase.
     ExactBoolean = 8,
+    /// The Minkowski sum/difference pipeline (`minkowski.rs`), counted in
+    /// hulls and batch reductions. Shares its id with manifold-sharp's
+    /// `Phase.Minkowski`.
+    Minkowski = 9,
 }
 
 impl Phase {
-    pub const ALL: [Phase; 9] = [
+    pub const ALL: [Phase; 10] = [
         Phase::NarrowPhase,
         Phase::SelfIntersections,
         Phase::CandidatePoints,
@@ -84,6 +89,7 @@ impl Phase {
         Phase::Winding,
         Phase::Assemble,
         Phase::ExactBoolean,
+        Phase::Minkowski,
     ];
 
     /// Stable display name. `&'static str` so a reporter callback never has to
@@ -99,6 +105,7 @@ impl Phase {
             Phase::Winding => "winding",
             Phase::Assemble => "assemble",
             Phase::ExactBoolean => "exact boolean",
+            Phase::Minkowski => "minkowski",
         }
     }
 
@@ -249,7 +256,8 @@ impl ProgressReporter {
     /// hides its bar when it fills therefore never hides it.
     ///
     /// Every determinate phase closes with this: the five in
-    /// `robust/intersection_graph.rs` and `Cells` in `robust/cells.rs`. The
+    /// `robust/intersection_graph.rs`, `Cells` in `robust/cells.rs`, and
+    /// `Minkowski`, which spends its closing merge's unit here. The
     /// indeterminate phases (`winding`, `assemble`, `exact boolean`) do not —
     /// with no total there is no bar to leave short, and the emit would only
     /// repeat [`begin_phase`](Self::begin_phase)'s `None`.

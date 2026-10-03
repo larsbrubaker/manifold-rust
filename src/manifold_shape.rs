@@ -230,6 +230,34 @@ impl Manifold {
         Self::from_impl(minkowski::minkowski_sum(&self.imp, &other.imp))
     }
 
+    /// [`Manifold::minkowski_sum`] with cooperative cancellation and progress
+    /// reporting ([`crate::progress::Phase::Minkowski`]). `None` for either
+    /// is independent of the other, and both `None` is byte-for-byte
+    /// `minkowski_sum`. A cancelled run comes back empty with
+    /// [`Error::Cancelled`].
+    pub fn minkowski_sum_with_progress(
+        &self,
+        other: &Self,
+        token: Option<&crate::cancel::CancelToken>,
+        progress: Option<&crate::progress::ProgressReporter>,
+    ) -> Self {
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
+        if let Some(e) = other.require_paired() {
+            return e;
+        }
+        if self.imp.status != Error::NoError {
+            return self.clone();
+        }
+        if other.imp.status != Error::NoError {
+            return other.clone();
+        }
+        Self::from_impl(minkowski::minkowski_sum_with_progress(
+            &self.imp, &other.imp, token, progress,
+        ))
+    }
+
     pub fn minkowski_difference(&self, other: &Self) -> Self {
         if let Some(e) = self.require_paired() {
             return e;
@@ -244,6 +272,31 @@ impl Manifold {
             return other.clone();
         }
         Self::from_impl(minkowski::minkowski_difference(&self.imp, &other.imp))
+    }
+
+    /// [`Manifold::minkowski_difference`] with cooperative cancellation and
+    /// progress reporting; see [`Manifold::minkowski_sum_with_progress`].
+    pub fn minkowski_difference_with_progress(
+        &self,
+        other: &Self,
+        token: Option<&crate::cancel::CancelToken>,
+        progress: Option<&crate::progress::ProgressReporter>,
+    ) -> Self {
+        if let Some(e) = self.require_paired() {
+            return e;
+        }
+        if let Some(e) = other.require_paired() {
+            return e;
+        }
+        if self.imp.status != Error::NoError {
+            return self.clone();
+        }
+        if other.imp.status != Error::NoError {
+            return other.clone();
+        }
+        Self::from_impl(minkowski::minkowski_difference_with_progress(
+            &self.imp, &other.imp, token, progress,
+        ))
     }
 
     pub fn cross_section_square(size: f64) -> CrossSection {

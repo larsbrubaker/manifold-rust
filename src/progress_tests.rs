@@ -406,7 +406,7 @@ fn racing_workers_never_send_the_bar_backwards() {
 
     for round in 0..ROUNDS {
         fractions.lock().expect("sink poisoned").clear();
-        reporter.begin_phase(Phase::Arrangements, 100);
+        reporter.begin_phase(Phase::Minkowski, 100);
         std::thread::scope(|s| {
             for _ in 0..WORKERS {
                 s.spawn(|| {
