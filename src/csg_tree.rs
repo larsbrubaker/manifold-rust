@@ -21,6 +21,9 @@
 // - BatchBoolean: min-heap approach for commutative ops
 // - BatchUnion: bounding-box partitioning + Compose + BatchBoolean
 // - Explicit-stack DFS evaluation (no recursion)
+//
+// Cancellation (`CancelToken`) and progress (`ProgressReporter`) are both
+// threaded down to every pairwise boolean; see `evaluate_with_token_and_progress`.
 
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
@@ -30,6 +33,7 @@ use crate::boolean3;
 use crate::cancel::{is_cancelled, CancelToken};
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{mat3x4_to_mat4, mat4_to_mat3x4, Mat3x4, Vec3};
+use crate::progress::ProgressReporter;
 use crate::types::{Box as BBox, Error, OpType};
 
 // ---------------------------------------------------------------------------
@@ -194,12 +198,40 @@ impl CsgNode {
     /// (csg_tree.cpp:644-800), which checks the flag once per stack step and
     /// substitutes an `ErrorLeaf(Cancelled)` for the pending work.
     pub fn evaluate_with_token(&self, token: Option<&CancelToken>) -> ManifoldImpl {
-        let leaf = self.to_leaf_node(Mat3x4::identity(), token);
+        self.evaluate_with_token_and_progress(token, None)
+    }
+
+    /// [`CsgNode::evaluate_with_token`] with progress reporting.
+    ///
+    /// The reporter is handed to every pairwise boolean the tree reduces to,
+    /// exactly as [`crate::manifold::Manifold::boolean_with_engine_and_progress`]
+    /// hands it to one: each reports its kernel phases (one indeterminate
+    /// `ExactBoolean` phase on the exact engine, the full pipeline on the
+    /// robust one), so a long n-ary union streams one phase sequence per
+    /// pair. Disjoint operands that `batch_union` composes without a boolean
+    /// report nothing. Under the `parallel` feature up to four pairs of a
+    /// round run at once and their phase sequences can interleave; see
+    /// [`crate::progress`] for the reporter's threading model.
+    ///
+    /// The reporter is write-only from the kernel's point of view, so the
+    /// result is identical with or without one; `None` is
+    /// [`CsgNode::evaluate_with_token`].
+    pub fn evaluate_with_token_and_progress(
+        &self,
+        token: Option<&CancelToken>,
+        progress: Option<&ProgressReporter>,
+    ) -> ManifoldImpl {
+        let leaf = self.to_leaf_node(Mat3x4::identity(), token, progress);
         leaf.get_impl()
     }
 
     /// Internal: convert this node to a CsgLeafNode, applying the given parent transform.
-    fn to_leaf_node(&self, parent_transform: Mat3x4, token: Option<&CancelToken>) -> CsgLeafNode {
+    fn to_leaf_node(
+        &self,
+        parent_transform: Mat3x4,
+        token: Option<&CancelToken>,
+        progress: Option<&ProgressReporter>,
+    ) -> CsgLeafNode {
         // One check per stack step, as C++ does at csg_tree.cpp:752. Cancel is
         // sticky, so every enclosing step short-circuits here too and the
         // Cancelled leaf propagates to the root without further work.
@@ -221,17 +253,25 @@ impl CsgNode {
                 let mut positive: Vec<CsgLeafNode> = Vec::new();
                 let mut negative: Vec<CsgLeafNode> = Vec::new();
 
-                self.collect_children(*op, combined, children, &mut positive, &mut negative, token);
+                self.collect_children(
+                    *op,
+                    combined,
+                    children,
+                    &mut positive,
+                    &mut negative,
+                    token,
+                    progress,
+                );
 
                 // Perform the operation
                 match op {
                     OpType::Add => {
                         // Union of all positive children
-                        batch_union(&mut positive, token)
+                        batch_union(&mut positive, token, progress)
                     }
                     OpType::Intersect => {
                         // Intersection of all positive children
-                        batch_boolean(OpType::Intersect, &mut positive, token)
+                        batch_boolean(OpType::Intersect, &mut positive, token, progress)
                     }
                     OpType::Subtract => {
                         // Subtract: first child is positive, rest are negative
@@ -245,12 +285,12 @@ impl CsgNode {
                                 CsgLeafNode::empty()
                             };
                         }
-                        let pos_result = batch_union(&mut positive, token);
+                        let pos_result = batch_union(&mut positive, token, progress);
                         if negative.is_empty() {
                             return pos_result;
                         }
-                        let neg_result = batch_union(&mut negative, token);
-                        simple_boolean(&pos_result, &neg_result, OpType::Subtract, token)
+                        let neg_result = batch_union(&mut negative, token, progress);
+                        simple_boolean(&pos_result, &neg_result, OpType::Subtract, token, progress)
                     }
                 }
             }
@@ -267,6 +307,7 @@ impl CsgNode {
         positive: &mut Vec<CsgLeafNode>,
         negative: &mut Vec<CsgLeafNode>,
         token: Option<&CancelToken>,
+        progress: Option<&ProgressReporter>,
     ) {
         for (i, child) in children.iter().enumerate() {
             match child {
@@ -304,7 +345,7 @@ impl CsgNode {
                         {
                             // (A - B) is first child of Subtract: A goes to positive, B goes to negative
                             for (gi, gc) in grandchildren.iter().enumerate() {
-                                let leaf = gc.to_leaf_node_inner(combined, token);
+                                let leaf = gc.to_leaf_node_inner(combined, token, progress);
                                 if gi == 0 {
                                     positive.push(leaf);
                                 } else {
@@ -313,7 +354,7 @@ impl CsgNode {
                             }
                         } else {
                             for gc in grandchildren {
-                                let leaf = gc.to_leaf_node_inner(combined, token);
+                                let leaf = gc.to_leaf_node_inner(combined, token, progress);
                                 if parent_op == OpType::Subtract && i > 0 {
                                     negative.push(leaf);
                                 } else {
@@ -323,7 +364,7 @@ impl CsgNode {
                         }
                     } else {
                         // Cannot collapse: evaluate child subtree fully
-                        let result = child.to_leaf_node(combined, token);
+                        let result = child.to_leaf_node(combined, token, progress);
                         if parent_op == OpType::Subtract && i > 0 {
                             negative.push(result);
                         } else {
@@ -336,10 +377,15 @@ impl CsgNode {
     }
 
     /// Helper: convert a single node to leaf with given transform (non-flattening).
-    fn to_leaf_node_inner(&self, transform: Mat3x4, token: Option<&CancelToken>) -> CsgLeafNode {
+    fn to_leaf_node_inner(
+        &self,
+        transform: Mat3x4,
+        token: Option<&CancelToken>,
+        progress: Option<&ProgressReporter>,
+    ) -> CsgLeafNode {
         match self {
             CsgNode::Leaf(leaf) => leaf.apply_transform(transform),
-            CsgNode::Op { .. } => self.to_leaf_node(transform, token),
+            CsgNode::Op { .. } => self.to_leaf_node(transform, token, progress),
         }
     }
 }
@@ -354,6 +400,7 @@ fn simple_boolean(
     b: &CsgLeafNode,
     op: OpType,
     token: Option<&CancelToken>,
+    progress: Option<&ProgressReporter>,
 ) -> CsgLeafNode {
     // Entry gate before the (expensive) transform materialisation, matching
     // C++ SimpleBoolean's first line (csg_tree.cpp:172).
@@ -365,13 +412,14 @@ fn simple_boolean(
     // Engine selection: CSG evaluation honors the process-global default
     // (types::BooleanConfig). With the default (Exact) this call resolves to
     // boolean3::boolean_with_token — behavior byte-identical to before the
-    // robust engine existed.
-    let result = boolean3::boolean_dispatch(
+    // robust engine existed. `progress == None` is exactly `boolean_dispatch`.
+    let result = boolean3::boolean_dispatch_with_progress(
         &impl_a,
         &impl_b,
         op,
         crate::types::BooleanConfig::default_engine(),
         token,
+        progress,
     );
     CsgLeafNode::new(result)
 }
@@ -415,6 +463,7 @@ fn batch_boolean(
     op: OpType,
     children: &mut Vec<CsgLeafNode>,
     token: Option<&CancelToken>,
+    progress: Option<&ProgressReporter>,
 ) -> CsgLeafNode {
     if children.is_empty() {
         return CsgLeafNode::empty();
@@ -425,7 +474,7 @@ fn batch_boolean(
     if children.len() == 2 {
         let b = children.pop().unwrap();
         let a = children.pop().unwrap();
-        return simple_boolean(&a, &b, op, token);
+        return simple_boolean(&a, &b, op, token, progress);
     }
 
     let mut heap: BinaryHeap<MeshEntry> = BinaryHeap::new();
@@ -461,7 +510,7 @@ fn batch_boolean(
             pairs.push((a, b));
         }
         let results = crate::par::maybe_par_map(pairs.len(), 2, |i| {
-            simple_boolean(&pairs[i].0 .0, &pairs[i].1 .0, op, token)
+            simple_boolean(&pairs[i].0 .0, &pairs[i].1 .0, op, token, progress)
         });
         pairs.clear();
         for result in results {
@@ -480,7 +529,11 @@ fn batch_boolean(
 
 const K_MAX_UNION_SIZE: usize = 1000;
 
-fn batch_union(children: &mut Vec<CsgLeafNode>, token: Option<&CancelToken>) -> CsgLeafNode {
+fn batch_union(
+    children: &mut Vec<CsgLeafNode>,
+    token: Option<&CancelToken>,
+    progress: Option<&ProgressReporter>,
+) -> CsgLeafNode {
     if children.is_empty() {
         return CsgLeafNode::empty();
     }
@@ -538,7 +591,7 @@ fn batch_union(children: &mut Vec<CsgLeafNode>, token: Option<&CancelToken>) -> 
         // BatchBoolean the composed results, then move the (complicated) new
         // child to the front: C++ push_backs and swaps front↔back, which also
         // moves the old front to the back when chunking (>kMaxUnionSize).
-        let result = batch_boolean(OpType::Add, &mut results, token);
+        let result = batch_boolean(OpType::Add, &mut results, token, progress);
         children.push(result);
         let last = children.len() - 1;
         children.swap(0, last);
@@ -552,211 +605,5 @@ fn batch_union(children: &mut Vec<CsgLeafNode>, token: Option<&CancelToken>) -> 
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::linalg::{mat4_to_mat3x4, translation_matrix, Vec3};
-
-    #[test]
-    fn test_csg_tree_union_disjoint() {
-        let a = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.0, 0.0, 0.0,
-        ))));
-        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            3.0, 0.0, 0.0,
-        ))));
-        let tree = CsgNode::op(OpType::Add, CsgNode::leaf(a), CsgNode::leaf(b));
-        let result = tree.evaluate();
-        assert_eq!(result.num_tri(), 24);
-    }
-
-    #[test]
-    fn test_csg_tree_union_overlapping() {
-        let a = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.0, 0.0, 0.0,
-        ))));
-        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.5, 0.0, 0.0,
-        ))));
-        let tree = CsgNode::op(OpType::Add, CsgNode::leaf(a), CsgNode::leaf(b));
-        let result = tree.evaluate();
-        assert!(
-            result.num_tri() > 0,
-            "Overlapping union should produce non-empty mesh"
-        );
-    }
-
-    #[test]
-    fn test_csg_tree_intersection() {
-        let a = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.0, 0.0, 0.0,
-        ))));
-        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.5, 0.0, 0.0,
-        ))));
-        let tree = CsgNode::op(OpType::Intersect, CsgNode::leaf(a), CsgNode::leaf(b));
-        let result = tree.evaluate();
-        assert!(
-            result.num_tri() > 0,
-            "Overlapping intersection should produce non-empty mesh"
-        );
-    }
-
-    #[test]
-    fn test_csg_tree_subtract() {
-        let a = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.0, 0.0, 0.0,
-        ))));
-        let b = ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(Vec3::new(
-            0.5, 0.0, 0.0,
-        ))));
-        let tree = CsgNode::op(OpType::Subtract, CsgNode::leaf(a), CsgNode::leaf(b));
-        let result = tree.evaluate();
-        assert!(
-            result.num_tri() > 0,
-            "Subtraction should produce non-empty mesh"
-        );
-    }
-
-    #[test]
-    fn test_batch_boolean_three_cubes() {
-        let a = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-            Vec3::new(0.0, 0.0, 0.0),
-        ))));
-        let b = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-            Vec3::new(0.5, 0.0, 0.0),
-        ))));
-        let c = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-            Vec3::new(1.0, 0.0, 0.0),
-        ))));
-        let mut children = vec![a, b, c];
-        let result = batch_boolean(OpType::Add, &mut children, None);
-        let mesh = result.get_impl();
-        assert!(
-            mesh.num_tri() > 0,
-            "BatchBoolean of 3 overlapping cubes should produce non-empty mesh"
-        );
-    }
-
-    #[test]
-    fn test_batch_union_disjoint() {
-        let a = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-            Vec3::new(0.0, 0.0, 0.0),
-        ))));
-        let b = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-            Vec3::new(3.0, 0.0, 0.0),
-        ))));
-        let c = CsgLeafNode::new(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-            Vec3::new(6.0, 0.0, 0.0),
-        ))));
-        let mut children = vec![a, b, c];
-        let result = batch_union(&mut children, None);
-        let mesh = result.get_impl();
-        // Three disjoint cubes should compose without boolean, giving 36 tris
-        assert_eq!(
-            mesh.num_tri(),
-            36,
-            "BatchUnion of 3 disjoint cubes should have 36 tris"
-        );
-    }
-
-    #[test]
-    fn test_csg_n_ary_union() {
-        // N-ary union of 4 disjoint cubes
-        let nodes: Vec<CsgNode> = (0..4)
-            .map(|i| {
-                CsgNode::leaf(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(
-                    Vec3::new(i as f64 * 3.0, 0.0, 0.0),
-                ))))
-            })
-            .collect();
-        let tree = CsgNode::op_n(OpType::Add, nodes);
-        let result = tree.evaluate();
-        assert_eq!(
-            result.num_tri(),
-            48,
-            "N-ary union of 4 disjoint cubes should have 48 tris"
-        );
-    }
-
-    #[test]
-    fn test_lazy_leaf_transform_applied_on_evaluate() {
-        // Regression: get_impl discarded ManifoldImpl::transform's return value
-        // (it is not in-place), so lazily-transformed leaves evaluated at the
-        // origin. Two disjoint cubes — one translated via the *leaf* transform,
-        // not baked into the mesh — must union to 24 tris, not collapse to 12.
-        let cube = ManifoldImpl::cube(&Mat3x4::identity());
-        let a = CsgLeafNode::new(cube.clone());
-        let b = CsgLeafNode::new(cube)
-            .apply_transform(mat4_to_mat3x4(translation_matrix(Vec3::new(3.0, 0.0, 0.0))));
-        let bbox = b.get_impl().bbox;
-        assert!(
-            bbox.min.x >= 2.9 && bbox.max.x <= 4.1,
-            "lazy transform not applied by get_impl: bbox.x = [{}, {}]",
-            bbox.min.x,
-            bbox.max.x
-        );
-        let tree = CsgNode::op(OpType::Add, CsgNode::leaf_node(a), CsgNode::leaf_node(b));
-        assert_eq!(tree.evaluate().num_tri(), 24);
-    }
-
-    #[test]
-    fn test_tree_transforms() {
-        // Test that transforms compose correctly through the tree
-        let a = ManifoldImpl::cube(&Mat3x4::identity());
-        let leaf = CsgLeafNode::new(a);
-        let translated =
-            leaf.apply_transform(mat4_to_mat3x4(translation_matrix(Vec3::new(5.0, 0.0, 0.0))));
-        let bbox = translated.get_bounding_box();
-        assert!(
-            bbox.min.x > 4.0,
-            "Translated bbox min.x should be > 4.0, got {}",
-            bbox.min.x
-        );
-        assert!(
-            bbox.max.x < 6.5,
-            "Translated bbox max.x should be < 6.5, got {}",
-            bbox.max.x
-        );
-    }
-
-    /// Pins a union of 64 overlapping cubes to the sequential rounds' output,
-    /// and with `parallel` on 1 and 8 threads. Coordinates are exact, so the
-    /// hash holds on every platform.
-    #[test]
-    fn test_batch_union_rounds_keep_the_sequential_output() {
-        let union = || {
-            let leaves = (0..64)
-                .map(|i| {
-                    let at = Vec3::new(f64::from(i % 8) * 0.5, f64::from(i / 8) * 0.5, 0.0);
-                    CsgNode::leaf(ManifoldImpl::cube(&mat4_to_mat3x4(translation_matrix(at))))
-                })
-                .collect();
-            let gl =
-                crate::manifold::Manifold::from_impl(CsgNode::op_n(OpType::Add, leaves).evaluate())
-                    .get_mesh_gl64(-1);
-            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-            let bytes = gl
-                .vert_properties
-                .iter()
-                .flat_map(|x| x.to_bits().to_le_bytes());
-            let ints = gl.tri_verts.iter().chain(&gl.run_index);
-            for b in bytes.chain(ints.flat_map(|x| x.to_le_bytes())) {
-                h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
-            }
-            h
-        };
-        #[cfg(feature = "parallel")]
-        for threads in [1, 8] {
-            let pool = rayon::ThreadPoolBuilder::new()
-                .num_threads(threads)
-                .build()
-                .unwrap();
-            assert_eq!(
-                pool.install(union),
-                0x0045_f3cc_e459_28c2,
-                "{threads} threads"
-            );
-        }
-        assert_eq!(union(), 0x0045_f3cc_e459_28c2);
-    }
-}
+#[path = "csg_tree_tests.rs"]
+mod tests;
