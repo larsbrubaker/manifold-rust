@@ -325,6 +325,50 @@ impl Manifold {
             .map(Self::from_impl)
     }
 
+    /// [`Manifold::minkowski_sum`] of a non-convex manifold and a convex tool,
+    /// reduced through [`crate::convex_dilation`]'s balanced (parallel under
+    /// the `parallel` feature) union tree. Mirrors manifold-sharp's
+    /// `Manifold.TryDilateByConvex` (docs/CPP_DIVERGENCES.md entry 13).
+    ///
+    /// Opt-in, not a reroute: `None` for anything but non-convex ⊕ convex, and
+    /// the answer to `None` is `minkowski_sum`. The same solid (volume and
+    /// genus) but not the same triangles. A cancelled run is `Some` of an
+    /// empty [`Error::Cancelled`] result.
+    pub fn try_dilate_by_convex(
+        &self,
+        tool: &Self,
+        token: Option<&crate::cancel::CancelToken>,
+        progress: Option<&crate::progress::ProgressReporter>,
+    ) -> Option<Self> {
+        if self.require_paired().is_some() || tool.require_paired().is_some() {
+            return None;
+        }
+        crate::convex_dilation::try_compute(&self.imp, &tool.imp, token, progress)
+            .map(Self::from_impl)
+    }
+
+    /// [`Manifold::minkowski_difference`] by a convex tool, the swept hulls
+    /// reduced through [`crate::convex_dilation`]'s union tree and subtracted
+    /// from the solid once. Mirrors manifold-sharp's
+    /// `Manifold.TryErodeByConvex`.
+    ///
+    /// `None` for a non-convex tool, any empty, soup or errored operand, or
+    /// overlapping shells whose union does not rebuild cleanly; the answer to
+    /// `None` is `minkowski_difference`. Takes a convex solid, but try
+    /// [`Manifold::try_convex_erosion`] first for those (exact and faster).
+    pub fn try_erode_by_convex(
+        &self,
+        tool: &Self,
+        token: Option<&crate::cancel::CancelToken>,
+        progress: Option<&crate::progress::ProgressReporter>,
+    ) -> Option<Self> {
+        if self.require_paired().is_some() || tool.require_paired().is_some() {
+            return None;
+        }
+        crate::convex_dilation::try_compute_erosion(&self.imp, &tool.imp, token, progress)
+            .map(Self::from_impl)
+    }
+
     pub fn cross_section_square(size: f64) -> CrossSection {
         CrossSection::square(size)
     }

@@ -267,11 +267,11 @@ impl CsgNode {
                 match op {
                     OpType::Add => {
                         // Union of all positive children
-                        batch_union(&mut positive, token, progress)
+                        batch_union(&mut positive, token, None, progress)
                     }
                     OpType::Intersect => {
                         // Intersection of all positive children
-                        batch_boolean(OpType::Intersect, &mut positive, token, progress)
+                        batch_boolean(OpType::Intersect, &mut positive, token, None, progress)
                     }
                     OpType::Subtract => {
                         // Subtract: first child is positive, rest are negative
@@ -285,12 +285,12 @@ impl CsgNode {
                                 CsgLeafNode::empty()
                             };
                         }
-                        let pos_result = batch_union(&mut positive, token, progress);
+                        let pos_result = batch_union(&mut positive, token, None, progress);
                         if negative.is_empty() {
                             return pos_result;
                         }
-                        let neg_result = batch_union(&mut negative, token, progress);
-                        simple_boolean(&pos_result, &neg_result, OpType::Subtract, token, progress)
+                        let neg_result = batch_union(&mut negative, token, None, progress);
+                        simple_boolean(&pos_result, &neg_result, OpType::Subtract, token, None, progress)
                     }
                 }
             }
@@ -400,6 +400,7 @@ fn simple_boolean(
     b: &CsgLeafNode,
     op: OpType,
     token: Option<&CancelToken>,
+    engine: Option<crate::types::BooleanEngine>,
     progress: Option<&ProgressReporter>,
 ) -> CsgLeafNode {
     // Entry gate before the (expensive) transform materialisation, matching
@@ -417,7 +418,7 @@ fn simple_boolean(
         &impl_a,
         &impl_b,
         op,
-        crate::types::BooleanConfig::default_engine(),
+        engine.unwrap_or_else(crate::types::BooleanConfig::default_engine),
         token,
         progress,
     );
@@ -463,6 +464,7 @@ fn batch_boolean(
     op: OpType,
     children: &mut Vec<CsgLeafNode>,
     token: Option<&CancelToken>,
+    engine: Option<crate::types::BooleanEngine>,
     progress: Option<&ProgressReporter>,
 ) -> CsgLeafNode {
     if children.is_empty() {
@@ -474,7 +476,7 @@ fn batch_boolean(
     if children.len() == 2 {
         let b = children.pop().unwrap();
         let a = children.pop().unwrap();
-        return simple_boolean(&a, &b, op, token, progress);
+        return simple_boolean(&a, &b, op, token, engine, progress);
     }
 
     let mut heap: BinaryHeap<MeshEntry> = BinaryHeap::new();
@@ -515,7 +517,7 @@ fn batch_boolean(
         // interleave. Same pairs, same order, same result; only wall time.
         let threshold = if progress.is_some() { usize::MAX } else { 2 };
         let results = crate::par::maybe_par_map(pairs.len(), threshold, |i| {
-            simple_boolean(&pairs[i].0 .0, &pairs[i].1 .0, op, token, progress)
+            simple_boolean(&pairs[i].0 .0, &pairs[i].1 .0, op, token, engine, progress)
         });
         pairs.clear();
         for result in results {
@@ -534,9 +536,10 @@ fn batch_boolean(
 
 const K_MAX_UNION_SIZE: usize = 1000;
 
-fn batch_union(
+pub(crate) fn batch_union(
     children: &mut Vec<CsgLeafNode>,
     token: Option<&CancelToken>,
+    engine: Option<crate::types::BooleanEngine>,
     progress: Option<&ProgressReporter>,
 ) -> CsgLeafNode {
     if children.is_empty() {
@@ -596,7 +599,7 @@ fn batch_union(
         // BatchBoolean the composed results, then move the (complicated) new
         // child to the front: C++ push_backs and swaps front↔back, which also
         // moves the old front to the back when chunking (>kMaxUnionSize).
-        let result = batch_boolean(OpType::Add, &mut results, token, progress);
+        let result = batch_boolean(OpType::Add, &mut results, token, engine, progress);
         children.push(result);
         let last = children.len() - 1;
         children.swap(0, last);

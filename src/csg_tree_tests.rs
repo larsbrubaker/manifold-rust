@@ -92,7 +92,7 @@ fn test_batch_boolean_three_cubes() {
         Vec3::new(1.0, 0.0, 0.0),
     ))));
     let mut children = vec![a, b, c];
-    let result = batch_boolean(OpType::Add, &mut children, None, None);
+    let result = batch_boolean(OpType::Add, &mut children, None, None, None);
     let mesh = result.get_impl();
     assert!(
         mesh.num_tri() > 0,
@@ -112,7 +112,7 @@ fn test_batch_union_disjoint() {
         Vec3::new(6.0, 0.0, 0.0),
     ))));
     let mut children = vec![a, b, c];
-    let result = batch_union(&mut children, None, None);
+    let result = batch_union(&mut children, None, None, None);
     let mesh = result.get_impl();
     // Three disjoint cubes should compose without boolean, giving 36 tris
     assert_eq!(
