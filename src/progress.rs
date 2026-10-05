@@ -319,6 +319,42 @@ impl ProgressReporter {
         self.emit(phase, if total == 0 { None } else { Some(1.0) }, false);
     }
 
+    /// The current phase's expected work items, 0 when it is indeterminate.
+    ///
+    /// Mirrors manifold-sharp's `ProgressReporter.PhaseTotal` (its divergence
+    /// entry 6, now taken here): a host that reweights the reported fraction by
+    /// the cost of each kind of unit needs the whole-unit count back, and the
+    /// convex dilation tree's total follows its patch count, which only the
+    /// kernel knows. Read it from the callback: every emit happens after its
+    /// phase's total is set.
+    pub fn phase_total(&self) -> u64 {
+        self.total.load(Ordering::Relaxed)
+    }
+
+    /// Report `completed_units` of the current phase's total, which may be
+    /// fractional, without advancing the counter or consulting the throttle.
+    ///
+    /// Mirrors manifold-sharp's `ProgressReporter.ReportUnits`: the convex
+    /// dilation tree's sub-unit progress from inside one boolean, which
+    /// [`advance`](Self::advance)'s whole units cannot carry. The caller owns
+    /// monotonicity: it must report only while no concurrent `advance` can
+    /// emit, and never a value a later `advance` will undercut. A phase with no
+    /// total reports nothing.
+    pub fn report_units(&self, completed_units: f64) {
+        let total = self.total.load(Ordering::Relaxed);
+        let Some(phase) = Phase::from_id(self.phase.load(Ordering::Relaxed)) else {
+            return;
+        };
+        if total == 0 {
+            return;
+        }
+        self.emit(
+            phase,
+            Some((completed_units / total as f64).clamp(0.0, 1.0)),
+            false,
+        );
+    }
+
     /// Cold half of [`advance`], kept out of line so the common case is a
     /// fetch-add and a compare.
     #[cold]

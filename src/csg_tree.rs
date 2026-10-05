@@ -509,7 +509,12 @@ fn batch_boolean(
             let b = heap.pop().unwrap();
             pairs.push((a, b));
         }
-        let results = crate::par::maybe_par_map(pairs.len(), 2, |i| {
+        // With a reporter the round's pairs run one after another (manifold-sharp
+        // RUST_DIVERGENCES.md entry 10): one ProgressReporter tracks one phase
+        // at a time, and two booleans streaming into it at once would
+        // interleave. Same pairs, same order, same result; only wall time.
+        let threshold = if progress.is_some() { usize::MAX } else { 2 };
+        let results = crate::par::maybe_par_map(pairs.len(), threshold, |i| {
             simple_boolean(&pairs[i].0 .0, &pairs[i].1 .0, op, token, progress)
         });
         pairs.clear();

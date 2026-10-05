@@ -30,7 +30,8 @@ A fourth kind makes no numerical claim at all:
 
 - **API shape or extension** — a public signature that differs from the C++
   one, or a Rust-only method the C++ does not have. The entry states what the
-  numbers match (or that nothing in the C++ constrains them). Entries 9 and 10.
+  numbers match (or that nothing in the C++ constrains them). Entries 9, 10
+  and 13.
 
 The second kind is deliberately uncomfortable to write, which is the point — it
 is a debt with a name attached, not a decision that ends the discussion. Nothing
@@ -50,6 +51,7 @@ belongs in any category for convenience.
 | 10 | Extension | `CrossSection::minkowski_sum` (no C++ counterpart) |
 | 11 | Justified | QuickHull decides above-a-face exactly |
 | 12 | Inherited (latent) | Keyhole bridge searches skip a degenerate outer ring whole |
+| 13 | Extension | `Manifold::try_convex_erosion` closed-form convex erosion; `ProgressReporter::phase_total` / `report_units` (mirrored from manifold-sharp) |
 
 Anything else that differs from the C++ is a bug, not an entry. The ones known
 and not yet fixed are listed under *Known unresolved mismatches* at the end, so
@@ -493,6 +495,44 @@ only inside a magnitude window (|connector - start| >= 1e-60, box distance and
 epsilon <= 1e60), because outside it `ccw`'s squares can underflow or overflow
 and call an outside vert collinear; the comment there gives the derivation, and
 `keyhole_cull_keeps_a_bridge_whose_ccw_underflows` and `..._overflows` pin it.
+
+## 13. Closed-form convex erosion and progress-reporter extensions mirrored from manifold-sharp (extension, 2026-10-05)
+
+**What differs:** three Rust-only APIs with no C++ counterpart, each a 1:1
+mirror of a manifold-sharp addition that was until now a sharp-only entry in its
+`docs/RUST_DIVERGENCES.md`:
+
+- `Manifold::try_convex_erosion(&self, other, token, progress) -> Option<Manifold>`
+  (`src/convex_erosion.rs`, sharp `ConvexErosion.cs` / `Manifold.TryConvexErosion`,
+  sharp entry 5). The Minkowski difference of a *convex* solid in closed form:
+  the intersection of the solid's face halfspaces, each pushed inward by the
+  tool's support, enumerated through the polar dual hull and solved per vertex
+  by Cramer's rule. `None` (decline) for a non-convex solid or tool, a tool not
+  containing the origin, a centroid not strictly inside the eroded body, a
+  degenerate triple, or a vertex failing the closing feasibility check; a
+  cancelled run is `Some` of an empty `Error::Cancelled` impl.
+- `ProgressReporter::phase_total()` and `ProgressReporter::report_units(f64)`
+  (`src/progress.rs`, sharp `Progress.cs` `PhaseTotal` / `ReportUnits`, sharp
+  entry 6's reporter hooks). Read-only / write-only from the kernel's side.
+
+**What does not differ:** nothing is rerouted. `minkowski::minkowski`,
+`Manifold::minkowski_difference` and every other ported path still run the
+ported sweep and produce the C++'s bits, including for a convex solid where the
+closed form would apply. The callback-side additions compute nothing.
+
+**Numbers:** nothing in the C++ constrains them; the constraint is the twin
+port. The Rust performs the same floating-point operations in the same order as
+`ConvexErosion.cs`, and maps dual-hull vertices back to planes by exact bits, the
+equality sharp's `Vec3.Equals` uses. `src/convex_erosion_tests.rs` ports
+`ConvexErosionTests.cs` and `ConvexErosionTests.Contract.cs` 1:1 (a 20-cube by a
+unit ball is exactly 5832.0; a 2048-triangle sphere agrees with the sweep to
+< 1e-12 relative).
+
+**Still sharp-only:** sharp entry 6's parallel union tree
+(`TryDilateByConvex` / `TryErodeByConvex`, `ConvexDilation.cs`,
+`ConvexPatches.cs`) and its exact-boolean stage sink (`BooleanStageProgress.cs`)
+are not yet mirrored. Sharp entry 10 (CSG tree evaluation with a progress
+reporter) was taken by e444fb9 (`CsgNode::evaluate_with_token_and_progress`).
 
 ## Known unresolved mismatches (bugs, not entries)
 

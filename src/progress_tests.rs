@@ -460,3 +460,26 @@ fn robust_boolean_over_coplanar_faces_reports_phases_in_pipeline_order() {
         "the fixture must exercise the appended phase (saw {seen:?})"
     );
 }
+
+/// `phase_total` reads back the current phase's total and `report_units`
+/// emits fractional units against it (manifold-sharp `PhaseTotal` /
+/// `ReportUnits`), clamped, monotone, and silent for an indeterminate phase.
+#[test]
+fn phase_total_and_report_units_mirror_manifold_sharp() {
+    use std::sync::{Arc, Mutex};
+    let seen: Arc<Mutex<Vec<Option<f64>>>> = Arc::new(Mutex::new(Vec::new()));
+    let sink = Arc::clone(&seen);
+    let reporter = ProgressReporter::new(move |_, f| sink.lock().unwrap().push(f));
+
+    assert_eq!(reporter.phase_total(), 0);
+    reporter.begin_phase(Phase::Minkowski, 8);
+    assert_eq!(reporter.phase_total(), 8);
+    reporter.report_units(2.0);
+    reporter.report_units(1.0); // below the last emit: dropped
+    reporter.report_units(80.0); // clamped to 1.0
+    assert_eq!(*seen.lock().unwrap(), vec![Some(0.0), Some(0.25), Some(1.0)]);
+
+    reporter.begin_phase(Phase::Winding, 0);
+    reporter.report_units(3.0);
+    assert_eq!(seen.lock().unwrap().len(), 4, "an indeterminate phase reports nothing");
+}

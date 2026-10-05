@@ -34,6 +34,7 @@ pub mod boolean_result;
 pub mod cancel;
 pub mod collider;
 pub mod constructors;
+pub mod convex_erosion;
 pub mod cross_section;
 pub mod csg_tree;
 pub mod disjoint_sets;

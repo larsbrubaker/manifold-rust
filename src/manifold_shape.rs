@@ -299,6 +299,32 @@ impl Manifold {
         ))
     }
 
+    /// [`Manifold::minkowski_difference`] in closed form, for the convex solids
+    /// that have one — the halfspace intersection of
+    /// [`crate::convex_erosion`]. Mirrors manifold-sharp's
+    /// `Manifold.TryConvexErosion` (docs/CPP_DIVERGENCES.md entry 13).
+    ///
+    /// A fast path a caller opts into, not a reroute: `minkowski_difference`
+    /// still runs the ported sweep for every input. Returns `None` for
+    /// anything it cannot prove itself on, and the answer to `None` is to call
+    /// `minkowski_difference`. A cancelled run returns `Some` of an empty
+    /// result with [`Error::Cancelled`], so a cancelled caller does not go on
+    /// to run the sweep.
+    pub fn try_convex_erosion(
+        &self,
+        other: &Self,
+        token: Option<&crate::cancel::CancelToken>,
+        progress: Option<&crate::progress::ProgressReporter>,
+    ) -> Option<Self> {
+        // Unpaired halfedges make is_convex read a neighbour that is not
+        // there; hand those back to the sweep, which propagates the error.
+        if self.require_paired().is_some() || other.require_paired().is_some() {
+            return None;
+        }
+        crate::convex_erosion::try_compute(&self.imp, &other.imp, token, progress)
+            .map(Self::from_impl)
+    }
+
     pub fn cross_section_square(size: f64) -> CrossSection {
         CrossSection::square(size)
     }
