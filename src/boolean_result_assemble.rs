@@ -1,6 +1,7 @@
 // Boolean result assembly — extracted from boolean_result.rs
 // Contains update_reference, create_properties, and boolean_result entry point
 
+use crate::boolean_stage_progress::{self as stage_marks, report as report_stage, StageSink};
 use crate::boolean3::Boolean3;
 use crate::cancel::{is_cancelled, CancelToken};
 use crate::edge_op::simplify_topology;
@@ -277,6 +278,21 @@ pub fn boolean_result_with_token(
     op: OpType,
     bool3: &Boolean3,
     token: Option<&CancelToken>,
+) -> ManifoldImpl {
+    boolean_result_with_token_and_stage(in_p, in_q, op, bool3, token, None)
+}
+
+/// [`boolean_result_with_token`] with an optional stage sink
+/// ([`crate::boolean_stage_progress`]), a side channel that changes no
+/// computed value. Mirrors manifold-sharp's
+/// `BooleanResultAssemble.BooleanResultWithToken` overload.
+pub fn boolean_result_with_token_and_stage(
+    in_p: &ManifoldImpl,
+    in_q: &ManifoldImpl,
+    op: OpType,
+    bool3: &Boolean3,
+    token: Option<&CancelToken>,
+    stage: StageSink<'_>,
 ) -> ManifoldImpl {
     debug_assert!(
         bool3.expand_p == (op == OpType::Add),
@@ -586,6 +602,7 @@ pub fn boolean_result_with_token(
     drop(i30);
 
     crate::timing::print("Assembly", t_assembly);
+    report_stage(stage, stage_marks::AFTER_ASSEMBLY);
 
     // Phase 7 (C++ boolean_result.cpp:922): after AppendWholeEdges.
     if is_cancelled(token) {
@@ -602,6 +619,7 @@ pub fn boolean_result_with_token(
     drop(face_edge);
     drop(halfedge_ref);
     crate::timing::print("Triangulation", t);
+    report_stage(stage, stage_marks::AFTER_TRIANGULATION);
 
     // Phase 8 (C++ boolean_result.cpp:941): after Face2Tri + ReorderHalfedges.
     if is_cancelled(token) {
@@ -619,6 +637,7 @@ pub fn boolean_result_with_token(
 
     // Update references
     update_reference(&mut out_r, in_p, in_q, invert_q);
+    report_stage(stage, stage_marks::AFTER_REFERENCE);
 
     // Phase 10 (C++ boolean_result.cpp:951): after UpdateReference.
     if is_cancelled(token) {
@@ -629,6 +648,7 @@ pub fn boolean_result_with_token(
     simplify_topology(&mut out_r, (n_pv + n_qv) as i32);
     out_r.remove_unreferenced_verts();
     crate::timing::print("Simplification", t);
+    report_stage(stage, stage_marks::AFTER_SIMPLIFY);
 
     // Finalize
     let t = crate::timing::start();

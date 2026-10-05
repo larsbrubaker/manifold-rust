@@ -514,6 +514,14 @@ mirror of a manifold-sharp addition that was until now a sharp-only entry in its
 - `ProgressReporter::phase_total()` and `ProgressReporter::report_units(f64)`
   (`src/progress.rs`, sharp `Progress.cs` `PhaseTotal` / `ReportUnits`, sharp
   entry 6's reporter hooks). Read-only / write-only from the kernel's side.
+- The exact boolean's stage sink (`src/boolean_stage_progress.rs`, sharp
+  `BooleanStageProgress.cs`): `boolean3::boolean_with_token_and_stage`,
+  `Boolean3::new_with_token_and_stage` and
+  `boolean_result::boolean_result_with_token_and_stage` take an optional
+  `&dyn Fn(f64)` and invoke it with eight constant cumulative marks at the
+  cancel gates closing each heavy stage. It reads nothing and is handed only
+  constants; the variants without it pass `None`, which is the prior code.
+  `stage_sink_hears_every_mark_and_changes_no_bit` pins both halves.
 
 **What does not differ:** nothing is rerouted. `minkowski::minkowski`,
 `Manifold::minkowski_difference` and every other ported path still run the
@@ -530,8 +538,7 @@ unit ball is exactly 5832.0; a 2048-triangle sphere agrees with the sweep to
 
 **Still sharp-only:** sharp entry 6's parallel union tree
 (`TryDilateByConvex` / `TryErodeByConvex`, `ConvexDilation.cs`,
-`ConvexPatches.cs`) and its exact-boolean stage sink (`BooleanStageProgress.cs`)
-are not yet mirrored. Sharp entry 10 (CSG tree evaluation with a progress
+`ConvexPatches.cs`) is not yet mirrored. Sharp entry 10 (CSG tree evaluation with a progress
 reporter) was taken by e444fb9 (`CsgNode::evaluate_with_token_and_progress`).
 
 ## Known unresolved mismatches (bugs, not entries)

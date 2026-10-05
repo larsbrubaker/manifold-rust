@@ -28,6 +28,7 @@
 // - x12 = winding contribution at each intersection
 // - v12 = 3D position of each intersection vertex
 
+use crate::boolean_stage_progress::{self as stage_marks, report as report_stage, StageSink};
 use crate::cancel::{is_cancelled, CancelToken};
 use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{dot, IVec3, Vec3};
@@ -115,6 +116,20 @@ impl Boolean3 {
         op: OpType,
         token: Option<&CancelToken>,
     ) -> Option<Self> {
+        Self::new_with_token_and_stage(in_p, in_q, op, token, None)
+    }
+
+    /// [`Boolean3::new_with_token`] with an optional stage sink
+    /// ([`crate::boolean_stage_progress`]), a side channel that changes no
+    /// computed value. Mirrors manifold-sharp's `Boolean3.NewWithToken`
+    /// overload.
+    pub fn new_with_token_and_stage(
+        in_p: &ManifoldImpl,
+        in_q: &ManifoldImpl,
+        op: OpType,
+        token: Option<&CancelToken>,
+        stage: StageSink<'_>,
+    ) -> Option<Self> {
         let expand_p = op == OpType::Add;
 
         if in_p.is_empty() || in_q.is_empty() || !in_p.bbox.does_overlap_box(&in_q.bbox) {
@@ -138,12 +153,14 @@ impl Boolean3 {
         }
         let xv12 = intersect12(in_p, in_q, expand_p, true, token)?;
         crate::timing::print("  Intersect12 P->Q", t);
+        report_stage(stage, stage_marks::AFTER_INTERSECT_PQ);
         let t = crate::timing::start();
         if is_cancelled(token) {
             return None;
         }
         let xv21 = intersect12(in_p, in_q, expand_p, false, token)?;
         crate::timing::print("  Intersect12 Q->P", t);
+        report_stage(stage, stage_marks::AFTER_INTERSECT_QP);
 
         if xv12.x12.len() > i32::MAX as usize || xv21.x12.len() > i32::MAX as usize {
             return Some(Boolean3 {
@@ -163,12 +180,14 @@ impl Boolean3 {
         }
         let w03 = winding03(in_p, in_q, &xv12.p1q2, expand_p, true, token)?;
         crate::timing::print("  Winding03 P", t);
+        report_stage(stage, stage_marks::AFTER_WINDING_P);
         let t = crate::timing::start();
         if is_cancelled(token) {
             return None;
         }
         let w30 = winding03(in_p, in_q, &xv21.p1q2, expand_p, false, token)?;
         crate::timing::print("  Winding03 Q", t);
+        report_stage(stage, stage_marks::AFTER_WINDING_Q);
         crate::timing::print("Intersections (total)", t_total);
 
         Some(Boolean3 {
@@ -358,6 +377,21 @@ pub fn boolean_with_token(
     op: OpType,
     token: Option<&CancelToken>,
 ) -> ManifoldImpl {
+    boolean_with_token_and_stage(mesh_a, mesh_b, op, token, None)
+}
+
+/// [`boolean_with_token`] with an optional stage sink
+/// ([`crate::boolean_stage_progress`]), a side channel that changes no
+/// computed value: the sink hears this one boolean's completed fraction at its
+/// stage boundaries; the fast paths report nothing. Mirrors manifold-sharp's
+/// `Boolean3Functions.BooleanWithToken` overload.
+pub fn boolean_with_token_and_stage(
+    mesh_a: &ManifoldImpl,
+    mesh_b: &ManifoldImpl,
+    op: OpType,
+    token: Option<&CancelToken>,
+    stage: StageSink<'_>,
+) -> ManifoldImpl {
     // Entry gate: a token cancelled before the call wins over every fast path
     // below, including the empty-input ones. C++ does the same at its outermost
     // gates (csg_tree.cpp:172, execution_impl.cpp's static factories), so an
@@ -399,14 +433,14 @@ pub fn boolean_with_token(
     }
 
     // Full boolean — compute intersections
-    let Some(bool3) = Boolean3::new_with_token(mesh_a, mesh_b, op, token) else {
+    let Some(bool3) = Boolean3::new_with_token_and_stage(mesh_a, mesh_b, op, token, stage) else {
         return cancelled_impl();
     };
     if !bool3.valid {
         return ManifoldImpl::new();
     }
 
-    crate::boolean_result::boolean_result_with_token(mesh_a, mesh_b, op, &bool3, token)
+    crate::boolean_result::boolean_result_with_token_and_stage(mesh_a, mesh_b, op, &bool3, token, stage)
 }
 
 /// Route a boolean to the requested engine (`types::BooleanEngine`).

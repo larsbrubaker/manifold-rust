@@ -31,6 +31,7 @@
 
 pub mod boolean3;
 pub mod boolean_result;
+pub mod boolean_stage_progress;
 pub mod cancel;
 pub mod collider;
 pub mod constructors;
