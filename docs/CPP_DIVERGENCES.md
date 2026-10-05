@@ -51,7 +51,7 @@ belongs in any category for convenience.
 | 10 | Extension | `CrossSection::minkowski_sum` (no C++ counterpart) |
 | 11 | Justified | QuickHull decides above-a-face exactly |
 | 12 | Inherited (latent) | Keyhole bridge searches skip a degenerate outer ring whole |
-| 13 | Extension | `Manifold::try_convex_erosion` closed-form convex erosion; `ProgressReporter::phase_total` / `report_units` (mirrored from manifold-sharp) |
+| 13 | Extension | Mirrored from manifold-sharp: `try_convex_erosion`, `try_dilate_by_convex` / `try_erode_by_convex` (union tree, convex patches), exact-boolean stage sink, `ProgressReporter::phase_total` / `report_units` |
 
 Anything else that differs from the C++ is a bug, not an entry. The ones known
 and not yet fixed are listed under *Known unresolved mismatches* at the end, so
@@ -496,7 +496,7 @@ epsilon <= 1e60), because outside it `ccw`'s squares can underflow or overflow
 and call an outside vert collinear; the comment there gives the derivation, and
 `keyhole_cull_keeps_a_bridge_whose_ccw_underflows` and `..._overflows` pin it.
 
-## 13. Closed-form convex erosion and progress-reporter extensions mirrored from manifold-sharp (extension, 2026-10-05)
+## 13. Convex erosion, the convex dilation tree and their progress hooks, mirrored from manifold-sharp (extension, 2026-10-05)
 
 **What differs:** three Rust-only APIs with no C++ counterpart, each a 1:1
 mirror of a manifold-sharp addition that was until now a sharp-only entry in its
@@ -536,10 +536,34 @@ equality sharp's `Vec3.Equals` uses. `src/convex_erosion_tests.rs` ports
 unit ball is exactly 5832.0; a 2048-triangle sphere agrees with the sweep to
 < 1e-12 relative).
 
-**Still sharp-only:** sharp entry 6's parallel union tree
-(`TryDilateByConvex` / `TryErodeByConvex`, `ConvexDilation.cs`,
-`ConvexPatches.cs`) is not yet mirrored. Sharp entry 10 (CSG tree evaluation with a progress
-reporter) was taken by e444fb9 (`CsgNode::evaluate_with_token_and_progress`).
+- `Manifold::try_dilate_by_convex` / `Manifold::try_erode_by_convex`
+  (`src/convex_dilation.rs`, `src/convex_patches.rs`; sharp `ConvexDilation.cs`,
+  `ConvexPatches.cs`, the rest of sharp entry 6). The same per-triangle (or,
+  when dilating, exactly-proven convex-patch) hulls `minkowski.rs` builds,
+  reduced through a balanced union tree (leaves of 16 units, pairwise levels)
+  whose leaf and level maps run through `maybe_par_map_ct(_progress)`, so the
+  `parallel` feature is the Rust's `ManifoldParallel.Enabled` (single-threaded
+  on wasm32 and without the feature). Solids whose component boxes overlap are
+  first rebuilt by `robust::rebuild_with_rule(Positive)`. Erosion subtracts the
+  tree's union from the solid once. To let every node run on one engine,
+  `csg_tree`'s private `batch_union` / `batch_boolean` / `simple_boolean` take
+  an optional engine (`None` = the process default, the prior behavior).
+  Not bit-identical to `minkowski_sum` / `minkowski_difference` (a different
+  union order rounds differently): volume and genus agree at 1e-9. Sequential
+  and parallel builds are bit-identical to each other; `par_tests.rs` pins the
+  drilled-part dilation and erosion fingerprints (0xe4a5747b38ef2b89,
+  0x565d3e8a3c515759) in both builds.
+
+Tests ported 1:1 from sharp: `ConvexDilationTests.cs`, `.Erosion.cs`,
+`.Patches.cs`, `.Nested.cs` (`src/convex_dilation_*tests.rs`) and
+`ParallelismTests.ConvexDilation.cs` (`src/par_tests.rs`; the C# runtime
+toggle becomes 1-vs-8 rayon threads plus a hash pinned across both builds).
+
+Sharp entry 10 (CSG tree evaluation with a progress reporter) was taken by
+e444fb9 (`CsgNode::evaluate_with_token_and_progress`), and `batch_boolean`
+now also serializes a round's pairs when a reporter is attached, as sharp
+does. With this entry nothing in sharp's entries 5, 6 or 10 remains
+sharp-only.
 
 ## Known unresolved mismatches (bugs, not entries)
 

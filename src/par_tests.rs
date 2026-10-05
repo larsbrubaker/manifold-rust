@@ -240,3 +240,91 @@ fn pinched_checkerboard_import_with_tangents_keeps_the_sequential_output() {
         );
     }
 }
+
+// ── Convex dilation / erosion tree (manifold-sharp ParallelismTests.ConvexDilation.cs) ──
+// manifold-sharp flips `ManifoldParallel.Enabled` between two runs in one test;
+// here 1 vs 8 rayon threads in a `parallel` build, and one run otherwise, both
+// against the pinned hash, so the sequential and parallel builds must agree.
+
+fn drilled_part() -> Manifold {
+    Manifold::cube(Vec3::splat(4.0), true)
+        .difference(&Manifold::sphere(1.5, 16).translate(Vec3::new(2.0, 2.0, 2.0)))
+        .difference(&Manifold::cylinder_centered(6.0, 0.8, -1.0, 16, true))
+}
+
+fn tree_dilate(progress: Option<&crate::progress::ProgressReporter>) -> Manifold {
+    drilled_part()
+        .try_dilate_by_convex(&Manifold::sphere(0.3, 8), None, progress)
+        .expect("the drilled part is non-convex ⊕ convex and must not be declined")
+}
+
+fn tree_erode(progress: Option<&crate::progress::ProgressReporter>) -> Manifold {
+    drilled_part()
+        .try_erode_by_convex(&Manifold::sphere(0.3, 8), None, progress)
+        .expect("the drilled part is eroded by a convex ball and must not be declined")
+}
+
+#[test]
+fn convex_dilation_geometry_is_bit_identical_in_parallel() {
+    // Anti-vacuity: enough triangles for several leaves.
+    assert!(drilled_part().num_tri() >= 64);
+    let sequential = run_on(1, &|| tree_dilate(None));
+    let parallel = run_on(8, &|| tree_dilate(None));
+    assert_eq!(sequential, parallel);
+    // Run once on this thread: the hull-count hook is thread-local, and
+    // `run_on` installs into a pool.
+    assert!(tree_dilate(None).num_tri() > 0);
+    let hulls = crate::convex_dilation::LAST_HULL_COUNT.with(|c| c.get());
+    assert!(
+        hulls > 0 && hulls < drilled_part().num_tri(),
+        "patches formed"
+    );
+    assert_eq!(
+        sequential, 0xe4a5_747b_38ef_2b89,
+        "pinned; identical in both builds"
+    );
+}
+
+#[test]
+fn convex_erosion_tree_geometry_is_bit_identical_in_parallel() {
+    assert!(drilled_part().num_tri() >= 64);
+    let sequential = run_on(1, &|| tree_erode(None));
+    let parallel = run_on(8, &|| tree_erode(None));
+    assert_eq!(sequential, parallel);
+    assert!(tree_erode(None).num_tri() > 0);
+    assert_eq!(
+        sequential, 0x565d_3e8a_3c51_5759,
+        "pinned; identical in both builds"
+    );
+}
+
+fn convex_dilation_is_bit_identical_with_and_without_a_reporter(erode: bool) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let reports = Arc::new(AtomicUsize::new(0));
+    let counter = Arc::clone(&reports);
+    let reporter = crate::progress::ProgressReporter::new(move |_, _| {
+        counter.fetch_add(1, Ordering::SeqCst);
+    });
+    let run = |p: Option<&crate::progress::ProgressReporter>| {
+        if erode {
+            tree_erode(p)
+        } else {
+            tree_dilate(p)
+        }
+    };
+    let unwatched = run_on(8, &|| run(None));
+    let watched = run_on(8, &|| run(Some(&reporter)));
+    assert!(reports.load(Ordering::SeqCst) > 2);
+    assert_eq!(unwatched, watched);
+}
+
+#[test]
+fn convex_dilation_is_bit_identical_with_and_without_a_reporter_dilate() {
+    convex_dilation_is_bit_identical_with_and_without_a_reporter(false);
+}
+
+#[test]
+fn convex_dilation_is_bit_identical_with_and_without_a_reporter_erode() {
+    convex_dilation_is_bit_identical_with_and_without_a_reporter(true);
+}

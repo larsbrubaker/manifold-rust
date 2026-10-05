@@ -236,7 +236,7 @@ fn top_unions_report_fractional_progress_from_inside() {
 
     // One unit per hull, then per leaf, per union and the closing pass.
     let num_hulls = LAST_HULL_COUNT.with(|c| c.get()) as f64;
-    let num_leaves = ((num_hulls as usize + 15) / 16 + 1) as f64;
+    let num_leaves = ((num_hulls as usize).div_ceil(16) + 1) as f64;
     let total = num_hulls + num_leaves + (num_leaves - 1.0) + 1.0;
 
     let is_fractional = |fraction: f64| {

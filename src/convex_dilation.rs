@@ -345,9 +345,8 @@ fn has_overlapping_components(solid: &ManifoldImpl) -> bool {
     let mut min = vec![Vec3::new(0.0, 0.0, 0.0); num_components];
     let mut max = vec![Vec3::new(0.0, 0.0, 0.0); num_components];
     let mut seen = vec![false; num_components];
-    for v in 0..num_vert {
-        let c = component[v] as usize;
-        let p = solid.vert_pos[v];
+    for (&comp, &p) in component.iter().zip(solid.vert_pos.iter()) {
+        let c = comp as usize;
         if !seen[c] {
             min[c] = p;
             max[c] = p;
@@ -514,3 +513,7 @@ mod erosion_tests;
 #[cfg(test)]
 #[path = "convex_dilation_patch_tests.rs"]
 mod patch_tests;
+
+#[cfg(test)]
+#[path = "convex_dilation_nested_tests.rs"]
+mod nested_tests;
