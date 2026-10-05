@@ -506,3 +506,11 @@ impl<'a> NodeProgress<'a> {
 #[cfg(test)]
 #[path = "convex_dilation_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "convex_dilation_erosion_tests.rs"]
+mod erosion_tests;
+
+#[cfg(test)]
+#[path = "convex_dilation_patch_tests.rs"]
+mod patch_tests;
