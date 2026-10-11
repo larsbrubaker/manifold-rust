@@ -68,6 +68,13 @@ jobs:
         with:
           submodules: recursive
 
+      # clipper2-rust is a `{ version, path }` dependency on ../clipper2-rust
+      # (see Cargo.toml), so cargo cannot load the workspace without the
+      # sibling checkout next to this one. actions/checkout only writes inside
+      # the workspace directory, hence a plain clone into its parent.
+      - name: Checkout clipper2-rust next to manifold-rust
+        run: git clone --depth 1 https://github.com/larsbrubaker/clipper2-rust.git ../clipper2-rust
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -85,6 +92,13 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      # clipper2-rust is a `{ version, path }` dependency on ../clipper2-rust
+      # (see Cargo.toml), so cargo cannot load the workspace without the
+      # sibling checkout next to this one. actions/checkout only writes inside
+      # the workspace directory, hence a plain clone into its parent.
+      - name: Checkout clipper2-rust next to manifold-rust
+        run: git clone --depth 1 https://github.com/larsbrubaker/clipper2-rust.git ../clipper2-rust
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -150,6 +164,13 @@ jobs:
         with:
           submodules: recursive
 
+      # clipper2-rust is a `{ version, path }` dependency on ../clipper2-rust
+      # (see Cargo.toml), so cargo cannot load the workspace without the
+      # sibling checkout next to this one. actions/checkout only writes inside
+      # the workspace directory, hence a plain clone into its parent.
+      - name: Checkout clipper2-rust next to manifold-rust
+        run: git clone --depth 1 https://github.com/larsbrubaker/clipper2-rust.git ../clipper2-rust
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
@@ -209,6 +230,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      # clipper2-rust is a `{ version, path }` dependency on ../clipper2-rust
+      # (see Cargo.toml), so cargo cannot load the workspace without the
+      # sibling checkout next to this one. actions/checkout only writes inside
+      # the workspace directory, hence a plain clone into its parent.
+      - name: Checkout clipper2-rust next to manifold-rust
+        run: git clone --depth 1 https://github.com/larsbrubaker/clipper2-rust.git ../clipper2-rust
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
