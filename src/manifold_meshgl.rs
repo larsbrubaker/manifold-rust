@@ -39,8 +39,9 @@ impl Manifold {
     /// `run_original_id`. When `run_original_id` is empty the whole mesh gets
     /// one freshly reserved ID; to know the ID up front, set
     /// `run_original_id = vec![Manifold::reserve_ids(1)]` and leave
-    /// `run_index` empty. Exact-engine booleans carry both through (the
-    /// robust engine rebuilds from bare triangles and does not), and an exported
+    /// `run_index` empty. Booleans on both engines carry both through (the
+    /// robust engine gives every output triangle the `TriRef` of the input
+    /// triangle it is a piece of), and an exported
     /// mesh's `run_original_id[run]` and `face_id[tri]` name the input mesh
     /// and input face each output triangle lies on. [`Self::original_id`]
     /// stays -1 for an imported mesh (the input is the original, not this
