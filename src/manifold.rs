@@ -140,7 +140,11 @@ impl Manifold {
     }
 
     /// Port of C++ Manifold::AsOriginal()
-    /// Removes all mesh relations and recreates as an original mesh.
+    /// Removes all mesh relations (original IDs, face IDs, transforms) and
+    /// recreates this as an original mesh with a new ID; exported face IDs
+    /// then fall back to coplanar groups. To keep caller-assigned face IDs,
+    /// import a MeshGL with `face_id` set instead (see
+    /// [`Self::from_mesh_gl`]).
     pub fn as_original(&self) -> Self {
         if let Some(e) = self.require_paired() {
             return e;

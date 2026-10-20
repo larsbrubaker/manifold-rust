@@ -24,6 +24,20 @@ enum ImportMode {
 }
 
 impl Manifold {
+    /// Import a single-precision mesh, matching C++ `Manifold(const MeshGL&)`.
+    ///
+    /// Provenance survives the import, as in the reference: each triangle
+    /// keeps `mesh.face_id[tri]` (any caller-chosen value; many triangles may
+    /// share one, coplanar or not), and each run keeps its
+    /// `run_original_id`. When `run_original_id` is empty the whole mesh gets
+    /// one freshly reserved ID; to know the ID up front, set
+    /// `run_original_id = vec![Manifold::reserve_ids(1)]` and leave
+    /// `run_index` empty. Exact-engine booleans carry both through (the
+    /// robust engine rebuilds from bare triangles and does not), and an exported
+    /// mesh's `run_original_id[run]` and `face_id[tri]` name the input mesh
+    /// and input face each output triangle lies on. [`Self::original_id`]
+    /// stays -1 for an imported mesh (the input is the original, not this
+    /// Manifold), and [`Self::as_original`] discards the face IDs.
     pub fn from_mesh_gl(mesh: &MeshGL) -> Self {
         Self::from_mesh_impl(mesh, ImportMode::Strict, false)
     }
@@ -34,6 +48,7 @@ impl Manifold {
     /// full f64 precision, matching C++ `Manifold(const MeshGL64&)`.
     /// Indices still truncate to 32 bits exactly as the C++ import's
     /// `uint32_t` casts do — the kernel indexes vertices with 32 bits.
+    /// Face IDs and run original IDs are kept as in [`Self::from_mesh_gl`].
     pub fn from_mesh_gl64(mesh: &MeshGL64) -> Self {
         Self::from_mesh_impl(mesh, ImportMode::Strict, false)
     }

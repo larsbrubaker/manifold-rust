@@ -96,11 +96,15 @@ pub struct MeshGLP<P: Copy + Default, I: Copy + Default = u32> {
     pub merge_to_vert: Vec<I>,
     /// Optional: run start indices into triVerts.
     pub run_index: Vec<I>,
-    /// Optional: original mesh ID per run.
+    /// Optional: original mesh ID per run. On import, empty means one
+    /// freshly reserved ID for the whole mesh; on export, the ID of the input
+    /// mesh each run's triangles came from.
     pub run_original_id: Vec<u32>,
     /// Optional: 3×4 column-major transform per run (12 elements each).
     pub run_transform: Vec<P>,
-    /// Optional: source face ID per triangle.
+    /// Optional: source face ID per triangle. Kept through import and
+    /// booleans; on export, the face ID of the input triangle each output
+    /// triangle lies on, or its coplanar group where the input had none.
     pub face_id: Vec<I>,
     /// Optional: halfedge tangent vectors (4 per halfedge).
     pub halfedge_tangent: Vec<P>,
