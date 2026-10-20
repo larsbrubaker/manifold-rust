@@ -1,0 +1,52 @@
+# Publishes the manifold-rust crate to crates.io from GitHub's network.
+#
+# Same route as agg-rust's and agg-gui's publish workflows: the development machine's network
+# path drops HTTPS uploads larger than ~1.1MB, and publishing from CI keeps the token off the
+# machine.
+#
+# Requires the repository secret CARGO_REGISTRY_TOKEN (a crates.io token with the
+# publish-update scope for manifold-rust).
+#
+# Only the `manifold-rust` package is published. The workspace's other members (the FFI
+# shared library and the wasm demo) are not crates.io packages.
+#
+# clipper2-rust is a `{ version, path }` dependency: publish a new clipper2-rust first and raise
+# the version requirement in Cargo.toml when manifold-rust needs its new APIs, then run this.
+name: publish
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      # The published package excludes cpp-reference/, so the package build does not need the
+      # submodule; the test step below does: 15 tests load OBJ models from the C++ test suite
+      # (cpp-reference/manifold/test/models) and fail without it.
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # cargo cannot load the manifest without the sibling at the path dependency's location
+      # (`cargo publish` then drops the path and depends on the crates.io version).
+      # actions/checkout only writes inside the workspace directory, hence a plain clone into
+      # its parent.
+      - name: Checkout clipper2-rust next to manifold-rust
+        run: git clone --depth 1 https://github.com/larsbrubaker/clipper2-rust.git ../clipper2-rust
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # A tree whose tests fail never reaches crates.io.
+      - name: Run tests
+        run: cargo test --release
+
+      # cargo publish verifies the packaged tarball by building it on its own, against the
+      # crates.io clipper2-rust, before uploading.
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p manifold-rust
