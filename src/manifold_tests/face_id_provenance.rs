@@ -19,6 +19,8 @@ pub(super) trait GlKind {
     type I: MeshIndex;
     fn export(m: &Manifold) -> MeshGLP<Self::P, Self::I>;
     fn import(mesh: &MeshGLP<Self::P, Self::I>) -> Manifold;
+    /// The import that keeps a non-manifold (but closed) mesh as a soup.
+    fn import_robust(mesh: &MeshGLP<Self::P, Self::I>) -> Manifold;
 }
 
 pub(super) struct Gl64;
@@ -33,6 +35,9 @@ impl GlKind for Gl64 {
     fn import(mesh: &MeshGL64) -> Manifold {
         Manifold::from_mesh_gl64(mesh)
     }
+    fn import_robust(mesh: &MeshGL64) -> Manifold {
+        Manifold::from_mesh_gl64_robust(mesh)
+    }
 }
 
 impl GlKind for Gl32 {
@@ -44,9 +49,13 @@ impl GlKind for Gl32 {
     fn import(mesh: &MeshGL) -> Manifold {
         Manifold::from_mesh_gl(mesh)
     }
+    fn import_robust(mesh: &MeshGL) -> Manifold {
+        Manifold::from_mesh_gl_robust(mesh)
+    }
 }
 
 pub(super) const EXACT: BooleanEngine = BooleanEngine::Exact;
+pub(super) const ROBUST: BooleanEngine = BooleanEngine::Robust;
 
 /// A distinct plane of one face ID of one input mesh: three points of a
 /// representative triangle, in the input mesh's own coordinates.
@@ -61,11 +70,11 @@ pub(super) struct Registry {
     sources: BTreeMap<u32, Vec<SourcePlane>>,
 }
 
-fn tri_normal(v: &[Vec3; 3]) -> Vec3 {
+pub(super) fn tri_normal(v: &[Vec3; 3]) -> Vec3 {
     cross(v[1] - v[0], v[2] - v[0])
 }
 
-fn positions<P: MeshPrecision, I: MeshIndex>(mesh: &MeshGLP<P, I>) -> Vec<Vec3> {
+pub(super) fn positions<P: MeshPrecision, I: MeshIndex>(mesh: &MeshGLP<P, I>) -> Vec<Vec3> {
     let np = mesh.num_prop.to_u64() as usize;
     (0..mesh.vert_properties.len() / np)
         .map(|i| {
@@ -78,7 +87,7 @@ fn positions<P: MeshPrecision, I: MeshIndex>(mesh: &MeshGLP<P, I>) -> Vec<Vec3> 
         .collect()
 }
 
-fn tri_verts<P: MeshPrecision, I: MeshIndex>(
+pub(super) fn tri_verts<P: MeshPrecision, I: MeshIndex>(
     mesh: &MeshGLP<P, I>,
     pos: &[Vec3],
     tri: usize,
@@ -112,7 +121,17 @@ impl Registry {
 
     /// Import `mesh` (whose `face_id` is already set, e.g. the colours a
     /// previous boolean recovered) as a fresh original, dropping its runs.
-    pub fn import_mesh<K: GlKind>(&mut self, mut mesh: MeshGLP<K::P, K::I>) -> (Manifold, u32) {
+    pub fn import_mesh<K: GlKind>(&mut self, mesh: MeshGLP<K::P, K::I>) -> (Manifold, u32) {
+        self.import_mesh_with::<K>(mesh, K::import)
+    }
+
+    /// [`Self::import_mesh`] through `import` (e.g. the soup-keeping robust
+    /// import for a non-manifold operand).
+    pub fn import_mesh_with<K: GlKind>(
+        &mut self,
+        mut mesh: MeshGLP<K::P, K::I>,
+        import: fn(&MeshGLP<K::P, K::I>) -> Manifold,
+    ) -> (Manifold, u32) {
         let id = Manifold::reserve_ids(1);
         mesh.run_index.clear();
         mesh.run_transform.clear();
@@ -138,7 +157,7 @@ impl Registry {
             }
         }
         self.sources.insert(id, planes);
-        let out = K::import(&mesh);
+        let out = import(&mesh);
         assert_eq!(out.status(), Error::NoError, "import failed");
         (out, id)
     }

@@ -534,6 +534,7 @@ mod robust;
 
 #[path = "manifold_meshgl.rs"]
 mod meshgl;
+pub(crate) use meshgl::AssembledRefs;
 
 #[path = "manifold_shape.rs"]
 mod shape;

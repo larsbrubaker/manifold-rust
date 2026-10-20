@@ -624,6 +624,7 @@ pub fn build_graph_with_progress(
                         interner.intern_f64(t[1]),
                         interner.intern_f64(t[2]),
                     ],
+                    flipped: false,
                 });
             }
             TriResult::Arranged(arr) => {
@@ -644,6 +645,7 @@ pub fn build_graph_with_progress(
                         mesh: m as u8,
                         tri: ti,
                         vi,
+                        flipped: false,
                     });
                 }
             }

@@ -12,6 +12,13 @@ use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::{IVec3, Mat3x4, Vec3};
 use crate::types::{MeshGL, MeshGL64, MeshGLP, MeshIndex, MeshPrecision};
 
+/// Per-triangle references and relations the robust engine supplies for a
+/// mesh it assembled ([`Manifold::from_mesh_gl64_robust_assembled`]).
+pub(crate) struct AssembledRefs {
+    pub tri_ref: Vec<crate::types::TriRef>,
+    pub relations: std::collections::BTreeMap<i32, crate::types::Relation>,
+}
+
 /// How the import treats non-manifold connectivity.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ImportMode {
@@ -39,7 +46,7 @@ impl Manifold {
     /// stays -1 for an imported mesh (the input is the original, not this
     /// Manifold), and [`Self::as_original`] discards the face IDs.
     pub fn from_mesh_gl(mesh: &MeshGL) -> Self {
-        Self::from_mesh_impl(mesh, ImportMode::Strict, false)
+        Self::from_mesh_impl(mesh, ImportMode::Strict, false, None)
     }
 
     /// Import a double-precision mesh directly into the f64 kernel. Unlike
@@ -50,7 +57,7 @@ impl Manifold {
     /// `uint32_t` casts do — the kernel indexes vertices with 32 bits.
     /// Face IDs and run original IDs are kept as in [`Self::from_mesh_gl`].
     pub fn from_mesh_gl64(mesh: &MeshGL64) -> Self {
-        Self::from_mesh_impl(mesh, ImportMode::Strict, false)
+        Self::from_mesh_impl(mesh, ImportMode::Strict, false, None)
     }
 
     /// Import that accepts non-manifold geometry for the robust boolean
@@ -62,12 +69,12 @@ impl Manifold {
     /// transforms, and mesh export; pairing-dependent operations return
     /// empty results with `Error::NotManifold`.
     pub fn from_mesh_gl_robust(mesh: &MeshGL) -> Self {
-        Self::from_mesh_impl(mesh, ImportMode::AllowSoup, false)
+        Self::from_mesh_impl(mesh, ImportMode::AllowSoup, false, None)
     }
 
     /// Double-precision variant of [`Self::from_mesh_gl_robust`].
     pub fn from_mesh_gl64_robust(mesh: &MeshGL64) -> Self {
-        Self::from_mesh_impl(mesh, ImportMode::AllowSoup, false)
+        Self::from_mesh_impl(mesh, ImportMode::AllowSoup, false, None)
     }
 
     /// [`Self::from_mesh_gl64_robust`] for meshes the robust boolean engine
@@ -78,14 +85,23 @@ impl Manifold {
     /// misclassify large valid triangles and physically move the surface.
     /// Every other import path — including user meshes coming in through
     /// [`Self::from_mesh_gl_robust`] — is unaffected.
-    pub(crate) fn from_mesh_gl64_robust_assembled(mesh: &MeshGL64) -> Self {
-        Self::from_mesh_impl(mesh, ImportMode::AllowSoup, true)
+    ///
+    /// `refs`, when given, replaces the runs: one `TriRef` per triangle of
+    /// `mesh` and the relations their mesh IDs name (robust/provenance.rs),
+    /// kept verbatim — coplanar IDs included, as the fast engine keeps its
+    /// inputs' — so simplification and export see each triangle's source face.
+    pub(crate) fn from_mesh_gl64_robust_assembled(
+        mesh: &MeshGL64,
+        refs: Option<AssembledRefs>,
+    ) -> Self {
+        Self::from_mesh_impl(mesh, ImportMode::AllowSoup, true, refs)
     }
 
     fn from_mesh_impl<P: MeshPrecision, I: MeshIndex>(
         mesh: &MeshGLP<P, I>,
         mode: ImportMode,
         skip_swap: bool,
+        refs: Option<AssembledRefs>,
     ) -> Self {
         let num_vert = mesh.num_vert() as u32;
         let num_tri = mesh.num_tri();
@@ -268,6 +284,12 @@ impl Manifold {
             );
         }
 
+        let keep_coplanar = refs.is_some();
+        if let Some(refs) = refs {
+            all_tri_ref = refs.tri_ref;
+            imp.mesh_relation.mesh_id_transform = refs.relations;
+        }
+
         // Build triangles, filtering out degenerates from merges
         let mut tri_prop: Vec<IVec3> = Vec::with_capacity(num_tri);
         let mut tri_vert: Vec<IVec3> = Vec::new();
@@ -357,7 +379,17 @@ impl Manifold {
         imp.dedupe_prop_verts();
         imp.calculate_bbox();
         imp.set_epsilon(mesh.tolerance.to_f64(), false);
+        // Supplied references keep their own coplanar groups (the flood fill
+        // still sets the face normals).
+        let kept: Vec<i32> = if keep_coplanar {
+            imp.mesh_relation.tri_ref.iter().map(|r| r.coplanar_id).collect()
+        } else {
+            Vec::new()
+        };
         imp.set_normals_and_coplanar();
+        for (r, &c) in imp.mesh_relation.tri_ref.iter_mut().zip(&kept) {
+            r.coplanar_id = c;
+        }
         if skip_swap {
             // remove_degenerates without its swap_degenerates stage; see
             // docs/CPP_DIVERGENCES.md entry 1.

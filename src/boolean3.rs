@@ -252,14 +252,9 @@ pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
     }
     // Soup inputs (robust non-manifold import) cannot go through
     // create_halfedges' strict pairing below; concatenate them geometrically
-    // instead. Mesh relations are not preserved on this path — soups carry
-    // none that survive a boolean anyway.
+    // instead, keeping every triangle's face reference.
     if meshes.iter().any(|m| m.is_soup) {
-        let mut tris = Vec::new();
-        for m in meshes {
-            tris.extend(crate::robust::soup::impl_to_tris(m));
-        }
-        return crate::robust::assemble_all(&tris);
+        return crate::robust::assemble_all(meshes);
     }
 
     let num_prop = meshes.iter().map(|m| m.num_prop).max().unwrap_or(0);

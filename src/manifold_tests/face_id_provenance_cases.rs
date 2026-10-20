@@ -2,12 +2,15 @@
 // palette face IDs under union, difference and intersection, coplanar
 // touching cases (shared planes, flush cuts, a cylinder standing on a floor),
 // and batch booleans of translated and rotated operands, each on both the
-// f64 MeshGL64 and the f32 MeshGL path. The harness and the invariant live in
+// f64 MeshGL64 and the f32 MeshGL path. Each case takes the boolean engine;
+// the tests here run the exact engine and `face_id_provenance_robust.rs` runs
+// the same cases on the robust one. The harness and the invariant live in
 // `face_id_provenance.rs`.
 
 use super::face_id_provenance::*;
 use super::*;
 use crate::linalg::Vec2;
+use crate::types::BooleanEngine;
 
 const TOL64: f64 = 1e-9;
 const TOL32: f64 = 1e-4;
@@ -19,17 +22,17 @@ fn box_and_cylinder<K: GlKind>(reg: &mut Registry) -> (Manifold, Manifold) {
     (b, c)
 }
 
-fn box_cylinder_ops<K: GlKind>(tol: f64) {
+pub(super) fn box_cylinder_ops<K: GlKind>(tol: f64, engine: BooleanEngine) {
     let mut reg = Registry::default();
     let (b, c) = box_and_cylinder::<K>(&mut reg);
     for op in [OpType::Add, OpType::Subtract, OpType::Intersect] {
         reg.check::<K>(
-            &b.boolean_with_engine(&c, op, EXACT),
+            &b.boolean_with_engine(&c, op, engine),
             tol,
             &format!("box {op:?} cyl"),
         );
         reg.check::<K>(
-            &c.boolean_with_engine(&b, op, EXACT),
+            &c.boolean_with_engine(&b, op, engine),
             tol,
             &format!("cyl {op:?} box"),
         );
@@ -38,7 +41,7 @@ fn box_cylinder_ops<K: GlKind>(tol: f64) {
     let side = c.translate(Vec3::new(4.0, 0.0, 0.0)).rotate(0.0, 0.0, 15.0);
     for op in [OpType::Add, OpType::Subtract, OpType::Intersect] {
         reg.check::<K>(
-            &b.boolean_with_engine(&side, op, EXACT),
+            &b.boolean_with_engine(&side, op, engine),
             tol,
             &format!("box {op:?} offset cyl"),
         );
@@ -47,15 +50,15 @@ fn box_cylinder_ops<K: GlKind>(tol: f64) {
 
 #[test]
 fn face_id_provenance_box_cylinder_ops_64() {
-    box_cylinder_ops::<Gl64>(TOL64);
+    box_cylinder_ops::<Gl64>(TOL64, EXACT);
 }
 
 #[test]
 fn face_id_provenance_box_cylinder_ops_32() {
-    box_cylinder_ops::<Gl32>(TOL32);
+    box_cylinder_ops::<Gl32>(TOL32, EXACT);
 }
 
-fn coplanar_touching<K: GlKind>(tol: f64) {
+pub(super) fn coplanar_touching<K: GlKind>(tol: f64, engine: BooleanEngine) {
     let mut reg = Registry::default();
     // A box resting on a larger box: the top of one is the bottom of the other.
     let (base, _) = reg.import::<K>(
@@ -65,14 +68,14 @@ fn coplanar_touching<K: GlKind>(tol: f64) {
     let top = Manifold::cube(Vec3::splat(4.0), false).translate(Vec3::new(3.0, 3.0, 5.0));
     let (top, _) = reg.import::<K>(&top, solid(7));
     reg.check::<K>(
-        &base.boolean_with_engine(&top, OpType::Add, EXACT),
+        &base.boolean_with_engine(&top, OpType::Add, engine),
         tol,
         "box on box",
     );
     // The same box hanging over an edge: shared plane and shared side planes.
     let over = top.translate(Vec3::new(5.0, -3.0, 0.0));
     reg.check::<K>(
-        &base.boolean_with_engine(&over, OpType::Add, EXACT),
+        &base.boolean_with_engine(&over, OpType::Add, engine),
         tol,
         "box over edge",
     );
@@ -83,12 +86,12 @@ fn coplanar_touching<K: GlKind>(tol: f64) {
         Manifold::cube(Vec3::new(4.0, 10.0, 3.0), false).translate(Vec3::new(3.0, 0.0, 2.0));
     let (cutter, _) = reg.import::<K>(&cutter, box_palette);
     reg.check::<K>(
-        &base.boolean_with_engine(&cutter, OpType::Subtract, EXACT),
+        &base.boolean_with_engine(&cutter, OpType::Subtract, engine),
         tol,
         "flush notch",
     );
     reg.check::<K>(
-        &base.boolean_with_engine(&cutter, OpType::Intersect, EXACT),
+        &base.boolean_with_engine(&cutter, OpType::Intersect, engine),
         tol,
         "flush overlap",
     );
@@ -98,7 +101,7 @@ fn coplanar_touching<K: GlKind>(tol: f64) {
         reg.import::<K>(&Manifold::cube(Vec3::new(20.0, 20.0, 2.0), false), solid(0));
     let cyl = Manifold::cylinder(5.0, 3.0, 3.0, 32).translate(Vec3::new(10.0, 10.0, 2.0));
     let (cyl, _) = reg.import::<K>(&cyl, solid(1));
-    let out = floor.boolean_with_engine(&cyl, OpType::Add, EXACT);
+    let out = floor.boolean_with_engine(&cyl, OpType::Add, engine);
     let mesh = reg.check::<K>(&out, tol, "cylinder on floor");
     assert_floor_face(
         &mesh,
@@ -112,15 +115,15 @@ fn coplanar_touching<K: GlKind>(tol: f64) {
 
 #[test]
 fn face_id_provenance_coplanar_touching_64() {
-    coplanar_touching::<Gl64>(TOL64);
+    coplanar_touching::<Gl64>(TOL64, EXACT);
 }
 
 #[test]
 fn face_id_provenance_coplanar_touching_32() {
-    coplanar_touching::<Gl32>(TOL32);
+    coplanar_touching::<Gl32>(TOL32, EXACT);
 }
 
-fn batch<K: GlKind>(tol: f64) {
+pub(super) fn batch<K: GlKind>(tol: f64, engine: BooleanEngine) {
     let mut reg = Registry::default();
     let mut parts = Vec::new();
     let (b, _) = reg.import::<K>(
@@ -144,20 +147,20 @@ fn batch<K: GlKind>(tol: f64) {
                 .translate(Vec3::new(x, 20.0, 4.0)),
         );
     }
-    let union = Manifold::batch_boolean_with_engine(&parts, OpType::Add, EXACT);
+    let union = Manifold::batch_boolean_with_engine(&parts, OpType::Add, engine);
     reg.check::<K>(&union, tol, "batch union");
-    let cut = Manifold::batch_boolean_with_engine(&parts, OpType::Subtract, EXACT);
+    let cut = Manifold::batch_boolean_with_engine(&parts, OpType::Subtract, engine);
     reg.check::<K>(&cut, tol, "batch difference");
 }
 
 #[test]
 fn face_id_provenance_batch_64() {
-    batch::<Gl64>(TOL64);
+    batch::<Gl64>(TOL64, EXACT);
 }
 
 #[test]
 fn face_id_provenance_batch_32() {
-    batch::<Gl32>(TOL32);
+    batch::<Gl32>(TOL32, EXACT);
 }
 
 /// The import route keeps the input face IDs and reports the reserved

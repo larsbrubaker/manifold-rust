@@ -115,19 +115,25 @@ impl PointTable {
 }
 
 /// One output fragment: a sub-triangle of an arranged input triangle, or an
-/// untouched whole triangle. `v` is wound to match the input mesh's outward
-/// orientation; `vi` are the interned ids of the same three vertices.
+/// untouched whole triangle; `vi` are the interned ids of its three
+/// vertices. `mesh` and `tri` name the input triangle the fragment lies on —
+/// the provenance assembly turns into the output triangle's `TriRef`.
 #[derive(Clone, Copy, Debug)]
 pub struct Piece {
     /// 0 = first operand (P), 1 = second operand (Q).
     pub mesh: u8,
     /// Index of the originating triangle in its soup.
     pub tri: usize,
-    /// Interned vertex ids (indices into `IntersectionGraph::verts`), wound
-    /// to the input mesh's outward orientation. Pieces carry no coordinates
-    /// of their own — the shared tables keep untouched triangles free of
-    /// rational clones entirely.
+    /// Interned vertex ids (indices into `IntersectionGraph::verts`). Pieces
+    /// carry no coordinates of their own — the shared tables keep untouched
+    /// triangles free of rational clones entirely.
     pub vi: [u32; 3],
+    /// Whether `vi` winds against the originating triangle. The graph's
+    /// pieces are all wound like their input triangle (`false`); extraction
+    /// winds each kept wall from the cell labels instead, and records here
+    /// when that reversed it, so assembly can export the triangle as a
+    /// backside run.
+    pub flipped: bool,
 }
 
 /// Everything classification and assembly need.

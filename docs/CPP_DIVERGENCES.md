@@ -30,8 +30,8 @@ A fourth kind makes no numerical claim at all:
 
 - **API shape or extension** — a public signature that differs from the C++
   one, or a Rust-only method the C++ does not have. The entry states what the
-  numbers match (or that nothing in the C++ constrains them). Entries 9, 10
-  and 13.
+  numbers match (or that nothing in the C++ constrains them). Entries 9, 10,
+  13 and 14.
 
 The second kind is deliberately uncomfortable to write, which is the point — it
 is a debt with a name attached, not a decision that ends the discussion. Nothing
@@ -52,6 +52,7 @@ belongs in any category for convenience.
 | 11 | Justified | QuickHull decides above-a-face exactly |
 | 12 | Inherited (latent) | Keyhole bridge searches skip a degenerate outer ring whole |
 | 13 | Extension | Mirrored from manifold-sharp: `try_convex_erosion`, `try_dilate_by_convex` / `try_erode_by_convex` (union tree, convex patches), exact-boolean stage sink, `ProgressReporter::phase_total` / `report_units` |
+| 14 | Extension | Robust-engine results carry the input faces' `TriRef`s (run original IDs, face IDs, backside runs) |
 
 Anything else that differs from the C++ is a bug, not an entry. The ones known
 and not yet fixed are listed under *Known unresolved mismatches* at the end, so
@@ -564,6 +565,55 @@ e444fb9 (`CsgNode::evaluate_with_token_and_progress`), and `batch_boolean`
 now also serializes a round's pairs when a reporter is attached, as sharp
 does. With this entry nothing in sharp's entries 5, 6 or 10 remains
 sharp-only.
+
+## 14. Robust-engine results carry the input faces' references (extension, 2026-10-20)
+
+**What differs:** the robust boolean engine (`src/robust/`, itself a Rust-only
+engine) reports, for every output triangle, the `TriRef` of the input
+triangle it lies on — mesh ID, original ID, face ID and coplanar ID — and the
+input relations behind them, so `get_mesh_gl(64)` exports run original IDs,
+face IDs, run transforms and run flags as it does for an exact-engine result
+(`src/robust/provenance.rs`). Nothing in the C++ constrains these values; the
+rules follow the exact engine's `update_reference`
+(`src/boolean_result_assemble.rs`) where it has a counterpart:
+
+- **Which input triangle.** Every output triangle is a piece of one input
+  triangle (`Piece::mesh`, `Piece::tri`), carried through the intersection
+  graph, each triangle's arrangement and CDT, and cell extraction. A
+  coincident stack (coplanar faces overlapping, from either operand) emits
+  one triangle with the provenance of its lowest-index piece; the graph emits
+  all of P's pieces before Q's, so where a P face and a Q face coincide and
+  the wall survives, **P's face wins, for every operation**. The exact engine
+  agrees for intersection (and a surviving coincident face in a difference is
+  always P's in both); for a union of same-facing coplanar faces its choice
+  follows its symbolic perturbation and varies with the face's direction and
+  position, even within one face, so there the engines can pick different
+  operands — both name a face the triangle lies on.
+- **Mesh IDs.** P keeps its mesh IDs; Q's move past a freshly reserved block;
+  a subtracted Q's relations are marked backside — as in `update_reference`.
+- **Backside siblings.** The robust engine winds its output from the cell
+  labels, so a triangle can come out reversed where the exact engine has no
+  counterpart (an inside-out region kept under `WindingRule::Nonzero`, a
+  mis-wound shell rebuilt by `rebuild_with_rule`). Such a triangle moves to a
+  sibling mesh ID whose relation differs only in its backside flag (run_flags
+  bit 0), reserved in ascending base-ID order.
+- **Coplanar IDs and simplification.** The assembled import
+  (`Manifold::from_mesh_gl64_robust_assembled`) keeps the supplied coplanar
+  IDs instead of its own flood fill, as the exact engine keeps its inputs', so
+  the topology simplification merges only triangles of one source face
+  (`TriRef::same_face`). Before this, every robust result was one fresh run
+  whose coplanar groups spanned operands, so simplification could merge
+  across a colour seam, and robust results can now keep a few more triangles
+  where coplanar faces of different sources meet.
+- **Soup concatenation.** `compose_meshes`' soup branch
+  (`robust::assemble_all`) keeps every triangle's reference, renumbering mesh
+  IDs and coplanar groups as its strict branch does.
+
+**Evidence:** `manifold::tests::face_id_provenance_robust` — the provenance
+invariant of `face_id_provenance.rs` under `BooleanEngine::Robust` for the
+single, coplanar, batch and nested cases, under `Auto` with a soup operand and
+a self-intersecting operand, backside runs for the subtracted operand, and a
+fast/robust colour comparison by point sampling on manifold operands.
 
 ## Known unresolved mismatches (bugs, not entries)
 

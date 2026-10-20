@@ -44,7 +44,14 @@ pub fn in_result(op: OpType, rule: WindingRule, w: [i32; 2]) -> bool {
 /// oriented no matter how the input was wound — an inverted region of a
 /// self-intersecting scan still lands in the right cells, and its emitted
 /// orientation is corrected on the way out. One representative per wall is
-/// emitted, so a coincident stack contributes a single face.
+/// emitted, so a coincident stack contributes a single face, and the emitted
+/// triangle keeps that representative's provenance (`mesh`, `tri`): the
+/// lowest-index piece of the stack. The graph emits every piece of operand P
+/// before any of Q, so where coplanar faces of both operands coincide and the
+/// wall survives, P's face supplies the output triangle — the same face the
+/// fast engine keeps there (its symbolic perturbation expands P for a union
+/// and shrinks it otherwise, so a surviving coincident face is always P's).
+/// `flipped` records when the emitted winding reverses the representative's.
 pub fn extract(
     graph: &IntersectionGraph,
     complex: &CellComplex,
@@ -78,6 +85,7 @@ pub fn extract(
             mesh: piece.mesh,
             tri: piece.tri,
             vi,
+            flipped: !in_a,
         });
     }
     out

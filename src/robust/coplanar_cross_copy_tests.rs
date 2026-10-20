@@ -20,7 +20,9 @@
 // and that the step reports its own progress phase rather than running
 // silently under "self intersections". Shared 1:1 with manifold-sharp's
 // CoplanarCrossCopyTests (its commit c776525), frozen hash included (the
-// SHA-256 is computed here, test-only, rather than taken from a crate).
+// SHA-256 is computed here, test-only, rather than taken from a crate); the
+// hash is the one manifold-sharp produces once its robust results carry their
+// input faces' references the same way (docs/CPP_DIVERGENCES.md entry 14).
 
 use crate::linalg::Vec3;
 use crate::manifold::Manifold;
@@ -28,10 +30,15 @@ use crate::progress::{Phase, ProgressReporter};
 use crate::types::{BooleanEngine, Error, OpType};
 
 /// SHA-256 of the robust union's MeshGL64 (tri verts, then vertex property
-/// bits; see [`hash`]), captured from the per-call cross-copy before it was
-/// optimized — in manifold-sharp and, identically, in this crate. Any change
-/// here is a change to a computed result.
-const FROZEN_UNION_HASH: &str = "8E910C9A57BC34E4421978487DDFFB679CB62180E3B94B5C162877B30EA5CE76";
+/// bits; see [`hash`]). First captured from the per-call cross-copy before it
+/// was optimized, in manifold-sharp and identically in this crate; re-frozen
+/// when robust results began carrying their input faces' references
+/// (robust/provenance.rs, docs/CPP_DIVERGENCES.md entry 14): each of the 16
+/// cubes is its own source face now, so simplification no longer merges
+/// triangles across cubes and the export groups them into one run per cube:
+/// 118 triangles in 17 runs, with volume 20.5, area 54 and genus 0 unchanged.
+/// Any change here is a change to a computed result.
+const FROZEN_UNION_HASH: &str = "05D20DD343AFEA0B90C704F0A65BDAF47C66D4E8055D70019743FEF2D65126CF";
 
 /// A 4x4 grid of unit cubes composed without a boolean, so neighbours touch
 /// face to face (the self-contact that sends Auto to the robust engine), and a
@@ -206,3 +213,4 @@ fn the_cross_copy_reports_its_own_phase() {
         .and_then(|(_, fraction)| *fraction);
     assert_eq!(last, Some(1.0));
 }
+

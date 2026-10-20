@@ -29,6 +29,8 @@
 //                        extraction, re-exported through `cells`)
 //   ray_shoot          — exact winding numbers (residual component seeds)
 //   soup               — triangle-soup import (closed/orientable validation)
+//   assemble           — selected pieces to a Manifold (properties, and the
+//                        source-face references from provenance)
 //
 // Classification follows the mesh-arrangement formulation (Zhou, Grinspun,
 // Zorin, Jacobson 2016 — what libigl's mesh_boolean uses), which subsumes
@@ -62,6 +64,7 @@ mod graph_self_cut;
 mod graph_types;
 pub mod intersection_graph;
 pub mod pairing;
+pub mod provenance;
 pub mod ray_shoot;
 pub mod repair;
 pub mod soup;
@@ -216,6 +219,7 @@ pub fn boolean_with_rule(
                             interner.intern_f64(t[1]),
                             interner.intern_f64(t[2]),
                         ],
+                        flipped: false,
                     })
                     .collect();
                 let ctx = assemble::PropCtx {
@@ -224,12 +228,13 @@ pub fn boolean_with_rule(
                     props: [&p_props, &q_props],
                 };
                 let props = (ctx.out_num_prop() > 0).then_some(&ctx);
-                return assemble::assemble(
+                return assemble::assemble_with_refs(
                     &pieces,
                     &interner.verts,
                     &interner.verts_f64,
                     |_| true,
                     props,
+                    Some(&provenance::RefCtx::for_operands(a, b, false)),
                 )
                 .into_impl();
             }
@@ -250,7 +255,8 @@ pub fn boolean_with_rule(
         tris: [&p_tris, &q_tris],
         props: [&p_props, &q_props],
     };
-    classify_and_assemble(&ctx, op, rule, token, progress)
+    let refs = provenance::RefCtx::for_operands(a, b, op == OpType::Subtract);
+    classify_and_assemble(&ctx, &refs, op, rule, token, progress)
 }
 
 /// The pipeline proper: intersect (cross-mesh *and* self), arrange, build the
@@ -263,8 +269,12 @@ pub fn boolean_with_rule(
 /// empty soup. Every stage is already indexed by mesh, and an empty mesh 1
 /// simply contributes no triangles, no boxes and no primitives; its winding
 /// is 0 in every cell, which no rule calls solid.
+///
+/// `refs` names the input face behind every operand triangle; each output
+/// triangle keeps the one its piece lies on.
 fn classify_and_assemble(
     ctx: &assemble::PropCtx,
+    refs: &provenance::RefCtx,
     op: OpType,
     rule: WindingRule,
     token: Option<&CancelToken>,
@@ -304,7 +314,14 @@ fn classify_and_assemble(
     let pieces = cells::extract(&graph, &complex, &wind, op, rule);
     let props = (ctx.out_num_prop() > 0).then_some(ctx);
     let t_asm = crate::timing::start();
-    let out = assemble::assemble(&pieces, &graph.verts, &graph.verts_f64, |_| true, props);
+    let out = assemble::assemble_with_refs(
+        &pieces,
+        &graph.verts,
+        &graph.verts_f64,
+        |_| true,
+        props,
+        Some(refs),
+    );
     crate::timing::print("robust: assemble+import", t_asm);
     out.into_impl()
 }
@@ -329,7 +346,9 @@ fn classify_and_assemble(
 ///
 /// Corner properties survive: the operand occupies mesh slot 0, the same slot
 /// a two-operand boolean gives it, so [`assemble::PropCtx`] interpolates them
-/// onto the rebuilt triangles unchanged.
+/// onto the rebuilt triangles unchanged, and so do face references: every
+/// rebuilt triangle carries the `TriRef` of the input triangle it lies on,
+/// on a backside sibling run where the rebuild reversed it.
 pub fn rebuild_with_rule(
     a: &ManifoldImpl,
     rule: WindingRule,
@@ -349,36 +368,42 @@ pub fn rebuild_with_rule(
         tris: [&p_tris, &[]],
         props: [&p_props, &[]],
     };
-    classify_and_assemble(&ctx, OpType::Add, rule, token, progress)
+    let refs = provenance::RefCtx::for_single(a);
+    classify_and_assemble(&ctx, &refs, OpType::Add, rule, token, progress)
 }
 
-/// Import a raw triangle list as a boolean result (used by
-/// `boolean3::compose_meshes` when any input is a soup; positions only —
-/// the property-aware disjoint-union path in `boolean` builds its own
-/// tagged pieces).
-pub(crate) fn assemble_all(tris: &[[Vec3; 3]]) -> ManifoldImpl {
+/// Concatenate `meshes` (at least one a soup) into one boolean result —
+/// `boolean3::compose_meshes`' soup branch. Positions and face references
+/// survive: every triangle keeps its input's `TriRef`, with mesh IDs and
+/// coplanar groups renumbered as the strict branch renumbers them, then
+/// fresh mesh IDs handed out the same way.
+pub(crate) fn assemble_all(meshes: &[ManifoldImpl]) -> ManifoldImpl {
     let mut interner = intersection_graph::VertInterner::default();
-    let pieces: Vec<intersection_graph::Piece> = tris
-        .iter()
-        .enumerate()
-        .map(|(i, t)| intersection_graph::Piece {
+    let mut pieces: Vec<intersection_graph::Piece> = Vec::new();
+    for t in meshes.iter().flat_map(soup::impl_to_tris) {
+        pieces.push(intersection_graph::Piece {
             mesh: 0,
-            tri: i,
+            tri: pieces.len(),
             vi: [
                 interner.intern_f64(t[0]),
                 interner.intern_f64(t[1]),
                 interner.intern_f64(t[2]),
             ],
-        })
-        .collect();
-    assemble::assemble(
+            flipped: false,
+        });
+    }
+    let refs = provenance::RefCtx::for_compose(meshes);
+    let mut out = assemble::assemble_with_refs(
         &pieces,
         &interner.verts,
         &interner.verts_f64,
         |_| true,
         None,
+        Some(&refs),
     )
-    .into_impl()
+    .into_impl();
+    out.increment_mesh_ids();
+    out
 }
 
 #[cfg(test)]

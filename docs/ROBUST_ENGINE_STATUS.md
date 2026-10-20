@@ -38,6 +38,18 @@ never material. Every operation is one predicate on the winding vector, so
 
 `classify.rs` and `propagate.rs` were deleted; their jobs no longer exist.
 
+## Face provenance
+
+Every output triangle carries the `TriRef` of the input triangle it lies on
+(`src/robust/provenance.rs`, threaded through `cells::extract` and
+`assemble::assemble_with_refs`), so a robust result exports run original IDs,
+face IDs and backside runs like an exact-engine result. Where coplanar faces
+of both operands coincide, P's face supplies the surviving triangle; triangles
+the cell labels reversed against their source face export as backside runs.
+The rules and how they compare with the exact engine are in
+`docs/CPP_DIVERGENCES.md` entry 14; `manifold::tests::face_id_provenance_robust`
+pins them.
+
 ## Current state
 
 All 644 library tests pass. `cargo test --release --lib`.
@@ -288,6 +300,9 @@ arrangement's inconsistent-wall count, and operand A's self-overlap ratio.
   multiplicity, end-to-end boolean volumes, and an inverted-operand case.
 - `robust::nonmanifold_tests::soup_survives_non_axis_aligned_rotation` — soup
   impls carry no collider; rotating one used to crash.
+- `manifold::tests::face_id_provenance_robust` — face IDs and original IDs
+  survive robust booleans (forced and through `Auto`), backside runs for a
+  subtracted operand, and fast/robust colour agreement.
 
 ## Two bugs the unit tests could not have found
 

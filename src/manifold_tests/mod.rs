@@ -499,6 +499,7 @@ mod error_propagation;
 mod face_id_provenance;
 mod face_id_provenance_cases;
 mod face_id_provenance_nested;
+mod face_id_provenance_robust;
 mod hull;
 mod mesh_ops;
 mod normals;

@@ -19,6 +19,11 @@
 // Coincident vertices with different properties stay separate property
 // vertices linked by merge vectors, mirroring the exact engine's MeshGL
 // output shape.
+//
+// With a provenance context (robust/provenance.rs), each output triangle
+// also carries the `TriRef` of the input triangle its piece lies on, so the
+// simplification below merges only triangles of one source face and the
+// export reports run original IDs and face IDs as for an exact-engine result.
 
 use super::exact::backend::{rat_one, Rational};
 
@@ -29,6 +34,7 @@ use crate::types::MeshGL64;
 use super::cells::VertTables;
 use super::exact::rational::{rat_to_f64, R3};
 use super::intersection_graph::Piece;
+use super::provenance::RefCtx;
 use super::tri_tri::dominant_axis;
 
 /// Per-operand property data for interpolation. `props[m]` is flattened as
@@ -107,13 +113,27 @@ fn interpolate_props(ctx: &PropCtx, piece: &Piece, v: &R3, out: usize) -> Vec<f6
 /// output — no per-vertex rational rounding here.
 /// With a `PropCtx` whose operands carry properties, output vertices get
 /// interpolated properties; otherwise the output is positions-only and
-/// byte-identical to the pre-property behavior.
+/// byte-identical to the pre-property behavior. The output is one fresh run
+/// with no face IDs; [`assemble_with_refs`] keeps the source faces.
 pub fn assemble<F: Fn(usize) -> bool>(
     pieces: &[Piece],
     verts: &[R3],
     verts_f64: &[Vec3],
     select: F,
     props: Option<&PropCtx>,
+) -> Manifold {
+    assemble_with_refs(pieces, verts, verts_f64, select, props, None)
+}
+
+/// [`assemble`] where, given a `RefCtx`, each output triangle carries the
+/// `TriRef` of the input triangle its piece lies on (robust/provenance.rs).
+pub fn assemble_with_refs<F: Fn(usize) -> bool>(
+    pieces: &[Piece],
+    verts: &[R3],
+    verts_f64: &[Vec3],
+    select: F,
+    props: Option<&PropCtx>,
+    refs: Option<&RefCtx>,
 ) -> Manifold {
     let out_prop = props.map_or(0, |p| p.out_num_prop());
 
@@ -199,7 +219,11 @@ pub fn assemble<F: Fn(usize) -> bool>(
     // The robust import handles everything rounding can produce: verts that
     // collapsed to identical f64 positions, exactly-degenerate triangles,
     // and non-manifold connectivity (kept as a soup impl).
-    let out = Manifold::from_mesh_gl64_robust_assembled(&mesh);
+    let tri_refs = refs.map(|ctx| {
+        let (tri_ref, relations) = ctx.output_refs(&selected);
+        crate::manifold::AssembledRefs { tri_ref, relations }
+    });
+    let out = Manifold::from_mesh_gl64_robust_assembled(&mesh, tri_refs);
 
     // Manifold results get the same topology simplification the exact
     // engine's boolean_result applies: without it the CDT's coplanar
