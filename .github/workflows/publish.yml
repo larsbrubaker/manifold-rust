@@ -22,12 +22,12 @@ permissions:
 
 jobs:
   publish:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       # The published package excludes cpp-reference/, so the package build does not need the
       # submodule; the test step below does: 15 tests load OBJ models from the C++ test suite
       # (cpp-reference/manifold/test/models) and fail without it.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 

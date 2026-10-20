@@ -18,9 +18,9 @@ concurrency:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -59,7 +59,7 @@ jobs:
   dotnet:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # clipper2-rust is a `{ version, path }` dependency on ../clipper2-rust
       # (see Cargo.toml), so cargo cannot load the workspace without the
@@ -77,7 +77,7 @@ jobs:
         run: cargo build --release -p manifold-ffi
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: dotnet/global.json
 

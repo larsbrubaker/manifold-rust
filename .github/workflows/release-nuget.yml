@@ -35,11 +35,11 @@ concurrency:
 jobs:
   version:
     name: check tag version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       package-version: ${{ steps.check.outputs.package-version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # The tag is the release's only input, so it has to agree with the version
       # the package will actually carry. Nothing else runs until it does: a typo
@@ -62,9 +62,9 @@ jobs:
   test-rust:
     name: rust tests
     needs: version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -91,7 +91,7 @@ jobs:
     needs: version
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # clipper2-rust is a `{ version, path }` dependency on ../clipper2-rust
       # (see Cargo.toml), so cargo cannot load the workspace without the
@@ -109,7 +109,7 @@ jobs:
         run: cargo build --release -p manifold-ffi
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: dotnet/global.json
 
@@ -133,7 +133,7 @@ jobs:
             rid: win-x64
             target: x86_64-pc-windows-msvc
             library: manifold_rs.dll
-          - os: ubuntu-latest
+          - os: ubuntu-26.04
             rid: linux-x64
             target: x86_64-unknown-linux-gnu
             library: libmanifold_rs.so
@@ -160,7 +160,7 @@ jobs:
           # then silently dropped from the package.
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -186,7 +186,7 @@ jobs:
         run: cargo build --release -p manifold-ffi --target ${{ matrix.target }}
 
       - name: Upload the native
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-${{ matrix.rid }}
           path: target/${{ matrix.target }}/release/${{ matrix.library }}
@@ -199,7 +199,7 @@ jobs:
   native-browser-wasm:
     name: native browser-wasm
     needs: [test-rust, test-dotnet]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     env:
       # Matches the Emscripten the .NET wasm-tools workload ships, which is what
       # consumers link with. The pin is for reproducibility rather than
@@ -227,7 +227,7 @@ jobs:
           echo "EMSDK_DIR=$RUNNER_TEMP/emsdk" >> "$GITHUB_ENV"
           echo "ARCHIVE_DIR=$RUNNER_TEMP/browser-wasm-staging" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: recursive
 
@@ -305,7 +305,7 @@ jobs:
       # empty the path would not match a file and if-no-files-found fails the job,
       # which is the outcome to want here.
       - name: Upload the native
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: native-browser-wasm
           path: ${{ env.ARCHIVE_DIR }}/manifold_rs.a
@@ -314,7 +314,7 @@ jobs:
   pack:
     name: pack and publish
     needs: [version, native, native-browser-wasm]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     # id-token lets this job mint the OIDC token nuget.org exchanges for a
     # publishing key - without it NuGet/login below has nothing to present.
     # Naming permissions at all replaces the workflow-level block wholesale, so
@@ -328,19 +328,19 @@ jobs:
     env:
       PACKAGE_VERSION: ${{ needs.version.outputs.package-version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # Pinned from dotnet/global.json rather than left to whatever the runner
       # image happens to ship, so the SDK that packs a release is the one the
       # tests ran on. The pack step also runs from dotnet/ so that same
       # global.json governs the build itself, not just the install.
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v6
         with:
           global-json-file: dotnet/global.json
 
       - name: Download the natives
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: native-*
           path: artifacts
@@ -418,7 +418,7 @@ jobs:
       # Kept whether or not the push succeeds: if nuget.org rejects the upload
       # the artifact is what makes the failure diagnosable.
       - name: Upload the package
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: nupkg
           path: nupkgs/*.nupkg
