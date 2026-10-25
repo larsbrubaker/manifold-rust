@@ -6,23 +6,21 @@
 
 **No stubs, no shortcuts** - Every function must be complete and production-ready. No `todo!()`, no `unimplemented!()`, no `panic!("not implemented")`, no partial implementations. If dependencies aren't ready, stop and implement them first.
 
-**Exact numerical match** - This port must reproduce the C++ library with perfect numerical exactness. Not "close enough" — identical results on identical inputs.
+**Accuracy and utility over C++ parity** - The port is complete and has its
+own test suite; that suite, not the C++ reference, is the bar. Bit-identical
+agreement with the C++ is no longer a goal in itself. Judge every change on
+accuracy, robustness, performance, and usefulness to callers. Do not pursue
+a fix whose only benefit is matching the C++ more closely, and say plainly
+when a proposed change is parity-only. The C++ remains the best reference
+for *how* an algorithm is meant to work, and the first place to look when
+porting something new or debugging.
 
-**Deliberate divergence is allowed — and documented.** Byte-matching the C++
-is the default, not a suicide pact: when the C++ behavior is a real
-correctness defect (e.g. an orientation-blind normal flood-fill distorting
-antiparallel-coplanar meshes), or when we can be provably more accurate,
-we fix it on our side. Every deliberate divergence must be documented in
-`docs/CPP_DIVERGENCES.md` (what differs, why, and the evidence), so
-trace-diff debugging sessions against the reference know what to expect.
-Divergence for convenience is still forbidden — only accuracy, real bug
-fixes, or measured improvements qualify. One further category is
-*disclosed* rather than justified: an inherited divergence — an output
-shape this port already shipped that we would resolve toward the C++ on
-the merits but cannot change unilaterally, because a downstream consumer
-(manifold-sharp) verifies against this tree bit-for-bit. These are
-documented debt with a named harmonization path, never a way to skip the
-bar above.
+**Output changes are documented.** A downstream consumer (manifold-sharp, a
+C# twin) verifies against this tree bit-for-bit, so any change that moves
+shipped output must say so: record it in `docs/CPP_DIVERGENCES.md` (what
+changed, why, the evidence, which expected test values moved) with a note of
+what manifold-sharp must mirror. Don't churn output for convenience — move it
+only when the result is measurably better.
 
 ## Test-First Bug Fixing (Critical Practice)
 
@@ -37,9 +35,9 @@ Do not skip the reproducing test. Even if the fix seems obvious.
 ## Testing
 
 - Tests MUST test actual production code, not copies
-- Tests must verify **exact behavioral match** with the C++ implementation — same floating-point results, same triangle counts, same vertex positions
-- To confirm numerical exactness, instrument both the Rust and C++ implementations and compare output byte-for-byte where applicable
-- All tests must pass before advancing to the next phase
+- Pin exact expected values (counts, volumes, positions) where the result is deterministic, so unintended output changes are caught; when an expected value moves, explain why the new value is better before updating it
+- When instrumenting against the C++ helps diagnose a bug, do it — as a debugging aid, not a requirement
+- All tests must pass before a change lands
 - When test failures occur, treat all failures as real bugs, resolve through instrumentation and root cause analysis, never by weakening tests
 
 ## Coding Standards
@@ -70,11 +68,9 @@ Do not skip the reproducing test. Even if the fix seems obvious.
 
 ## C++ to Rust Porting Rules
 
-### Exact Behavioral Matching
-- Same algorithms, same mathematical precision (IEEE 754 float/double semantics)
-- Same edge case handling
-- No "close enough" implementations
-- Use `f32`/`f64` to match C++ `float`/`double`; never round or clamp unless the C++ does
+### Porting new functionality
+- Start from the C++ algorithm and its edge-case handling; deviate where we can do measurably better, and document the deviation as above
+- Use `f32`/`f64` where the C++ uses `float`/`double` unless a different precision is more accurate
 
 ### Dependency-Ordered Implementation
 Before implementing any function:
@@ -102,10 +98,10 @@ Before implementing any function:
 
 ## Instrumentation Strategy
 
-To validate numerical exactness, we build and run both implementations:
+When comparing against the reference helps (diagnosing a bug, porting new code):
 - **C++ reference**: Build with `cmake` from `cpp-reference/manifold`, capture output
 - **Rust port**: Run `cargo test -- --nocapture`, capture output
-- Compare intermediate values at each phase boundary
+- Compare intermediate values at the stage where results diverge
 
 ## C++ Reference
 
