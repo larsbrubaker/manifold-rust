@@ -501,6 +501,7 @@ mod face_id_provenance_cases;
 mod face_id_provenance_nested;
 mod face_id_provenance_robust;
 mod hull;
+mod mesh_glp_generic;
 mod mesh_ops;
 mod normals;
 mod properties;

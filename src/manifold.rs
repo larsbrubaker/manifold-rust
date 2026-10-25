@@ -21,9 +21,10 @@
 // child modules so they can reach the private `imp` field:
 // manifold_boolean.rs (booleans, plane splits, operator overloads),
 // manifold_robust.rs (robust-engine repair entry points),
-// manifold_meshgl.rs (MeshGL import/export), manifold_shape.rs (primitive
-// and extrusion constructors) and manifold_smooth.rs (normals, smoothing,
-// refinement).
+// manifold_meshgl.rs (MeshGL import/export entry points and the import
+// body), manifold_meshgl_export.rs (the export body), manifold_shape.rs
+// (primitive and extrusion constructors) and manifold_smooth.rs (normals,
+// smoothing, refinement).
 
 use crate::boolean3;
 use crate::cross_section::CrossSection;
@@ -535,6 +536,9 @@ mod robust;
 #[path = "manifold_meshgl.rs"]
 mod meshgl;
 pub(crate) use meshgl::AssembledRefs;
+
+#[path = "manifold_meshgl_export.rs"]
+mod meshgl_export;
 
 #[path = "manifold_shape.rs"]
 mod shape;

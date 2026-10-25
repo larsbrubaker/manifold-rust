@@ -10,12 +10,28 @@
 use crate::linalg::Vec3;
 use crate::types::Box;
 
+/// Seals [`MeshPrecision`] and [`MeshIndex`]: both stay nameable (they are
+/// re-exported from `crate::types` for generic bounds), but only this crate
+/// can implement them. The generic `Manifold::from_mesh_glp*` /
+/// `get_mesh_glp` entry points rely on `IS_SINGLE` and the conversions having
+/// exactly the f32/f64/u32/u64 semantics of the C++ `MeshGLP` template
+/// instantiations, so a downstream type implementing them could silently
+/// break the numerical match.
+mod sealed {
+    pub trait Sealed {}
+    impl Sealed for f32 {}
+    impl Sealed for f64 {}
+    impl Sealed for u32 {}
+    impl Sealed for u64 {}
+}
+
 /// Precision parameter of a [`MeshGLP`] (`f32` or `f64`). Mirrors the
 /// `Precision` template parameter of the C++ `MeshGLP`: conversions to and
 /// from the kernel's internal `f64` happen through this trait, so the f32
 /// instantiation narrows exactly where the C++ float instantiation does and
-/// the f64 instantiation is lossless end to end.
-pub trait MeshPrecision: Copy + Default {
+/// the f64 instantiation is lossless end to end. Sealed: implemented only
+/// for `f32` and `f64`.
+pub trait MeshPrecision: Copy + Default + sealed::Sealed {
     /// True for `f32`. The exported tolerance is floored at
     /// `f32::EPSILON * bbox.scale()` only for single precision, matching the
     /// `std::is_same<Precision, float>` checks in the C++ template.
@@ -48,8 +64,9 @@ impl MeshPrecision for f64 {
 /// template parameter of the C++ `MeshGLP`. The kernel itself indexes with
 /// 32 bits for both instantiations (as the C++ does — its import casts every
 /// index to `uint32_t`), so `u64` indices wider than 32 bits truncate on
-/// import exactly like the C++ `static_cast`.
-pub trait MeshIndex: Copy + Default {
+/// import exactly like the C++ `static_cast`. Sealed: implemented only for
+/// `u32` and `u64`.
+pub trait MeshIndex: Copy + Default + sealed::Sealed {
     fn to_u64(self) -> u64;
     fn from_usize(v: usize) -> Self;
     /// Conversion from the kernel's `int` indices on export. Matches C++

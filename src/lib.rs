@@ -25,7 +25,10 @@
 //! ```
 //!
 //! The main entry point is [`manifold::Manifold`]; meshes move in and out via
-//! [`types::MeshGL`] / [`types::MeshGL64`]. Lower-level modules mirror the C++
+//! [`types::MeshGL`] / [`types::MeshGL64`]. For other precision / index
+//! combinations, such as f64 vertices with u32 indices, use the generic
+//! [`types::MeshGLP`] with [`manifold::Manifold::from_mesh_glp`] /
+//! [`manifold::Manifold::get_mesh_glp`]. Lower-level modules mirror the C++
 //! source layout and are public primarily for testing and advanced use — their
 //! APIs may change before 1.0.
 
