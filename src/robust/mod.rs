@@ -51,6 +51,13 @@
 // coincident-piece binding — has no counterpart here: thin material cancels
 // arithmetically in the winding sum, so there is nothing to discard up
 // front.
+//
+// Every result — pipeline, fast path, rebuild, soup compose — keeps the
+// largest epsilon and tolerance among its operands
+// (`assemble::CarriedTolerance`), as the exact engine's boolean_result and
+// C++ `CsgLeafNode::Compose` do. They are metadata for what comes after; the
+// engine's own simplification runs at the automatic values (see the note in
+// `assemble::assemble_with_tolerance`).
 
 pub mod arrangement;
 pub mod assemble;
@@ -190,6 +197,7 @@ pub fn boolean_with_rule(
     let q_tris = soup::impl_to_tris(b);
     let p_props = soup::impl_to_corner_props(a);
     let q_props = soup::impl_to_corner_props(b);
+    let carried = assemble::CarriedTolerance::of([a, b]);
 
     if !a.bbox.does_overlap_box(&b.bbox) {
         // Only the operands a fast path actually *keeps* need vetting: the
@@ -228,18 +236,26 @@ pub fn boolean_with_rule(
                     props: [&p_props, &q_props],
                 };
                 let props = (ctx.out_num_prop() > 0).then_some(&ctx);
-                return assemble::assemble_with_refs(
+                return assemble::assemble_with_tolerance(
                     &pieces,
                     &interner.verts,
                     &interner.verts_f64,
                     |_| true,
                     props,
                     Some(&provenance::RefCtx::for_operands(a, b, false)),
+                    Some(carried),
                 )
                 .into_impl();
             }
             OpType::Intersect => return ManifoldImpl::new(),
-            OpType::Subtract if a_clean() => return a.clone(),
+            OpType::Subtract if a_clean() => {
+                // A verbatim, with B's tolerance too: the exact engine runs a
+                // disjoint difference through its full pipeline, which gives
+                // the result both operands' larger values.
+                let mut out = a.clone();
+                carried.apply(&mut out);
+                return out;
+            }
             // A kept operand needs classification: fall through to the full
             // pipeline, which handles disjoint inputs fine (it simply finds no
             // cross intersections).
@@ -256,7 +272,7 @@ pub fn boolean_with_rule(
         props: [&p_props, &q_props],
     };
     let refs = provenance::RefCtx::for_operands(a, b, op == OpType::Subtract);
-    classify_and_assemble(&ctx, &refs, op, rule, token, progress)
+    classify_and_assemble(&ctx, &refs, carried, op, rule, token, progress)
 }
 
 /// The pipeline proper: intersect (cross-mesh *and* self), arrange, build the
@@ -271,10 +287,12 @@ pub fn boolean_with_rule(
 /// is 0 in every cell, which no rule calls solid.
 ///
 /// `refs` names the input face behind every operand triangle; each output
-/// triangle keeps the one its piece lies on.
+/// triangle keeps the one its piece lies on. `carried` is the operands'
+/// epsilon and tolerance, which the result keeps.
 fn classify_and_assemble(
     ctx: &assemble::PropCtx,
     refs: &provenance::RefCtx,
+    carried: assemble::CarriedTolerance,
     op: OpType,
     rule: WindingRule,
     token: Option<&CancelToken>,
@@ -314,13 +332,14 @@ fn classify_and_assemble(
     let pieces = cells::extract(&graph, &complex, &wind, op, rule);
     let props = (ctx.out_num_prop() > 0).then_some(ctx);
     let t_asm = crate::timing::start();
-    let out = assemble::assemble_with_refs(
+    let out = assemble::assemble_with_tolerance(
         &pieces,
         &graph.verts,
         &graph.verts_f64,
         |_| true,
         props,
         Some(refs),
+        Some(carried),
     );
     crate::timing::print("robust: assemble+import", t_asm);
     out.into_impl()
@@ -369,14 +388,16 @@ pub fn rebuild_with_rule(
         props: [&p_props, &[]],
     };
     let refs = provenance::RefCtx::for_single(a);
-    classify_and_assemble(&ctx, &refs, OpType::Add, rule, token, progress)
+    let carried = assemble::CarriedTolerance::of([a]);
+    classify_and_assemble(&ctx, &refs, carried, OpType::Add, rule, token, progress)
 }
 
 /// Concatenate `meshes` (at least one a soup) into one boolean result —
 /// `boolean3::compose_meshes`' soup branch. Positions and face references
 /// survive: every triangle keeps its input's `TriRef`, with mesh IDs and
 /// coplanar groups renumbered as the strict branch renumbers them, then
-/// fresh mesh IDs handed out the same way.
+/// fresh mesh IDs handed out the same way. The result keeps the inputs'
+/// largest epsilon and tolerance, as C++ `CsgLeafNode::Compose` does.
 pub(crate) fn assemble_all(meshes: &[ManifoldImpl]) -> ManifoldImpl {
     let mut interner = intersection_graph::VertInterner::default();
     let mut pieces: Vec<intersection_graph::Piece> = Vec::new();
@@ -393,13 +414,14 @@ pub(crate) fn assemble_all(meshes: &[ManifoldImpl]) -> ManifoldImpl {
         });
     }
     let refs = provenance::RefCtx::for_compose(meshes);
-    let mut out = assemble::assemble_with_refs(
+    let mut out = assemble::assemble_with_tolerance(
         &pieces,
         &interner.verts,
         &interner.verts_f64,
         |_| true,
         None,
         Some(&refs),
+        Some(assemble::CarriedTolerance::of(meshes)),
     )
     .into_impl();
     out.increment_mesh_ids();
@@ -429,6 +451,10 @@ mod rebuild_tests;
 #[cfg(test)]
 #[path = "thingi_tests.rs"]
 mod thingi_tests;
+
+#[cfg(test)]
+#[path = "tolerance_tests.rs"]
+mod tolerance_tests;
 
 #[cfg(test)]
 #[path = "coplanar_cross_copy_tests.rs"]

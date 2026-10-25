@@ -217,6 +217,14 @@ pub enum BooleanEngine {
     /// The robust engine (`src/robust`, Barki et al. 2015): exact rational
     /// arithmetic, accepts closed orientable triangle soup (non-manifold,
     /// disconnected, voids). Slower; triangulation may differ from Exact.
+    ///
+    /// Like `Exact`, the result keeps the larger of its operands' epsilon
+    /// and tolerance ([`crate::manifold::Manifold::get_tolerance`]), so a
+    /// `set_tolerance` or imported `MeshGL.tolerance` survives into
+    /// `simplify`, later booleans and export. Unlike `Exact`, the engine does
+    /// not itself coarsen the result to that tolerance: its own clean-up runs
+    /// at the automatic `kPrecision * bbox.scale()`, keeping the result
+    /// volume-exact; call `simplify` for the coarser mesh.
     Robust,
     /// `Exact` unless either operand carries non-manifold soup geometry
     /// (imported via `Manifold::from_mesh_gl_robust`), then `Robust`.

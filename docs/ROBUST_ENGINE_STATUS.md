@@ -50,9 +50,39 @@ The rules and how they compare with the exact engine are in
 `docs/CPP_DIVERGENCES.md` entry 14; `manifold::tests::face_id_provenance_robust`
 pins them.
 
+## Tolerance and epsilon
+
+A robust result keeps the largest epsilon and tolerance among its operands
+(`assemble::CarriedTolerance`), on every path: the pipeline, `Auto` routed to
+robust, soup operands, the bbox-disjoint union and difference, the
+single-operand rebuild, and `compose_meshes`' soup branch. That is what the
+exact engine's `boolean_result` (C++ `boolean_result.cpp:832`) and C++
+`CsgLeafNode::Compose` give. Before 0.19.1 the robust result re-imported with
+no tolerance and silently reset to `kPrecision * bbox.scale()`, so a user's
+`set_tolerance(1e-3)` or imported `MeshGL.tolerance` was gone after one robust
+boolean, along with everything downstream that reads it (`simplify(0)`,
+further booleans, the exported `MeshGL.tolerance`).
+
+The values are applied *after* the assembly's own simplification, which still
+runs at the automatic epsilon and tolerance, so robust geometry is identical
+whatever the operands' tolerance. The exact engine, by contrast, collapses
+the edges it creates up to the tolerance. Doing the same here (created
+vertices moved onto retained operand vertices within the tolerance, or the
+whole collapse at a raised epsilon) was tried and measured, and it made
+results worse. With a 2-cube and a copy shifted (1, 1, 1e-4) at tolerance
+1e-3 it matched the exact engine's triangle counts (union 32, difference 22)
+but moved volumes the exact result does not (union 14.0003 against an exact
+14.0001). Without the `swap_degenerates` clean-up that follows the collapse
+in the exact engine it broke a thin shell: an r=1 48-segment sphere and a
+copy rotated (13°, 7°, 3°) and shifted 5e-4 came out self-intersecting
+(genus -2 union at tolerance 1e-2; genus 14 difference at an imported 1e-3)
+where the automatic values give clean results. `robust::tolerance_tests` pins
+both halves: the carry, and the unchanged geometry.
+
 ## Current state
 
-All 644 library tests pass. `cargo test --release --lib`.
+All 941 library tests pass (10 more are `#[ignore]`d), as of 0.19.1.
+`cargo test --release --lib`.
 
 Full-corpus sweep, **3781 of 9934 meshes** (an earlier partial run on the
 other machine; a fresh full baseline is accumulating as run 2 of

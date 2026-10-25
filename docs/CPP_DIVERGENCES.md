@@ -7,8 +7,8 @@ justified it. Trace-diff debugging against the C++ must expect these.
 Two kinds of entry live here, and they are not the same claim:
 
 - **Justified divergence** — an accuracy fix, a real bug fix in the C++, or a
-  measured improvement. CLAUDE.md's three qualifying reasons. Entries 1, 3, 4
-  and 11.
+  measured improvement. CLAUDE.md's three qualifying reasons. Entries 1, 3, 4,
+  11 and 15.
 - **Inherited divergence, documented and scheduled for coordinated
   harmonization** — an output shape this port already shipped, which we would
   resolve toward the C++ on the merits but cannot change unilaterally, because a
@@ -73,6 +73,11 @@ pieces plus `collapse_colinear_edges` in place of `simplify_topology`.
 `edge_op`'s own functions are untouched; only the composition differs. Every
 other import path, including user meshes arriving through
 `from_mesh_gl_robust` / `from_mesh_gl64_robust`, is byte-identical to before.
+This simplification runs at the automatic epsilon and tolerance of the
+assembled import. The operands' larger values, which the result keeps as
+`boolean_result` does, are applied afterwards, so unlike `SimplifyTopology`
+the robust result is never coarsened to a user's tolerance (measurements in
+`docs/ROBUST_ENGINE_STATUS.md`, "Tolerance and epsilon").
 
 **Why:** `face_op::set_normals_and_coplanar` (faithful port of C++
 `Impl::SetNormalsAndCoplanar`, impl.cpp:214) flood-fills a seed triangle's
@@ -615,6 +620,59 @@ single, coplanar, batch and nested cases, under `Auto` with a soup operand and
 a self-intersecting operand, backside runs for the subtracted operand, and a
 fast/robust colour comparison by point sampling on manifold operands.
 
+## 15. Compose carries its inputs' tolerance as metadata, and carries their face normals (2026-10-25)
+
+**What differs:** C++ `CsgLeafNode::Compose` (`src/csg_tree.cpp:245-268`,
+`:415`) sets the combined impl's epsilon and tolerance to its nodes' largest
+*before* `RemoveDegenerates`, so one node's coarse epsilon collapses every
+other node's short edges too. `boolean3::compose_meshes` runs its clean-up
+at the combined box's automatic `kPrecision * scale` and raises epsilon and
+tolerance to the inputs' largest only after it, as metadata for what comes
+next (`simplify`, later booleans, export). They are raised after the final
+`set_normals_and_coplanar`, so the coplanar grouping, which that call
+computes at the tolerance, is exactly what it was before the carry. The
+clean-up is
+`remove_degenerates` without its `swap_degenerates` stage, and the inputs'
+face normals are concatenated into the composed impl first, as C++ copies
+`faceNormal_` (`:349-373`).
+
+**Why:** utility over parity. A part's tolerance says what is noise *on that
+part*; composing it next to an unrelated part must not coarsen the other.
+Applied before the clean-up, a unit cube imported with `MeshGL.tolerance =
+1e-3` composed with `Manifold::sphere(0.01, 128)` five units away would
+collapse the sphere's ~5e-4 edges (C++ would). Here it also panicked: the
+composed impl had no face normals, and `collapse_edge` projects through them
+on any collapse that is not trivially short (`edge_op.rs:224`, index out of
+bounds). The same panic was latent at 0.19.0 with no tolerance set at all —
+a `sphere(1e-5, 128)` at the origin composed with a cube at x = 1e6, whose
+box makes the automatic epsilon 1e-6, larger than the sphere's ~5e-7 edges.
+Carrying the face normals removes the panic for every input. The swap stage
+is left out because it never ran here before (it returns early without face
+normals), so leaving it out keeps every composed mesh byte-identical to
+0.19.0, and because composing a robust result must not swap its
+antiparallel coplanar triangles (entry 1).
+
+**Asymmetry with C++:** C++ coarsens all parts at the largest epsilon and
+swaps degenerates across the composed mesh; the port coarsens only at the
+combined automatic epsilon (still collapsing a part finer than that, as the
+latent case above does) and never swaps there. The reported epsilon and
+tolerance are C++'s.
+
+**Evidence:** `manifold::tests::compose_tolerance`:
+`compose_does_not_coarsen_a_fine_part_at_another_parts_tolerance` (all four
+entry points — `Manifold::compose`, the exact disjoint union,
+`batch_boolean(Add)`, a CSG `op_n(Add)` — keep the fine sphere's 8192
+triangles and its MeshGL64 bits identical to composing it with a default
+cube, while reporting the cube's 1e-3; it panicked with the carry applied
+before the clean-up) and
+`compose_with_a_part_finer_than_the_combined_epsilon_does_not_panic`
+(panicked at 0.19.0). Every other expected value, including
+`manifold::tests::compose`'s run tables and full-MeshGL64 hash, is unchanged.
+manifold-sharp must twin this: `Boolean3.Functions.cs` `ComposeMeshes`
+concatenates the inputs' face normals before its clean-up, drops the swap
+stage, and raises epsilon and tolerance to the inputs' max after
+`SetNormalsAndCoplanar`.
+
 ## Known unresolved mismatches (bugs, not entries)
 
 Found while porting `TEST(Smooth, Fillet)` exactly (2026-09-29), against the C++
@@ -700,3 +758,33 @@ verifies bit-for-bit, so its twin knows what to port.
   `manifold::tests::compose` asserts those run tables and failed on the old
   code (one run). No other expected value in this tree moved. manifold-sharp
   must twin this (`Boolean3.Functions.cs` `ComposeMeshes`).
+- **Composing reset the inputs' tolerance and epsilon** (fixed 2026-10-25,
+  0.19.1). `boolean3::compose_meshes` (behind `Manifold::compose`, the
+  exact engine's disjoint-union fast path and so every disjoint step of the
+  pairwise `batch_boolean` fold, and `csg_tree::batch_union`) built its impl
+  fresh and called `set_epsilon(-1.0)`, so both values fell to the automatic
+  `kPrecision * bbox.scale()`: a cube with `set_tolerance(1e-3)` composed with
+  a disjoint cube came out at tolerance 6e-12, and an input imported with
+  `MeshGL.tolerance` lost its raised epsilon too. C++ `CsgLeafNode::Compose`
+  (`src/csg_tree.cpp:245-268`) gives the combined impl the largest node
+  tolerance and the largest node epsilon, as `boolean_result`
+  (`boolean_result.cpp:832`) does for an overlapping boolean. The composed
+  result now reports the max of its inputs' tolerance and of their epsilon
+  (never lower than the automatic values). Its inputs are materialized
+  impls, so each epsilon already carries its transform, scaled by the
+  spectral norm as `Impl::Transform` scales it — the value an overlapping
+  boolean of the same input sees. C++ Compose instead works from a CSG
+  leaf's pending transform, `epsilon * max(1, newScale / oldScale)`, which
+  agrees for uniform scale-ups and translations but keeps the untransformed
+  epsilon under a scale-down, and inflates it by the bounding-box growth
+  under a rotation; in those cases the port matches C++'s overlapping
+  boolean, not its Compose. Where the carried values are applied — after the
+  compose clean-up, not before it as in C++ — is a deliberate divergence,
+  entry 15. Evidence: `manifold::tests::compose_tolerance` holds
+  `Manifold::compose`, the exact disjoint union, `batch_boolean(Add)` and a
+  CSG `op_n(Add)` to the overlapping-boolean rule for a set tolerance
+  (either side, asymmetric), an imported tolerance, a transformed input and
+  a scaled lazy leaf, and asserts the MeshGL64 geometry and run table equal
+  the default-tolerance union's; the carry assertions failed on the old
+  code. No other expected value in this tree moved. manifold-sharp must twin
+  this (`Boolean3.Functions.cs` `ComposeMeshes`), together with entry 15.

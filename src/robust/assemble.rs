@@ -24,9 +24,20 @@
 // also carries the `TriRef` of the input triangle its piece lies on, so the
 // simplification below merges only triangles of one source face and the
 // export reports run original IDs and face IDs as for an exact-engine result.
+//
+// The assembled MeshGL64 carries no tolerance, so the import alone would
+// reset the result to the automatic `kPrecision * bbox.scale()`. Callers
+// pass the operands' [`CarriedTolerance`] instead, and the result keeps
+// `max` of their epsilon and tolerance — what the exact engine's
+// boolean_result (C++ boolean_result.cpp:832) and C++ `CsgLeafNode::Compose`
+// give theirs. They are applied after the simplification below, which keeps
+// running at the automatic values: the operands' tolerance is carried as
+// metadata for what comes next (`simplify`, later booleans, export), not
+// used to coarsen the robust result itself.
 
 use super::exact::backend::{rat_one, Rational};
 
+use crate::impl_mesh::ManifoldImpl;
 use crate::linalg::Vec3;
 use crate::manifold::Manifold;
 use crate::types::MeshGL64;
@@ -49,6 +60,45 @@ pub struct PropCtx<'a> {
 impl<'a> PropCtx<'a> {
     pub fn out_num_prop(&self) -> usize {
         self.num_prop[0].max(self.num_prop[1])
+    }
+}
+
+/// The epsilon and tolerance a robust result inherits from its operands:
+/// the largest of each, as the exact engine and C++ `Compose` take them.
+/// The result's own automatic floor (`kPrecision * bbox.scale()`, set by the
+/// import) still applies, so a carried value only ever raises it.
+///
+/// They are carried as metadata: the assembly's own simplification runs at
+/// the automatic values, so the robust engine's geometry does not depend on
+/// them (see the note in [`assemble_with_tolerance`]). What they govern is
+/// everything downstream — `simplify`, later booleans, the exported
+/// `MeshGL.tolerance`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CarriedTolerance {
+    pub epsilon: f64,
+    pub tolerance: f64,
+}
+
+impl CarriedTolerance {
+    /// `max` over `operands`' epsilon and tolerance. Unset values (the -1 of
+    /// a fresh impl) never win over a real one.
+    pub fn of<'a, I: IntoIterator<Item = &'a ManifoldImpl>>(operands: I) -> Self {
+        operands.into_iter().fold(
+            Self {
+                epsilon: -1.0,
+                tolerance: -1.0,
+            },
+            |acc, m| Self {
+                epsilon: acc.epsilon.max(m.epsilon),
+                tolerance: acc.tolerance.max(m.tolerance),
+            },
+        )
+    }
+
+    /// Raise `imp`'s epsilon and tolerance to the carried values.
+    pub fn apply(&self, imp: &mut ManifoldImpl) {
+        imp.epsilon = imp.epsilon.max(self.epsilon);
+        imp.tolerance = imp.tolerance.max(self.tolerance);
     }
 }
 
@@ -134,6 +184,22 @@ pub fn assemble_with_refs<F: Fn(usize) -> bool>(
     select: F,
     props: Option<&PropCtx>,
     refs: Option<&RefCtx>,
+) -> Manifold {
+    assemble_with_tolerance(pieces, verts, verts_f64, select, props, refs, None)
+}
+
+/// [`assemble_with_refs`] whose result keeps the operands' epsilon and
+/// tolerance (`carried`) instead of the automatic ones its import computes.
+/// Every robust boolean, rebuild and compose assembles through here with its
+/// operands' values; `None` leaves the automatic ones.
+pub fn assemble_with_tolerance<F: Fn(usize) -> bool>(
+    pieces: &[Piece],
+    verts: &[R3],
+    verts_f64: &[Vec3],
+    select: F,
+    props: Option<&PropCtx>,
+    refs: Option<&RefCtx>,
+    carried: Option<CarriedTolerance>,
 ) -> Manifold {
     let out_prop = props.map_or(0, |p| p.out_num_prop());
 
@@ -224,6 +290,10 @@ pub fn assemble_with_refs<F: Fn(usize) -> bool>(
         crate::manifold::AssembledRefs { tri_ref, relations }
     });
     let out = Manifold::from_mesh_gl64_robust_assembled(&mesh, tri_refs);
+    if out.status() != crate::types::Error::NoError || out.is_empty() {
+        return out;
+    }
+    let mut imp = out.into_impl();
 
     // Manifold results get the same topology simplification the exact
     // engine's boolean_result applies: without it the CDT's coplanar
@@ -237,8 +307,21 @@ pub fn assemble_with_refs<F: Fn(usize) -> bool>(
     // flood-filled face normals those produce make the swap misclassify
     // large valid triangles and physically move the surface (−2.5e-3 of the
     // volume on Thingi10K #301921 ∪ rotated-self).
-    if out.status() == crate::types::Error::NoError && !out.as_impl().is_soup && !out.is_empty() {
-        let mut imp = out.into_impl();
+    //
+    // It runs at the automatic epsilon and tolerance the import set, not the
+    // operands' carried ones, which are applied only afterwards. Collapsing
+    // at a user's coarser tolerance (as the exact engine's boolean
+    // simplification does for the vertices it creates) trades the robust
+    // engine's volume exactness for fewer triangles, and without the
+    // `swap_degenerates` clean-up that follows it there it measurably broke
+    // results: an r=1 48-segment sphere and a copy rotated (13°, 7°, 3°)
+    // and shifted 5e-4, unioned at tolerance 1e-2, came out self-intersecting
+    // with genus -2, and their difference at an imported tolerance 1e-3 —
+    // which raises epsilon — self-intersecting with genus 14, where the
+    // automatic values give clean genus-0 / genus-20 results. A coarser
+    // simplification stays one explicit `simplify()` away, at the carried
+    // tolerance.
+    if !imp.is_soup {
         crate::edge_op::cleanup_topology(&mut imp);
         crate::edge_op::collapse_short_edges(&mut imp, 0);
         crate::edge_op::collapse_colinear_edges(&mut imp, 0);
@@ -246,7 +329,9 @@ pub fn assemble_with_refs<F: Fn(usize) -> bool>(
         imp.remove_unreferenced_verts();
         imp.calculate_bbox();
         imp.sort_geometry();
-        return Manifold::from_impl(imp);
     }
-    out
+    if let Some(c) = carried {
+        c.apply(&mut imp);
+    }
+    Manifold::from_impl(imp)
 }

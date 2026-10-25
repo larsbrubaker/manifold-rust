@@ -494,6 +494,7 @@ mod basic;
 mod boolean;
 mod complex;
 mod compose;
+mod compose_tolerance;
 mod cross_section2;
 mod error_propagation;
 mod face_id_provenance;

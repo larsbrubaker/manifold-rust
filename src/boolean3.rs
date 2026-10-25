@@ -340,12 +340,67 @@ pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
     out.mesh_relation.mesh_id_transform = merged_transforms;
     out.mesh_relation.original_id = -1;
     out.calculate_bbox();
+    // The clean-up below runs at the combined box's automatic epsilon and
+    // tolerance; the inputs' own larger values are applied only afterwards,
+    // as metadata (see the end of this function).
     out.set_epsilon(-1.0, false);
-    // required to remove parts that are smaller than the tolerance (matches C++)
-    crate::edge_op::remove_degenerates(&mut out, 0);
+    // The inputs' face normals, in the concatenated triangle order, as C++
+    // Compose copies faceNormal_: collapse_edge projects through them, and
+    // without them the first collapse that is not trivially short indexed an
+    // empty array.
+    out.face_normal = concat_face_normals(meshes);
+    // required to remove parts that are smaller than the tolerance (matches
+    // C++). remove_degenerates minus its swap_degenerates stage: the swap
+    // never ran here before the face normals were carried (it returns early
+    // without them), so leaving it out keeps every composed mesh as it was,
+    // and keeps compose from swapping a robust result's antiparallel
+    // coplanar triangles (docs/CPP_DIVERGENCES.md entry 1).
+    crate::edge_op::cleanup_topology(&mut out);
+    crate::edge_op::collapse_short_edges(&mut out, 0);
+    crate::face_op::calculate_vert_normals(&mut out);
     out.sort_geometry();
     out.increment_mesh_ids();
     out.set_normals_and_coplanar();
+    // The inputs' largest epsilon and tolerance (C++ Compose,
+    // csg_tree.cpp:245-268; boolean_result for an overlapping union), raised
+    // onto the result only now: one part's coarser tolerance is for what
+    // comes next to use (simplify, later booleans, export), not a licence to
+    // collapse the other parts here (docs/CPP_DIVERGENCES.md entry 15). The
+    // inputs are materialized impls, so each epsilon already reflects its
+    // transform.
+    out.epsilon = meshes.iter().map(|m| m.epsilon).fold(out.epsilon, f64::max);
+    out.tolerance = meshes
+        .iter()
+        .map(|m| m.tolerance)
+        .fold(out.tolerance, f64::max);
+    out
+}
+
+/// Every input's face normals, concatenated in `compose_meshes`' triangle
+/// order. An input without a full set (a freshly built impl) gets each of
+/// its triangles' geometric normals instead — (0, 0, 1) for a removed or
+/// degenerate one — so the result always has one normal per triangle.
+fn concat_face_normals(meshes: &[ManifoldImpl]) -> Vec<Vec3> {
+    let mut out = Vec::with_capacity(meshes.iter().map(|m| m.num_tri()).sum());
+    for mesh in meshes {
+        if mesh.face_normal.len() == mesh.num_tri() {
+            out.extend_from_slice(&mesh.face_normal);
+            continue;
+        }
+        // Removed and degenerate triangles get (0, 0, 1), as
+        // set_normals_and_coplanar assigns them.
+        let up = Vec3::new(0.0, 0.0, 1.0);
+        for t in extract_tri_vert(mesh) {
+            if t.x < 0 || t.y < 0 || t.z < 0 {
+                out.push(up);
+                continue;
+            }
+            let p = |v: i32| mesh.vert_pos[v as usize];
+            let n =
+                crate::linalg::normalize(crate::linalg::cross(p(t.y) - p(t.x), p(t.z) - p(t.x)));
+            out.push(if n.x.is_nan() { up } else { n });
+        }
+    }
     out
 }
 
@@ -656,3 +711,7 @@ pub fn ray_cast(mesh: &ManifoldImpl, origin: Vec3, endpoint: Vec3) -> Vec<RayHit
 #[cfg(test)]
 #[path = "boolean3_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "boolean3_compose_tests.rs"]
+mod compose_tests;
