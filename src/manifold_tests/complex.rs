@@ -332,7 +332,6 @@ fn test_cpp_perturb2() {
 
 /// C++ TEST(Boolean, Perturb3) — nasty gear pattern
 #[test]
-#[ignore = "Gear pattern requires BatchBoolean precision improvements"]
 fn test_cpp_perturb3() {
     let n = 16;
     let alpha = 90.0 / n as f64;
@@ -363,7 +362,7 @@ fn test_cpp_perturb3() {
         expected_volume
     );
     assert!(
-        (nasty_gear.surface_area() - 26.972).abs() < 1e-3,
+        (nasty_gear.surface_area() - 26.972).abs() < 1e-4,
         "Perturb3 area: {} expected 26.972",
         nasty_gear.surface_area()
     );
