@@ -10,6 +10,8 @@
 //   - anything under `.claude/` (agent instructions);
 //   - the package READMEs `dotnet/README.md` and `ffi/README.md`;
 //   - anything under a `testdata/` directory (fixtures);
+//   - an idea for later directly in `docs/later/` (`docs/later/<idea>.md`, one
+//     level only): not scheduled work, deleted when it is built or dropped;
 //   - anything under `cpp-reference/` (the C++ reference submodule, third
 //     party).
 //
@@ -67,13 +69,18 @@ fn placement(path: &str) -> Placement {
     let in_testdata = path
         .rsplit_once('/')
         .is_some_and(|(dir, _)| dir.split('/').any(|part| part == "testdata"));
+    // Only a file directly in the root's `docs/later/`, never a subfolder of it.
+    let idea_for_later = path
+        .strip_prefix("docs/later/")
+        .is_some_and(|name| !name.is_empty() && !name.contains('/'));
     let allowed = matches!(
         path,
         "README.md" | "CLAUDE.md" | "PORTING_PLAN.md" | "dotnet/README.md" | "ffi/README.md"
     ) || is_license_or_notice(path)
         || under(".claude/")
         || under("cpp-reference/")
-        || in_testdata;
+        || in_testdata
+        || idea_for_later;
     if allowed {
         Placement::Allowed
     } else {
@@ -264,6 +271,21 @@ fn markdown_placement_refuses_docs_anywhere_else() {
     // Not Markdown, so not this gate's concern.
     for path in ["src/lib.rs", "docs/booleans2009.pdf", "README", ".md"] {
         assert_eq!(placement(path), Placement::NotMarkdown, "{path}");
+    }
+}
+
+#[test]
+fn markdown_placement_allows_ideas_for_later_directly_in_docs_later() {
+    assert_eq!(placement("docs/later/idea.md"), Placement::Allowed);
+    for path in [
+        // One level only: an idea is one file, not a folder of docs.
+        "docs/later/sub/idea.md",
+        // The folder's name as a file is not the folder.
+        "docs/later.md",
+        // Only the repository root's docs/later/.
+        "src/docs/later/idea.md",
+    ] {
+        assert_eq!(placement(path), Placement::Refused, "{path}");
     }
 }
 

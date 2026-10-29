@@ -59,9 +59,12 @@ Do not skip the reproducing test. Even if the fix seems obvious.
   "as of" status are left to git.
 - Markdown lives only in `README.md`, `CLAUDE.md` and `PORTING_PLAN.md` at the root,
   license and notice files, `.claude/` (agent instructions), the package READMEs
-  `dotnet/README.md` and `ffi/README.md`, `testdata/` fixtures and the C++ reference
-  submodule. The gate `tests/markdown_placement.rs` fails on any other `.md` file,
+  `dotnet/README.md` and `ffi/README.md`, `testdata/` fixtures, ideas for later in
+  `docs/later/` and the C++ reference submodule. The gate `tests/markdown_placement.rs` fails on any other `.md` file,
   untracked ones included; never add a Markdown doc.
+- An idea for later, written down when Lars asks for it, lives in
+  `docs/later/<idea>.md`: it is not scheduled work and needs no plan entry; delete
+  it when it is built or dropped.
 - Every file must begin with a comment block describing its purpose and how it relates
   to other modules in the project.
 - Add doc comments to functions when they clarify intent, non-obvious behavior, or
