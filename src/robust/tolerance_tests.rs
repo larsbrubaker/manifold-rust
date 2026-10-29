@@ -13,7 +13,7 @@
 // soup operands, the disjoint fast paths, compose, and chained operations.
 // The last two pin the other half of the contract: the carried values are
 // metadata, so the robust geometry is bit-identical whatever the operands'
-// tolerance (docs/ROBUST_ENGINE_STATUS.md, "Tolerance and epsilon").
+// tolerance (the header of robust/assemble.rs says why, with the measurements).
 
 use crate::linalg::Vec3;
 use crate::manifold::Manifold;

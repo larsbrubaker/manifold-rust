@@ -22,6 +22,18 @@
 //
 // Schema: runs(run_id, started, git_commit, notes) and results keyed by
 // (run_id, mesh_id) — compare two run_ids to see what an engine change did.
+//
+// Compare runs by their verdict transitions (agree / disagree / not
+// comparable, per mesh), never by totals: a raw disagreement count moves when
+// meshes stop erroring and enter the comparison for the first time, and
+// counting totals has hidden a real regression. The gate is volume and
+// closure; area and triangle counts are advisory, because the robust engine
+// orients walls from its cell labels and keeps one face per coincident stack,
+// which changes the tessellation without changing the solid. A volume
+// disagreement goes to examples/volume_referee.rs before either engine is
+// blamed. Timings are sequential unless the binary was built with
+// `--features parallel`, which runs the largest meshes 2–4× faster with
+// identical output, so note which binary produced a run.
 
 use std::io::Read;
 use std::panic::{catch_unwind, AssertUnwindSafe};

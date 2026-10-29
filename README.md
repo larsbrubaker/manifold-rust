@@ -163,8 +163,9 @@ exported meshes row for row with no slack.
   14.5 s — identical triangle counts throughout, peak memory within ~10%. The `parallel`
   feature roughly doubles throughput. Reproduce with
   `cargo run --release --example perf_test` and `--example large_scene_test`.
-- **Robust engine: corpus-validated**, with the current numbers, open items and the
-  referee tooling in [docs/ROBUST_ENGINE_STATUS.md](docs/ROBUST_ENGINE_STATUS.md).
+- **Robust engine: corpus-validated** on Thingi10K. `src/robust/mod.rs`'s header says how
+  it is verified; `examples/thingi_sweep.rs` and `examples/volume_referee.rs` are the
+  sweep and the referee, and its open items are in [PORTING_PLAN.md](PORTING_PLAN.md).
 - **Deliberate divergences from C++** are noted in a comment at the code that differs,
   saying what differs, why, which expected values it moved and what the C# twin
   (manifold-sharp, which verifies against this tree bit-for-bit) must mirror. They come in

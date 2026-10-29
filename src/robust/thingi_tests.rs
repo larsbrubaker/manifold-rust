@@ -562,8 +562,8 @@ fn thingi_51360_nonzero_rule_keeps_the_inverted_half() {
 
 /// Thingi10K #1147177 imports with the counts manifold-sharp pins
 /// (StlFixturesTests). Its weld leaves duplicate edges whose DedupeEdges pass
-/// used to repair stale entries and move corners (3201 verts, genus 5); with
-/// stale entries skipped every corner stays put.
+/// used to repair stale entries and move corners (3201 verts, 6418 tris,
+/// genus 5); with stale entries skipped every corner stays put.
 #[test]
 fn thingi_1147177_import_counts() {
     let m = import_stl_like_demo(MODEL_1147177);

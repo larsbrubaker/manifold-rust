@@ -17,10 +17,10 @@ porting something new or debugging.
 
 **Output changes are documented.** A downstream consumer (manifold-sharp, a
 C# twin) verifies against this tree bit-for-bit, so any change that moves
-shipped output must say so: record it in `docs/CPP_DIVERGENCES.md` (what
-changed, why, the evidence, which expected test values moved) with a note of
-what manifold-sharp must mirror. Don't churn output for convenience — move it
-only when the result is measurably better.
+shipped output must say so. Record it in a comment at the code that differs:
+what changed, why, the evidence, which expected test values moved, and what
+manifold-sharp must mirror. The commit message says the same. Don't churn
+output for convenience — move it only when the result is measurably better.
 
 ## Test-First Bug Fixing (Critical Practice)
 
@@ -50,9 +50,18 @@ Do not skip the reproducing test. Even if the fix seems obvious.
 - **Exceptions:** `linalg.rs` (~2260 lines) is exempt — it is dense type definitions and
   operator overloads that are inherently verbose in Rust and would lose cohesion if split.
   The test block has been extracted to `linalg_tests.rs`. `edge_op.rs` and
-  `quickhull_algo.rs` are over (~1150/~920, the latter grown by the exact-visibility test, divergence entry 11) with tightly coupled algorithms; `edge_op.rs`'s orbit-owner search and per-orbit duplicate scan already live in `edge_op_orbits.rs`, and further growth should split out more such helpers rather than raise the figure.
+  `quickhull_algo.rs` are over (~1150/~920, the latter grown by the exact-visibility test that `quickhull.rs`'s `is_above` notes) with tightly coupled algorithms; `edge_op.rs`'s orbit-owner search and per-orbit duplicate scan already live in `edge_op_orbits.rs`, and further growth should split out more such helpers rather than raise the figure.
 
 ### Documentation
+- Documentation lives in the code: the header comment of the file or module it
+  describes, and doc comments on the items, where whoever works on that code reads
+  it. Facts and reasons go there; open work goes in `PORTING_PLAN.md`; history and
+  "as of" status are left to git.
+- Markdown lives only in `README.md`, `CLAUDE.md` and `PORTING_PLAN.md` at the root,
+  license and notice files, `.claude/` (agent instructions), the package READMEs
+  `dotnet/README.md` and `ffi/README.md`, `testdata/` fixtures and the C++ reference
+  submodule. The gate `tests/markdown_placement.rs` fails on any other `.md` file,
+  untracked ones included; never add a Markdown doc.
 - Every file must begin with a comment block describing its purpose and how it relates
   to other modules in the project.
 - Add doc comments to functions when they clarify intent, non-obvious behavior, or

@@ -79,6 +79,69 @@ optional/peripheral:
 
 ---
 
+## Known mismatches with the C++
+
+Open differences in output from C++ Manifold. Deliberate ones are noted at the code that
+differs; these are not deliberate, and any fix that moves output changes manifold-sharp
+in step.
+
+- **Chained booleans evaluate eagerly.** `Manifold` holds its impl directly, so
+  `a + b + c` runs pairwise booleans and `batch_boolean` is a left fold, where C++
+  builds a lazy `CsgOpNode` tree and flattens it into one `BatchBoolean`/`BatchUnion`.
+  A caller sees different triangle counts from the same expression: on
+  `TEST(Smooth, Fillet)`'s inputs C++ refines to 3770 triangles and this port to 3822
+  (C++ with the first union forced also gives 3822). Needed: make `Manifold` hold a CSG
+  node and evaluate lazily; `src/csg_tree.rs` already ports the tree, but only the
+  Minkowski sums and convex dilation use it. A progress-reporting batch boolean needs
+  the same change.
+- **`smooth_by_normals` + `refine_to_tolerance` drift by a few ULPs** from C++ once the
+  union order is matched: volume `0x40be40dfe1b35e91` here against `0x40be40dfe1b7737f`.
+  Both meet the C++ test's own `EXPECT_NEAR` bounds. Needed: an instrumented trace
+  against C++ to find the first differing operation.
+- **`swap_degenerates` cuts solid beside a zero-thickness fin.** The exact union of
+  `src/testdata/minkowski-641145-union-{a,b}.txt` loses solid of an operand; C++ v3.5.2
+  does the same. `set_normals_and_coplanar`'s orientation-blind flood fill hands a sound
+  triangle a reversed seed normal, and `recursive_edge_swap` then cuts a wedge. Two
+  narrow fixes broke `test_cpp_simplify` and `test_cpp_nonconvex_convex_minkowski_sum`.
+  Pinned, ignored, by
+  `minkowski::union_regression_tests::exact_union_of_thingi641145_partial_unions_contains_both_operands`,
+  shared with manifold-sharp. Needed: an orientation-aware seed for the coplanar flood
+  fill that keeps both C++ tests passing.
+- **`boolean_with_token` composes the disjoint operands of an Add** (the non-overlapping
+  fast path in `src/boolean3.rs`). C++ `Boolean3` has no such shortcut, so when leaf
+  boxes overlap but the meshes don't, the order of `vert_properties`, `tri_verts` and
+  `face_id` differs from C++ (example:
+  `manifold::tests::compose::test_batch_union_of_rotated_instanced_leaves_is_independent_of_scheduling`;
+  the C++ hash is `0x5a5fb492e1484228`). Stays until manifold-sharp changes together
+  with this port.
+
+## Robust engine open work
+
+`src/robust/mod.rs`'s header says how the engine is verified on Thingi10K
+(`examples/thingi_sweep.rs`, `examples/volume_referee.rs`).
+
+- **One Thingi10K mesh still times out.** A robust union of #252784 (889 k triangles,
+  heavily self-intersecting) with its rotated copy runs past a 570 s budget in the
+  arrangements and CDT, sequential or `parallel`. Levers: a cheaper exact tier for
+  genuine degeneracies (a Shewchuk-style adaptive expansion; 55% of exact orient3d calls
+  overflow the i128 tier through shared-scale inflation), less duplication in the
+  per-triangle prims, chunking the piece materialization, walk-based CDT point location
+  and a sweep-line crossings pass for triangles carrying hundreds of thousands of
+  segments.
+- **Teardown is slow on giant inputs.** Dropping millions of rational prims through the
+  system allocator takes 8–44 s, paid after successful runs as well as after a cancel.
+  Needed: arena allocation for the arrangement's rationals.
+- **Cancel overshoots on giant inputs.** Under `parallel` the rayon inner loops don't
+  check the token (#252784 ran 867 s wall at a 570 s budget); sequentially a
+  later-phase stretch overshoots by ~100 s at that budget, and the CDT's exact-rational
+  sort cannot be interrupted. Needed: token checks in the parallel loops and the
+  uncovered phases.
+- **`triangulate_pseudo` recurses** (`src/robust/cdt_constraints.rs`), so an
+  arrangement of ~15 k points in one triangle risks the stack. Needed: an explicit work
+  stack.
+
+---
+
 ## Performance vs C++ (2026-07-23 benchmark session)
 
 Rust ports of the upstream perf drivers live in `examples/` (`perf_test`,

@@ -103,6 +103,12 @@ fn load_halfedge_fixture(text: &str) -> ManifoldImpl {
 /// the stale-entry check, a duplicate already resolved by an earlier repair in
 /// the same pass was "repaired" again, relabelling an orbit to a copy of the
 /// wrong vertex: 16 corners jumped ~0.13 and a union lost 2.3e-5 of volume.
+///
+/// That check is a deliberate divergence from C++ `DedupeEdges`, which repairs
+/// every entry it collected. It moved the import pins in `robust::thingi_tests`:
+/// Thingi10K #1147177 imports as 3206 verts / 6424 tris / genus 4 (was 3201 /
+/// 6418 / genus 5) and #939888 as 861 / 1718 (was 860 / 1716). manifold-sharp
+/// has the same check (`EdgeOp.Dedupe.cs`) and pins the same counts.
 #[test]
 fn test_dedupe_edges_never_moves_a_triangle_corner() {
     let mut m = load_halfedge_fixture(DEDUPE_STALE_DUPLICATE);

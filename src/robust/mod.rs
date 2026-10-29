@@ -56,8 +56,23 @@
 // largest epsilon and tolerance among its operands
 // (`assemble::CarriedTolerance`), as the exact engine's boolean_result and
 // C++ `CsgLeafNode::Compose` do. They are metadata for what comes after; the
-// engine's own simplification runs at the automatic values (see the note in
-// `assemble::assemble_with_tolerance`).
+// engine's own simplification runs at the automatic values (the header of
+// robust/assemble.rs says why, with the measurements).
+//
+// The engine is verified on the whole Thingi10K corpus, not only by the unit
+// tests: examples/thingi_sweep.rs runs every mesh through both engines and
+// examples/volume_referee.rs settles a volume disagreement by sampling the
+// solid both engines claim to compute. Where the engines disagree on a
+// self-overlapping input, the referee has found the robust result right in
+// every arbitrated case since the fixes the regression tests pin: the exact
+// engine's volume integrates the winding number, so an N-times-wound shell
+// counts N times and an inverted mesh counts material that {w ≥ 1} does not
+// have. That is also why `Auto` picks the exact engine only for manifold
+// operands with no self-intersections (`boolean3::boolean_dispatch`). Treat
+// an exact-vs-robust volume mismatch as suspect-exact until the referee says
+// otherwise. Run the full corpus after any structural change: a regression
+// that collapsed whole unions (an unbounded cell deduced rather than measured,
+// see `cells::windings`) passed a 175-mesh subset unnoticed.
 
 pub mod arrangement;
 pub mod assemble;

@@ -34,6 +34,18 @@
 // running at the automatic values: the operands' tolerance is carried as
 // metadata for what comes next (`simplify`, later booleans, export), not
 // used to coarsen the robust result itself.
+//
+// Collapsing the created edges up to the tolerance, as the exact engine does,
+// was measured and makes robust results worse. On a 2-cube and a copy shifted
+// (1, 1, 1e-4) at tolerance 1e-3 it matches the exact engine's triangle counts
+// (union 32, difference 22) but moves volume the exact result keeps (union
+// 14.0003 against 14.0001). Without the `swap_degenerates` clean-up that
+// follows the exact engine's collapse it also breaks thin shells: an r=1
+// 48-segment sphere and a copy rotated (13°, 7°, 3°) and shifted 5e-4 come out
+// self-intersecting (genus -2 union at tolerance 1e-2, genus 14 difference at
+// an imported 1e-3), where the automatic values give clean results.
+// `robust::tolerance_tests` pins both halves: the carry and the unchanged
+// geometry.
 
 use super::exact::backend::{rat_one, Rational};
 
