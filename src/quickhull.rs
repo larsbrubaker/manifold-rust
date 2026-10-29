@@ -98,16 +98,31 @@ fn signed_distance_to_plane(v: Vec3, p: &Plane) -> f64 {
 }
 
 /// Whether `point` is strictly above the face with corners `a, b, c`: on the side
-/// its counterclockwise normal points to, decided exactly. NOT A PORT; divergence
-/// ledger entry 11 (docs/CPP_DIVERGENCES.md).
+/// its counterclockwise normal points to, decided exactly. NOT A PORT: a
+/// deliberate difference from the C++, fixing a bug in it.
 ///
-/// The C++ reads "above" off the float distance to the face's stored plane. When
+/// The C++ (quickhull.cpp:391, and its `AddPointToFace`) reads "above" off the
+/// float distance to the face's stored plane (`d > 0.0`). When
 /// the apex is collinear with an edge it lies in the plane of both faces on that
 /// edge, and rounding can put one face at +5.6e-17 and the other at 0: the edge
 /// becomes a horizon edge, the new face has zero area and a noise normal, and the
 /// hull ends non-convex. The exact orientation gives both faces the same answer,
 /// zero, so neither is visible. `triangle_normal(a, b, c)` = cross(a-c, b-c) points
 /// the same way as orient3d's cross(b-a, c-a), so the two agree on "above".
+///
+/// Two callers in quickhull_algo.rs use it: the flood fill (a face is visible
+/// from the apex only when strictly above; exactly coplanar is hidden) and
+/// `add_point_to_face` (a point queues on a face only when also exactly above
+/// it). The float epsilon test that decides whether a point is outside at all
+/// is unchanged. Minkowski sums hull each triangle swept by the tool, so a
+/// folded hull lost solid from the sum (Thingi10K 63451, 641145 and 287448).
+/// Hulls of exactly collinear or coplanar point sets can come out with
+/// different triangles from the C++; no expected value in this tree moved.
+/// Pinned by `test_hull_of_a_flat_triangle_swept_by_sphere_is_convex` and
+/// `test_thingi641145_triangle109_swept_hull_is_convex` (an input point lay
+/// 0.581 and 0.2336 outside a hull face before, under 1e-12 after), both
+/// shared with manifold-sharp's `QuickHullContainmentTests`; manifold-sharp
+/// has the same fix (its commit `1931e87`).
 #[inline]
 fn is_above(a: Vec3, b: Vec3, c: Vec3, point: Vec3) -> bool {
     orient3d(a, b, c, point) == Sign::Pos

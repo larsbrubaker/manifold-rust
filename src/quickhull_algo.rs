@@ -477,8 +477,8 @@ impl QuickHull {
                     }
                 } else {
                     self.mesh.faces[fi].visibility_checked_on_iteration = iter;
-                    // Divergence ledger entry 11: the exact side of the face's corners,
-                    // not the float plane distance (see `is_above`).
+                    // Exact, unlike the C++ (see `is_above`): the side of the face's
+                    // corners, not the float plane distance.
                     if self.is_face_above(fi, active_point) {
                         self.mesh.faces[fi].is_visible_face_on_current_iteration = true;
                         self.mesh.faces[fi].horizon_edges_on_current_iteration = 0;
@@ -894,7 +894,7 @@ impl QuickHull {
     fn add_point_to_face(&mut self, face_index: usize, point_index: usize) -> bool {
         let d =
             signed_distance_to_plane(self.verts[point_index], &self.mesh.faces[face_index].plane);
-        // Divergence ledger entry 11: also exactly above the face, so the face a point
+        // Also exactly above the face (see `is_above`), so the face a point
         // is queued on is one the flood fill will find visible from it.
         if d > 0.0
             && d * d > self.epsilon_squared * self.mesh.faces[face_index].plane.sqr_n_length

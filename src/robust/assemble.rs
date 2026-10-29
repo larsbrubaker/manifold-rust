@@ -300,13 +300,29 @@ pub fn assemble_with_tolerance<F: Fn(usize) -> bool>(
     // subdivision vertices survive and the output carries more (redundant)
     // vertices than the exact engine produces for the same inputs.
     //
-    // The one stage held back is `swap_degenerates` — the pieces of
+    // The one stage held back is `swap_degenerates`, a deliberate difference
+    // from the C++ (`Impl::SimplifyTopology`): the pieces of
     // `simplify_topology` are composed here without it, matching the import
-    // above. See docs/CPP_DIVERGENCES.md entry 1: a boolean result
-    // legitimately contains coplanar antiparallel adjacencies, and the
-    // flood-filled face normals those produce make the swap misclassify
-    // large valid triangles and physically move the surface (−2.5e-3 of the
-    // volume on Thingi10K #301921 ∪ rotated-self).
+    // above (`Manifold::from_mesh_gl64_robust_assembled`). `edge_op`'s own
+    // functions are untouched and every other import path, the exact
+    // engine's included, still runs the swap. The reason is an accuracy fix:
+    // `face_op::set_normals_and_coplanar` (a faithful port of C++
+    // `Impl::SetNormalsAndCoplanar`) flood-fills a seed triangle's normal onto
+    // every coplanar neighbour with no orientation check, and a boolean result
+    // legitimately contains coplanar *antiparallel* adjacencies (material
+    // below the plane on one side of a shared edge, above it on the other).
+    // A few large triangles get sign-flipped normals, the swap reads them as
+    // degenerate (`ccw <= 0`) and swaps large non-planar quads, physically
+    // moving the surface: −2.5e-3 of the robust union volume on Thingi10K
+    // #301921 ∪ rotated-self (the extraction's 0.438010 survives cleanup and
+    // is lost only in the swap). Skipping it keeps robust volumes
+    // extraction-exact, at the cost of slightly larger triangle and vertex
+    // counts than the exact engine's, which the sweep gate treats as
+    // advisory. Pinned by
+    // `robust::thingi_tests::thingi_301921_union_rotated_self_matches_exact`
+    // and checked by the Monte-Carlo referee (`examples/volume_referee.rs`).
+    // A twin of this assembly (manifold-sharp) must skip the same stage to
+    // stay bit-equal.
     //
     // It runs at the automatic epsilon and tolerance the import set, not the
     // operands' carried ones, which are applied only afterwards. Collapsing

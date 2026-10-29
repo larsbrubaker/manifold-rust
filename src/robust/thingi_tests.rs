@@ -443,7 +443,7 @@ const MODEL_301921: &[u8] = include_bytes!("testdata/301921.stl");
 /// robust result is the raw extraction volume 0.438010 and the exact
 /// engine's cleanup moved its own result to 0.438066). Anything larger is a
 /// real defect — this gate catches both the original 8% class and the 0.6%
-/// `swap_degenerates` class (docs/CPP_DIVERGENCES.md entry 1) — and the
+/// `swap_degenerates` class (the stage `robust::assemble` skips) — and the
 /// Monte-Carlo referee (`examples/volume_referee.rs`) arbitrates disputes.
 #[test]
 fn thingi_301921_union_rotated_self_matches_exact() {

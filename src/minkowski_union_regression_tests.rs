@@ -15,12 +15,12 @@
 // minkowski_union_regression_tests.rs — an IGNORED regression test that keeps
 // an open exact-engine item on record: an operand pair on which the exact
 // engine turns a folded but manifold, NoError operand into lost solid.
-// Listed under "Known unresolved mismatches" in docs/CPP_DIVERGENCES.md, and
+// Listed as open work in PORTING_PLAN.md, and
 // shared 1:1 with manifold-sharp's MinkowskiUnionRegressionTests (its commit
 // 1931e87), fixtures included.
 //
 // Origin: Manifold::minkowski_sum of Thingi10K 641145 (demo import,
-// sphere(0.05781898171099809, 12)). Before divergence ledger entry 11,
+// sphere(0.05781898171099809, 12)). Before QuickHull decided visibility exactly,
 // triangle 109's QuickHull hull was non-convex
 // (quickhull::tests::test_thingi641145_triangle109_swept_hull_is_convex), and
 // unioning it in left a zero-thickness fin. The two fixtures are the operands

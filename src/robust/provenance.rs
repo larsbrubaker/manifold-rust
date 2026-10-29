@@ -18,8 +18,40 @@
 // rather than from the input faces, so a triangle can also come out reversed
 // where the fast engine has no counterpart (an inside-out region kept under
 // the nonzero rule, or a mis-wound shell rebuilt): such a triangle moves to a
-// sibling mesh ID whose relation differs only in its backside flag, so the
-// export still tells a consumer exactly which triangles are flipped.
+// sibling mesh ID whose relation differs only in its backside flag (run_flags
+// bit 0), reserved in ascending base-ID order, so the export still tells a
+// consumer exactly which triangles are flipped.
+//
+// A Rust extension: the robust engine is itself Rust-only, so nothing in the
+// C++ constrains these values; the rules follow the fast engine's
+// `update_reference` where it has a counterpart. Where they differ from it:
+//
+// - **Which operand wins a coincident face.** A coincident stack (coplanar
+//   faces overlapping, from either operand) emits one triangle with the
+//   provenance of its lowest-index piece, and the graph emits all of P's
+//   pieces before Q's, so where a P face and a Q face coincide and the wall
+//   survives, P's face wins for every operation. The fast engine agrees for
+//   intersection (and a surviving coincident face in a difference is P's in
+//   both); for a union of same-facing coplanar faces its choice follows its
+//   symbolic perturbation and varies with the face's direction and position,
+//   even within one face, so there the engines can name different operands.
+//   Both name a face the triangle lies on.
+// - **Coplanar groups.** The assembled import
+//   (`Manifold::from_mesh_gl64_robust_assembled`) keeps the supplied coplanar
+//   IDs instead of its own flood fill, as the fast engine keeps its inputs',
+//   so simplification never merges across a seam between source faces, and
+//   robust results keep a few more triangles where coplanar faces of
+//   different sources meet than a single fresh run would.
+// - **Soup concatenation.** `compose_meshes`' soup branch
+//   (`robust::assemble_all`) keeps every triangle's reference, renumbering mesh
+//   IDs and coplanar groups as its strict branch does.
+//
+// Pinned by `manifold::tests::face_id_provenance_robust` (single, coplanar,
+// batch and nested cases under `BooleanEngine::Robust`; `Auto` with a soup and
+// a self-intersecting operand; backside runs for a subtracted operand; a
+// fast/robust colour comparison by point sampling) and by the re-frozen hash in
+// `robust::coplanar_cross_copy_tests`. manifold-sharp's robust results must
+// carry the same references to produce that hash.
 
 use std::collections::{BTreeMap, BTreeSet};
 

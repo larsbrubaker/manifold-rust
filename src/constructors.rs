@@ -418,15 +418,35 @@ pub fn cylinder(
         // BVH moves, from wrong to right. set_epsilon is deliberately NOT re-run,
         // so epsilon stays exactly the value the un-centered mesh carried.
         //
-        // What this deliberately does NOT do is adopt the C++'s output semantics.
-        // Centering in place leaves originalID at extrude's, keeps the -0.0 that
-        // cosd/sind put in x and y, and holds epsilon one ULP off what
-        // Impl::Transform would compute (its spectral norm for a translation
-        // comes back 0.9999999999999998, not 1.0). Those differences predate the
-        // collider repair above and are retained on purpose — see
-        // docs/CPP_DIVERGENCES.md entry 2, which also records that the cone
-        // branch below models AsOriginal faithfully and so disagrees with this
-        // one about originalID. Do not reconcile either half in isolation.
+        // What this deliberately does NOT do is adopt the C++'s output semantics,
+        // an inherited difference kept because a downstream port verifies this
+        // tree bit for bit. C++ `AsOriginal` (manifold.cpp:449-457) also runs
+        // `InitializeOriginal` and `SetNormalsAndCoplanar`. Centering in place,
+        // measured on `cylinder(4.0, 1.0, 1.0, 8, true)` against the same mesh
+        // put through a transform: originalID stays extrude's (1) where the C++
+        // assigns a fresh one; x and y keep the -0.0 that cosd/sind put there at
+        // the quarter angles (4 coordinates; a transform recomputes them as
+        // `1.0*x + 0.0*y + 0.0*z + 0.0`, giving +0.0, and no value differs);
+        // epsilon is 4e-12 where Impl::Transform gives 3.999999999999999e-12
+        // (its spectral norm for a translation comes back 0.9999999999999998,
+        // not 1.0); and coplanar faces are not re-marked. Tolerance agrees.
+        // Reached by `Manifold::cylinder_centered(.., true)` and by the
+        // apex-at-bottom cone above, which recurses through here centered;
+        // `Manifold::cylinder` passes `center: false`.
+        //
+        // These differences predate the collider repair and shipped in every
+        // 0.14.x. Moving to the C++ form is a breaking output change:
+        // manifold-sharp transcribes this same in-place centering
+        // (`Constructors.cs`, its cylinder's `if (center)` block) and compares
+        // with no slack, so a signed zero moved on one side alone fails there.
+        // The two halves of this function disagree, and that is not defensible
+        // on its merits: the cone branch above models AsOriginal faithfully, so
+        // a cone reports a fresh originalID and a centered cylinder extrude's.
+        // Resolve it only in a pass coordinated with manifold-sharp, moving both
+        // trees together; never reconcile either half in isolation. The repair
+        // is pinned by `centered_cylinder_collider_matches_its_vertex_positions`
+        // and `centered_cylinder_is_usable_in_a_boolean` below, and on the C#
+        // side by `ConstructorsTests`.
         m.sort_geometry();
     }
     m

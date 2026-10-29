@@ -165,11 +165,12 @@ exported meshes row for row with no slack.
   `cargo run --release --example perf_test` and `--example large_scene_test`.
 - **Robust engine: corpus-validated**, with the current numbers, open items and the
   referee tooling in [docs/ROBUST_ENGINE_STATUS.md](docs/ROBUST_ENGINE_STATUS.md).
-- **Deliberate divergences from C++** are catalogued in
-  [docs/CPP_DIVERGENCES.md](docs/CPP_DIVERGENCES.md), in two kinds: accuracy fixes we
-  stand behind, and inherited output shapes we would resolve toward the C++ but cannot
-  change unilaterally without breaking a downstream port that verifies against this tree
-  bit-for-bit. The second kind is disclosed with what a coordinated fix would take.
+- **Deliberate divergences from C++** are noted in a comment at the code that differs,
+  saying what differs, why, which expected values it moved and what the C# twin
+  (manifold-sharp, which verifies against this tree bit-for-bit) must mirror. They come in
+  two kinds: accuracy fixes we stand behind, and inherited output shapes we would resolve
+  toward the C++ but cannot change unilaterally without breaking that twin; the second
+  kind says what a coordinated fix would take.
 
 Known limits, honestly:
 

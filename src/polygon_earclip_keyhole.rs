@@ -6,6 +6,37 @@
 // ear-clipping loop) joins each hole, rightmost first, to an outer ring by a
 // zero-width bridge so every polygon left is simple. This file adds a second
 // `impl EarClip` block holding just those three steps.
+//
+// Where the code shape differs from the C++. Both bridge searches walk each
+// outer ring with `for_each_loop_vert`, and when the walk reports the ring
+// degenerate (a vert with `right == left`) they restore the connector they had
+// before that ring, so a degenerate ring contributes nothing. C++ `Loop`
+// (polygon.cpp:544) applies the function up to the degenerate vert and returns
+// `polygon_.end()`, which `CutKeyhole` (:724) and `FindCloserBridge` (:773)
+// ignore. The skip-whole shape is inherited: the first port skipped rings
+// `loop_verts` returned `None` for, it shipped, and manifold-sharp transcribes
+// it (`PolygonEarclip.Algorithm.cs`); the visitor kept it exactly.
+//
+// No output differs. `Link` (:531) and `JoinPolygons` (:789-792), the only
+// pointer writes, keep every unclipped vert's `left->right` and `right->left`
+// pointing back at it, so unclipped verts form closed rings and a vert with
+// `right == left` lies in a ring of one or two verts that all have
+// `right == left`. `Loop` checks that before calling the function on each
+// vert and stays within one ring, so a degenerate ring returns before any
+// vert is visited, in the C++ and here alike; the restore never changes the
+// connector and stays only as a guard should the walk or that invariant
+// change. A fuzz of 2,000,000 random 1-5 ring sets (1-6 verts each, on a 5x5
+// grid, a third reversed or rotated copies, at epsilon 0, 1e-9, 0.3 and
+// automatic) met a degenerate outer ring 181,312 times and never a
+// degenerate walk that had visited a vert first. Taking the C++ shape (no
+// restore) is therefore free, and either tree can do it at its own pace.
+// `polygon_earclip::tests::keyholing_many_holes_keeps_its_triangles` pins the
+// triangles.
+//
+// Also not in the C++, and speed only: both searches skip an outer ring whose
+// bounding box (`EarClip::outer_bbox`) shows no vert in it could pass the
+// search's tests, a ring the C++ walk could not take a connector from, so
+// bridges and triangles are the same and only fewer rings are walked.
 
 use crate::linalg::Vec2;
 
@@ -41,8 +72,8 @@ impl EarClip {
         // non-CCW result) the vertical-ordering InsideEdge tie-break holds.
         // A degenerate ring is skipped whole, as `loop_verts` returning `None`
         // skipped it, so the connector is restored if the walk stops part-way.
-        // C++ `Loop` keeps what it saw before the degenerate vert; see
-        // docs/CPP_DIVERGENCES.md entry 12.
+        // C++ `Loop` keeps what it saw before the degenerate vert; the file
+        // header explains why no output differs.
         for (k, &outer_start) in self.outers.iter().enumerate() {
             let rb = &self.outer_bbox[k];
             if rb.min.y > start_pos.y + slack || rb.max.y < start_pos.y - slack {

@@ -130,8 +130,8 @@ fn test_convex_hull_is_convex() {
 // was not convex. At iteration 29 the apex lay on the line through two hull points,
 // so in the plane of both faces on that edge; the float plane distance put one face
 // at 5.6e-17 (visible) and the other at 0 (hidden), so the edge became a horizon edge
-// and the new face had zero area and a noise normal. Divergence ledger entry 11
-// decides visibility with the exact orientation instead (`quickhull::is_above`).
+// and the new face had zero area and a noise normal. This port therefore
+// decides visibility with the exact orientation (`quickhull::is_above`).
 
 /// The worst distance any input point lies outside any face of its hull, after
 /// sweeping `triangle` by `tool` the way the Minkowski sum does (every corner plus

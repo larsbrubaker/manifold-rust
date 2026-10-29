@@ -1,8 +1,8 @@
 // Tests for convex_erosion.rs, ported 1:1 from manifold-sharp's
 // ConvexErosionTests.cs and ConvexErosionTests.Contract.cs (same test names in
 // snake_case, same values, same tolerances; `[Arguments]` rows become one test
-// per row). The subject has no C++ counterpart (docs/CPP_DIVERGENCES.md entry
-// 13), so no C++ expected value appears here.
+// per row). The subject has no C++ counterpart (a Rust extension; see
+// convex_erosion.rs), so no C++ expected value appears here.
 //
 // TWO ORACLES, because the closed form is a second answer to a question the
 // library already answers:

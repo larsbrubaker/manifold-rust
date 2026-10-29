@@ -1,6 +1,6 @@
-// convex_dilation.rs — NOT A C++ PORT; a 1:1 mirror of manifold-sharp's
-// ConvexDilation.cs (its RUST_DIVERGENCES.md entry 6; here
-// docs/CPP_DIVERGENCES.md entry 13). minkowski.rs dilates a non-convex solid by
+// convex_dilation.rs — NOT A C++ PORT; a Rust extension mirrored 1:1 from
+// manifold-sharp's ConvexDilation.cs, so nothing in the C++ constrains its
+// numbers and the twin port does. minkowski.rs dilates a non-convex solid by
 // a convex tool with one hull per triangle, then `batch_union` 1000 hulls at a
 // time. This answers the same question with the same hulls but a different
 // reduction — an ADDED entry point (`Manifold::try_dilate_by_convex` /
@@ -54,8 +54,17 @@
 // lock; those levels advance the reporter only after their map returns.
 //
 // ── What it is not ──────────────────────────────────────────────────────────
-// Not bit-identical to minkowski_sum: the same hulls unioned in a different
-// order round intersection vertices differently. Volume and genus agree.
+// Not bit-identical to minkowski_sum / minkowski_difference: the same hulls
+// unioned in a different order round intersection vertices differently. Volume
+// and genus agree at 1e-9. Sequential and parallel builds are bit-identical to
+// each other: `par_tests.rs` pins the drilled-part dilation and erosion
+// fingerprints (0xe4a5747b38ef2b89, 0x565d3e8a3c515759) in both. To let every
+// node run on one engine, `csg_tree`'s private `batch_union` / `batch_boolean` /
+// `simple_boolean` take an optional engine (`None` is the process default).
+// The tests are ported 1:1 from sharp's `ConvexDilationTests` (.Erosion,
+// .Patches, .Nested) into `convex_dilation_*tests.rs`, and its
+// `ParallelismTests.ConvexDilation` into `par_tests.rs` (the C# runtime toggle
+// becomes 1-vs-8 rayon threads plus a hash pinned across both builds).
 
 use std::cell::Cell;
 use std::sync::Mutex;

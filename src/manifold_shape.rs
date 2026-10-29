@@ -301,8 +301,8 @@ impl Manifold {
 
     /// [`Manifold::minkowski_difference`] in closed form, for the convex solids
     /// that have one — the halfspace intersection of
-    /// [`crate::convex_erosion`]. Mirrors manifold-sharp's
-    /// `Manifold.TryConvexErosion` (docs/CPP_DIVERGENCES.md entry 13).
+    /// [`crate::convex_erosion`]. A Rust extension with no C++ counterpart,
+    /// mirroring manifold-sharp's `Manifold.TryConvexErosion` bit for bit.
     ///
     /// A fast path a caller opts into, not a reroute: `minkowski_difference`
     /// still runs the ported sweep for every input. Returns `None` for
@@ -327,8 +327,8 @@ impl Manifold {
 
     /// [`Manifold::minkowski_sum`] of a non-convex manifold and a convex tool,
     /// reduced through [`crate::convex_dilation`]'s balanced (parallel under
-    /// the `parallel` feature) union tree. Mirrors manifold-sharp's
-    /// `Manifold.TryDilateByConvex` (docs/CPP_DIVERGENCES.md entry 13).
+    /// the `parallel` feature) union tree. A Rust extension with no C++
+    /// counterpart, mirroring manifold-sharp's `Manifold.TryDilateByConvex`.
     ///
     /// Opt-in, not a reroute: `None` for anything but non-convex ⊕ convex, and
     /// the answer to `None` is `minkowski_sum`. The same solid (volume and
@@ -349,8 +349,8 @@ impl Manifold {
 
     /// [`Manifold::minkowski_difference`] by a convex tool, the swept hulls
     /// reduced through [`crate::convex_dilation`]'s union tree and subtracted
-    /// from the solid once. Mirrors manifold-sharp's
-    /// `Manifold.TryErodeByConvex`.
+    /// from the solid once. A Rust extension with no C++ counterpart,
+    /// mirroring manifold-sharp's `Manifold.TryErodeByConvex`.
     ///
     /// `None` for a non-convex tool, any empty, soup or errored operand, or
     /// overlapping shells whose union does not rebuild cleanly; the answer to

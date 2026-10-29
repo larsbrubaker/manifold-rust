@@ -215,13 +215,30 @@ impl ManifoldImpl {
         }
 
         if invert {
-            // Flip triangle winding — matches C++ FlipTris
+            // Flip triangle winding — C++ FlipTris (mesh_fixes.h), with the
+            // property fix from upstream master.
             for tri in 0..result.num_tri() {
                 // Props belong to corners (start verts), not halfedges: after
                 // the flip the new start verts are old starts (0, 2, 1), so
-                // the props must follow that order. Pinned v3.5.2 FlipTris let
-                // props travel with the swapped halfedges; upstream 422ab6fc
-                // (issue #1781) fixed it — see docs/CPP_DIVERGENCES.md.
+                // the props must follow that order. The pinned v3.5.2 FlipTris
+                // swaps halfedges 3t and 3t+2 whole, so corners 0 and 2 trade
+                // props while their vertices do not: normals and UVs land on
+                // the wrong corners and get_mesh_gl splits shared vertices.
+                // Upstream 422ab6fc (issue #1781) fixed it with this same
+                // ordering; this port takes it ahead of the submodule pin. It
+                // also covers C++ `CsgLeafNode::Compose`'s FlipTris, since
+                // composed leaves go through this transform too.
+                //
+                // Output that differs from v3.5.2: mirrored meshes with
+                // properties, and set_properties / calculate_curvature /
+                // calculate_normals applied after any mirror (they read props
+                // through prop_vert even when num_prop == 0), including the
+                // apex-bottom cone, which mirrors internally. Pinned MeshGL
+                // vertex counts: mirrored `sphere(1.0, 32)` with normals 258
+                // (was 1536); that cone then set_properties 17 (was 90) or
+                // calculate_normals(0, 60.0) 33 (was 90); a mirrored cube then
+                // set_properties 8 (was 36), in manifold_tests/normals.rs.
+                // manifold-sharp carries the same fix (its commit 674b6ce).
                 let props = [
                     result.halfedge[3 * tri].prop_vert,
                     result.halfedge[3 * tri + 2].prop_vert,

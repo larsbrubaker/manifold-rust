@@ -609,8 +609,19 @@ impl ManifoldImpl {
         // a `std::unordered_set<int>` and starts each contour at
         // `*tris.begin()`, whose order is implementation-defined. A BTreeSet
         // keeps the same algorithm with a pinned, documented order: each
-        // contour starts at the lowest-indexed untraced triangle
-        // (docs/CPP_DIVERGENCES.md entry 7).
+        // contour starts at the lowest-indexed untraced triangle, and the
+        // contours come out in that ascending order. Each contour is the same
+        // cyclic vertex sequence as the C++, bit for bit and in the same
+        // orientation; only the cycle's rotation and the contour order can
+        // differ from a given C++ toolchain (MSVC, libstdc++ and libc++ each
+        // iterate the set in their own order), so no single C++ output exists
+        // to match. `Manifold::slice` unions the contours, which hides both.
+        // Pinned by `cross_section::ctor_tests::test_raw_slice_matches_cpp_lerp_bits`
+        // (cyclic comparison against MSVC) and
+        // `test_raw_slice_contour_order_is_deterministic`. manifold-sharp must
+        // start at the ascending triangle index too (a sorted set, or the
+        // minimum remaining index), and use the `lerp` form below, to keep its
+        // raw slice bit-equal.
         let mut tris: std::collections::BTreeSet<usize> = std::collections::BTreeSet::new();
         let query = vec![BBox::from_points(plane.min, plane.max)];
         collider.collisions_with_boxes(&query, false, |_query_idx, tri| {

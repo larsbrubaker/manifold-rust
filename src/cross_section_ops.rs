@@ -173,6 +173,17 @@ impl CrossSection {
         )))
     }
 
+    /// Minkowski sum of two sections: Clipper2's `MinkowskiSum` (closed, at
+    /// `precision_`) for every pair of contours, the per-pair results
+    /// concatenated.
+    ///
+    /// A Rust extension: C++ `CrossSection` has no Minkowski operation, so
+    /// nothing in the reference constrains these numbers. Clipper2 unions
+    /// each pair's output with `FillRule::NonZero`, but the concatenation is
+    /// not unioned again, so the result can hold overlapping contours when
+    /// either operand has more than one contour; pass it through
+    /// `CrossSection::new` for a clean
+    /// section. Should the C++ gain a Minkowski operation, port it here.
     pub fn minkowski_sum(&self, other: &Self) -> Self {
         let mut result = Vec::new();
         let others = to_paths(&other.paths());
@@ -318,6 +329,18 @@ fn hull_backtrack(pt: Vec2, stack: &mut Vec<Vec2>) {
 /// sorts `pts` in place with `V2Lesser`, builds the lower chain forwards and
 /// the upper chain backwards, drops each chain's last point and returns
 /// lower then upper. Fewer than three points give an empty path.
+///
+/// The one output the C++ itself leaves unpinned: under `V2Lesser`,
+/// `(0.0, y)` and `(-0.0, y)` are equivalent, and C++ `std::sort` is not
+/// stable, so which of two such points the backtrack keeps (the later one in
+/// the lower chain, the earlier in the upper) depends on the standard
+/// library. MSVC sorts fewer than 32 elements stably, so against MSVC it can
+/// differ only for 32 or more points. This port uses the stable `sort_by`,
+/// so the only thing that can differ from a given C++ build is the sign of a
+/// zero in a hull vertex; equivalent points are otherwise bit-identical.
+/// `cross_section::tests::test_hull_matches_cpp_hull_impl` pins the MSVC
+/// result bit for bit on degenerate, near-duplicate, underflowing-`CCW` and
+/// multi-section inputs. manifold-sharp must sort stably too.
 fn hull_impl(pts: &mut [Vec2]) -> Vec<Vec2> {
     if pts.len() < 3 {
         return Vec::new();

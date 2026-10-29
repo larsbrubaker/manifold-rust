@@ -153,7 +153,7 @@ fn load_tri_fixture(text: &str) -> crate::manifold::Manifold {
 }
 
 /// The union's volume must match inclusion-exclusion. Before the stale-entry
-/// check in `dedupe_edges` (divergence ledger entry 3), the cleanup filled the
+/// check in `dedupe_edges` (noted at its repair loop), the cleanup filled the
 /// concave corner, as it does in C++ Manifold 3.5.2.
 #[test]
 fn test_union_keeps_concave_corner() {

@@ -1,6 +1,6 @@
 // boolean_stage_progress.rs — NOT A C++ PORT. The exact boolean's optional
-// stage sink, mirrored 1:1 from manifold-sharp's BooleanStageProgress.cs (its
-// RUST_DIVERGENCES.md entry 6; here docs/CPP_DIVERGENCES.md entry 13): a
+// stage sink, a Rust extension mirrored 1:1 from manifold-sharp's
+// BooleanStageProgress.cs: a
 // `StageSink` that `boolean3::boolean_with_token_and_stage`,
 // `Boolean3::new_with_token_and_stage` and
 // `boolean_result::boolean_result_with_token_and_stage` take, and invoke with

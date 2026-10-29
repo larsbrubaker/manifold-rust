@@ -1,12 +1,17 @@
 // convex_erosion.rs — the closed-form erosion of a *convex* solid. NOT A C++ PORT:
 // the C++ (and `minkowski.rs`) has one erosion algorithm, the per-triangle sweep.
-// This is a 1:1 mirror of manifold-sharp's `ConvexErosion.cs` (its
-// RUST_DIVERGENCES.md entry 5, now taken here; recorded in this repo's
-// docs/CPP_DIVERGENCES.md entry 13). It is an ADDED entry point, reached only
-// through `Manifold::try_convex_erosion`; `minkowski::minkowski` is not routed
-// through it, so every ported path still produces the C++'s bits. The two ports
-// must stay bit-identical to each other: every operation below is written in
-// the same order as the C#.
+// This is a Rust extension, a 1:1 mirror of manifold-sharp's `ConvexErosion.cs`
+// (`Manifold.TryConvexErosion`). It is an ADDED entry point, reached only
+// through `Manifold::try_convex_erosion`; `minkowski::minkowski` and
+// `Manifold::minkowski_difference` are not routed through it, even for a convex
+// solid where the closed form would apply, so every ported path still produces
+// the C++'s bits. Nothing in the C++ constrains this file's numbers; the
+// constraint is the twin port, and the two must stay bit-identical: every
+// operation below is written in the same order as the C#, and dual-hull vertices
+// map back to planes by exact bits (the equality sharp's `Vec3.Equals` uses).
+// `convex_erosion_tests.rs` ports `ConvexErosionTests.cs` and
+// `ConvexErosionTests.Contract.cs` 1:1 (a 20-cube by a unit ball is exactly
+// 5832.0; a 2048-triangle sphere agrees with the sweep to < 1e-12 relative).
 //
 // ── The closed form ─────────────────────────────────────────────────────────
 // A convex solid IS the intersection of its face halfspaces,

@@ -243,6 +243,42 @@ fn property_row(mesh: &ManifoldImpl, row: usize, width: usize) -> Vec<f64> {
 /// Concatenate multiple disjoint meshes into one. This is a genuine utility
 /// used by both boolean operations and CSG compose. It does NOT perform any
 /// boolean intersection — the meshes must be non-overlapping for correct results.
+/// Behind `Manifold::compose`, the exact engine's disjoint-union fast path (and
+/// so every disjoint step of the pairwise `batch_boolean` fold) and
+/// `csg_tree::batch_union`.
+///
+/// Where it differs from C++ `CsgLeafNode::Compose` (csg_tree.cpp:245-268,
+/// :415), deliberately, for utility over parity: the C++ sets the combined
+/// epsilon and tolerance to the nodes' largest *before* `RemoveDegenerates`,
+/// so one node's coarse epsilon collapses every other node's short edges, and
+/// it swaps degenerates across the composed mesh. Here the clean-up runs at
+/// the combined box's automatic `kPrecision * scale`, without the
+/// `swap_degenerates` stage, and the inputs' largest epsilon and tolerance
+/// are raised onto the result only after the final
+/// `set_normals_and_coplanar`, as metadata for what comes next; the coplanar
+/// grouping, computed at the tolerance, is therefore what it is without the
+/// carry. A part finer than the combined automatic epsilon is still
+/// collapsed. The reported epsilon and tolerance are the max of the inputs'
+/// (never below the automatic values). The inputs are materialized impls, so
+/// each epsilon already carries its transform, scaled by the spectral norm as
+/// `Impl::Transform` scales it, the value an overlapping boolean of the same
+/// input sees. C++ Compose instead works from a leaf's pending transform,
+/// `epsilon * max(1, newScale / oldScale)`, which agrees for uniform scale-ups
+/// and translations but keeps the untransformed epsilon under a scale-down and
+/// inflates it by the bounding-box growth under a rotation; there this port
+/// matches the C++'s overlapping boolean, not its Compose.
+///
+/// Pinned by `manifold::tests::compose_tolerance`: all four entry points
+/// (`Manifold::compose`, the exact disjoint union, `batch_boolean(Add)`, a CSG
+/// `op_n(Add)`) keep a fine `sphere(0.01, 128)`'s 8192 triangles and MeshGL64
+/// bits beside a cube imported at tolerance 1e-3 while reporting 1e-3, follow
+/// the overlapping-boolean rule for set, imported, transformed and lazily
+/// scaled tolerances, and a part finer than the combined epsilon does not
+/// panic. `manifold::tests::compose` pins one run per input copy. manifold-sharp
+/// must mirror all of it in `Boolean3.Functions.cs` `ComposeMeshes`: per-input
+/// mesh-ID renumbering, concatenated face normals before the clean-up, no
+/// swap stage, and epsilon and tolerance raised to the inputs' max after
+/// `SetNormalsAndCoplanar`.
 pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
     if meshes.is_empty() {
         return ManifoldImpl::new();
@@ -305,7 +341,9 @@ pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
     // order — node by node, ascending within a node. Renumbering to local IDs
     // 1, 2, 3, ... in that same order gives increment_mesh_ids the same ranks
     // without the C++ int overflow, and without depending on the absolute IDs,
-    // which vary with scheduling when booleans run in parallel.
+    // which vary with scheduling when booleans run in parallel. Merging the
+    // raw IDs instead would fuse two copies into one MeshGL run carrying only
+    // the last copy's run_transform.
     let mut next_local = 1i32;
     for mesh in meshes {
         let mesh_tri_count = mesh.num_tri() as i32;
@@ -347,14 +385,15 @@ pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
     // The inputs' face normals, in the concatenated triangle order, as C++
     // Compose copies faceNormal_: collapse_edge projects through them, and
     // without them the first collapse that is not trivially short indexed an
-    // empty array.
+    // empty array (a `sphere(1e-5, 128)` composed with a cube at x = 1e6,
+    // whose box makes the automatic epsilon 1e-6, collapses through them).
     out.face_normal = concat_face_normals(meshes);
     // required to remove parts that are smaller than the tolerance (matches
     // C++). remove_degenerates minus its swap_degenerates stage: the swap
     // never ran here before the face normals were carried (it returns early
     // without them), so leaving it out keeps every composed mesh as it was,
     // and keeps compose from swapping a robust result's antiparallel
-    // coplanar triangles (docs/CPP_DIVERGENCES.md entry 1).
+    // coplanar triangles (why the robust engine skips it: robust::assemble).
     crate::edge_op::cleanup_topology(&mut out);
     crate::edge_op::collapse_short_edges(&mut out, 0);
     crate::face_op::calculate_vert_normals(&mut out);
@@ -365,7 +404,7 @@ pub fn compose_meshes(meshes: &[ManifoldImpl]) -> ManifoldImpl {
     // csg_tree.cpp:245-268; boolean_result for an overlapping union), raised
     // onto the result only now: one part's coarser tolerance is for what
     // comes next to use (simplify, later booleans, export), not a licence to
-    // collapse the other parts here (docs/CPP_DIVERGENCES.md entry 15). The
+    // collapse the other parts here (see this function's doc comment). The
     // inputs are materialized impls, so each epsilon already reflects its
     // transform.
     out.epsilon = meshes.iter().map(|m| m.epsilon).fold(out.epsilon, f64::max);

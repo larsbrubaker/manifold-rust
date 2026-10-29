@@ -849,14 +849,20 @@ pub fn dedupe_edges(mesh: &mut ManifoldImpl) {
             break;
         }
         for &dup in &duplicates {
-            // Deliberate divergence (docs/CPP_DIVERGENCES.md): the C++ repairs
-            // every entry collected at the top of the pass. An earlier repair
-            // in the same pass can leave a later entry no longer duplicated,
-            // and dedupe_edge on that stale entry copies the position of a
-            // vertex that is not the orbit's own into the new vertex it
-            // relabels the orbit to, so triangle corners move and solid
-            // disappears. The outer loop collects again, so skipping loses
-            // nothing a later pass would not catch.
+            // Deliberate divergence, fixing a C++ bug: the C++ (`DedupeEdges`)
+            // repairs every entry collected at the top of the pass. An earlier
+            // repair in the same pass can leave a later entry no longer
+            // duplicated, and dedupe_edge on that stale entry copies the
+            // position of a vertex that is not the orbit's own into the new
+            // vertex it relabels the orbit to, so triangle corners move and
+            // solid disappears (an exact union of two NoError operands lost
+            // 2.3e-5 of one). The outer loop collects again, so skipping loses
+            // nothing a later pass would not catch. Moved pins: Thingi10K
+            // #1147177 imports as 3206 verts / 6424 tris / genus 4 (was 3201 /
+            // 6418 / genus 5) and #939888 as 861 / 1718 (was 860 / 1716), in
+            // `robust::thingi_tests`; `test_dedupe_edges_never_moves_a_triangle_corner`
+            // (16 corners moved before, 0 after). manifold-sharp has the same
+            // check (`EdgeOp.Dedupe.cs`) and pins the same counts.
             if !is_still_duplicated(mesh, dup) {
                 continue;
             }

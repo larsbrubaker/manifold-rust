@@ -1,8 +1,7 @@
-// convex_patches.rs — NOT A C++ PORT; a 1:1 mirror of manifold-sharp's
-// ConvexPatches.cs (its RUST_DIVERGENCES.md entry 6; here
-// docs/CPP_DIVERGENCES.md entry 13). Stage B of convex_dilation.rs's tree:
-// adjacent triangles are grouped into patches P so one hull,
-// hull(P ⊕ B) = hull(P) ⊕ B, replaces |P| per-triangle hulls. DILATION ONLY.
+// convex_patches.rs — NOT A C++ PORT; a Rust extension mirrored 1:1 from
+// manifold-sharp's ConvexPatches.cs (see convex_dilation.rs). Stage B of
+// convex_dilation.rs's tree: adjacent triangles are grouped into patches P so
+// one hull, hull(P ⊕ B) = hull(P) ⊕ B, replaces |P| per-triangle hulls. DILATION ONLY.
 //
 // ── Why a patch hull is sound ───────────────────────────────────────────────
 // hull(P) ⊕ B ⊆ solid ⊕ B whenever H = hull(P) ⊆ solid, and it covers every

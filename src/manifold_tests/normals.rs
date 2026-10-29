@@ -164,8 +164,9 @@ fn test_cpp_mirrored_normals() {
 
 // Property-adding ops after a mirror: with num_prop == 0 the flip must still
 // keep prop_vert == start_vert, because set_properties, calculate_curvature and
-// calculate_normals index existing props by prop_vert. Upstream 422ab6fc;
-// see docs/CPP_DIVERGENCES.md entry 4.
+// calculate_normals index existing props by prop_vert. Upstream 422ab6fc,
+// ahead of the pinned v3.5.2; see the winding flip in
+// `ManifoldImpl::transform` (impl_transform.rs).
 
 #[test]
 fn test_mirrored_cone_set_properties_shares_verts() {

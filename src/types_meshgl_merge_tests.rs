@@ -1,10 +1,10 @@
 // types_meshgl_merge_tests.rs — regression tests for MeshGLP::merge
 // (types_meshgl.rs), the port of C++ MergeMeshGLP in src/sort.cpp.
 //
-// The cases here pin the open-edge bookkeeping that used to diverge from the
-// C++ (docs/CPP_DIVERGENCES.md, retired entry 6): C++ keeps open halfedges in
-// a std::multiset, so a halfedge listed twice survives one reverse match, and
-// every remaining open halfedge contributes one open-vertex entry.
+// The cases here pin the open-edge bookkeeping, which matches the C++: C++
+// keeps open halfedges in a std::multiset, so a halfedge listed twice survives
+// one reverse match, and every remaining open halfedge contributes one
+// open-vertex entry.
 
 use super::{MeshGL, MeshGL64, MeshGLP, MeshIndex, MeshPrecision};
 

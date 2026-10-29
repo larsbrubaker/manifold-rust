@@ -341,6 +341,14 @@ impl Manifold {
     /// as a CrossSection. C++ `Manifold::Slice` returns raw `Polygons`; this
     /// is C++ `CrossSection(m.Slice(height))`, the Positive-union Polygons
     /// constructor every C++ caller wraps them in.
+    ///
+    /// The return type is this port's API shape, shipped long ago and
+    /// mirrored by manifold-sharp, so changing it is a public-API decision,
+    /// not a numerical fix. The numbers match: the contours are bit for bit
+    /// those of the C++ `CrossSection(Polygons)` constructor applied to the
+    /// C++ raw polygons (`cross_section::ctor_tests::test_slice_and_project_wrap_like_cpp`).
+    /// The raw polygons stay reachable in-crate as `as_impl().slice(h)` /
+    /// `as_impl().project()`, which the ported `TEST(Smooth, Fillet)` uses.
     pub fn slice(&self, height: f64) -> CrossSection {
         if self.imp.is_soup || self.is_empty() {
             return CrossSection::default();
@@ -351,7 +359,8 @@ impl Manifold {
     /// Project this manifold onto the XY plane, returning the silhouette
     /// as a CrossSection. C++ `Manifold::Project` returns raw, often
     /// self-overlapping `Polygons`; this is C++ `CrossSection(m.Project())`,
-    /// the Positive-union Polygons constructor its docs recommend.
+    /// the Positive-union Polygons constructor its docs recommend. The return
+    /// type is an API shape, as for [`Self::slice`]; the numbers match.
     pub fn project(&self) -> CrossSection {
         if self.imp.is_soup || self.is_empty() {
             return CrossSection::default();

@@ -109,10 +109,11 @@ impl Manifold {
 
     /// [`Self::from_mesh_gl64_robust`] for meshes the robust boolean engine
     /// assembled itself (`robust::assemble`), which skip
-    /// `edge_op::swap_degenerates`. See docs/CPP_DIVERGENCES.md entry 1: a
-    /// boolean result legitimately contains coplanar antiparallel
-    /// adjacencies, whose flood-filled face normals make the swap
-    /// misclassify large valid triangles and physically move the surface.
+    /// `edge_op::swap_degenerates`, unlike the C++ import: a boolean result
+    /// legitimately contains coplanar antiparallel adjacencies, whose
+    /// flood-filled face normals make the swap misclassify large valid
+    /// triangles and physically move the surface (the full reasoning and
+    /// evidence are at the simplification in `robust::assemble`).
     /// Every other import path — including user meshes coming in through
     /// [`Self::from_mesh_gl_robust`] — is unaffected.
     ///
@@ -422,7 +423,7 @@ impl Manifold {
         }
         if skip_swap {
             // remove_degenerates without its swap_degenerates stage; see
-            // docs/CPP_DIVERGENCES.md entry 1.
+            // `Self::from_mesh_gl64_robust_assembled`.
             crate::edge_op::cleanup_topology(&mut imp);
             crate::edge_op::collapse_short_edges(&mut imp, 0);
             crate::face_op::calculate_vert_normals(&mut imp);
