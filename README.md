@@ -16,7 +16,7 @@
 Two things in one library:
 
 1. **A pure-Rust port of [Manifold](https://github.com/elalish/manifold)** (Emmett Lalish's
-   C++ geometry kernel, v3.5.0) — union / intersection / difference on triangle meshes,
+   C++ geometry kernel, v3.5.4) — union / intersection / difference on triangle meshes,
    plus constructors, cross-sections, convex hull, Minkowski, SDF meshing and smooth
    subdivision. The port follows the C++ algorithms and passes every ported C++ test,
    with exact expected values pinned so no output changes by accident. Where it does
@@ -155,7 +155,7 @@ exported meshes row for row with no slack.
 
 ## State of the project
 
-- **Port: complete.** All 18 phases of the C++ engine (v3.5.0) are implemented and every
+- **Port: complete.** All 18 phases of the C++ engine (v3.5.4) are implemented and every
   C++ test is ported or covered, and the suite passes. The `#[ignore]`d tests are slow
   ones that pass in release, measurement fixtures run on demand, and an open bug pinned
   until its fix lands. Open work is in [PORTING_PLAN.md](PORTING_PLAN.md).
