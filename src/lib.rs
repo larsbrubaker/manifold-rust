@@ -36,6 +36,35 @@
 //! source layout and are public primarily for testing and advanced use — their
 //! APIs may change before 1.0.
 
+// Clippy lints this crate does not follow, for the whole crate. Other crates
+// pin this crate's output bit for bit (manifold-sharp's oracle tests,
+// MatterCAD's golden scenes), so a lint whose fix can move a floating-point
+// result, or that would churn hundreds of ported lines for style alone, is
+// allowed here rather than fixed:
+// - `excessive_precision`, `approx_constant`: numeric literals stay as the C++
+//   reference writes them; a std constant can differ from the literal in the
+//   last bits.
+// - `manual_clamp`: `x.min(hi).max(lo)` maps NaN to a bound where `clamp`
+//   passes NaN through (and panics on lo > hi).
+// - `neg_multiply`, `assign_op_pattern`, `eq_op`: `x * -1.0`, `a = a + b` on
+//   the vector types (whose `+=` is a separate impl) and `x - x` (the NaN and
+//   infinity checks in `math.rs`) are written as computed.
+// - `needless_range_loop`, `too_many_arguments`, `type_complexity`,
+//   `field_reassign_with_default`: index loops, signatures and step-by-step
+//   struct setup mirror the C++ so the two can be read side by side.
+#![allow(
+    clippy::excessive_precision,
+    clippy::approx_constant,
+    clippy::manual_clamp,
+    clippy::neg_multiply,
+    clippy::assign_op_pattern,
+    clippy::eq_op,
+    clippy::needless_range_loop,
+    clippy::too_many_arguments,
+    clippy::type_complexity,
+    clippy::field_reassign_with_default
+)]
+
 pub mod boolean3;
 pub mod boolean_result;
 pub mod boolean_stage_progress;
