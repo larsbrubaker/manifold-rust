@@ -290,7 +290,14 @@ impl CsgNode {
                             return pos_result;
                         }
                         let neg_result = batch_union(&mut negative, token, None, progress);
-                        simple_boolean(&pos_result, &neg_result, OpType::Subtract, token, None, progress)
+                        simple_boolean(
+                            &pos_result,
+                            &neg_result,
+                            OpType::Subtract,
+                            token,
+                            None,
+                            progress,
+                        )
                     }
                 }
             }

@@ -477,9 +477,16 @@ fn phase_total_and_report_units_mirror_manifold_sharp() {
     reporter.report_units(2.0);
     reporter.report_units(1.0); // below the last emit: dropped
     reporter.report_units(80.0); // clamped to 1.0
-    assert_eq!(*seen.lock().unwrap(), vec![Some(0.0), Some(0.25), Some(1.0)]);
+    assert_eq!(
+        *seen.lock().unwrap(),
+        vec![Some(0.0), Some(0.25), Some(1.0)]
+    );
 
     reporter.begin_phase(Phase::Winding, 0);
     reporter.report_units(3.0);
-    assert_eq!(seen.lock().unwrap().len(), 4, "an indeterminate phase reports nothing");
+    assert_eq!(
+        seen.lock().unwrap().len(),
+        4,
+        "an indeterminate phase reports nothing"
+    );
 }

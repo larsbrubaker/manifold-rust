@@ -529,7 +529,9 @@ pub fn boolean_with_token_and_stage(
         return ManifoldImpl::new();
     }
 
-    crate::boolean_result::boolean_result_with_token_and_stage(mesh_a, mesh_b, op, &bool3, token, stage)
+    crate::boolean_result::boolean_result_with_token_and_stage(
+        mesh_a, mesh_b, op, &bool3, token, stage,
+    )
 }
 
 /// Route a boolean to the requested engine (`types::BooleanEngine`).

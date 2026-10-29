@@ -213,4 +213,3 @@ fn the_cross_copy_reports_its_own_phase() {
         .and_then(|(_, fraction)| *fraction);
     assert_eq!(last, Some(1.0));
 }
-

@@ -413,7 +413,11 @@ impl Manifold {
         // Supplied references keep their own coplanar groups (the flood fill
         // still sets the face normals).
         let kept: Vec<i32> = if keep_coplanar {
-            imp.mesh_relation.tri_ref.iter().map(|r| r.coplanar_id).collect()
+            imp.mesh_relation
+                .tri_ref
+                .iter()
+                .map(|r| r.coplanar_id)
+                .collect()
         } else {
             Vec::new()
         };

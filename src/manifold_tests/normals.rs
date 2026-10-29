@@ -159,7 +159,12 @@ fn test_cpp_mirrored_normals() {
     assert!(mirrored.has_normals(0));
     let (good, bad) = count_sphere_normal_alignment(&mirrored, 1.0, normalize);
     assert_eq!(bad, 0, "MirroredNormals: bad={}", bad);
-    assert_eq!(good, mirrored.num_vert() as i32, "MirroredNormals: good={}", good);
+    assert_eq!(
+        good,
+        mirrored.num_vert() as i32,
+        "MirroredNormals: good={}",
+        good
+    );
 }
 
 // Property-adding ops after a mirror: with num_prop == 0 the flip must still
@@ -172,14 +177,18 @@ fn test_cpp_mirrored_normals() {
 fn test_mirrored_cone_set_properties_shares_verts() {
     // radius_low == 0 builds the apex-bottom cone by mirroring internally.
     let cone = Manifold::cylinder(2.0, 0.0, 1.0, 16);
-    let gl = cone.set_properties(1, |p, pos, _| p[0] = pos.z).get_mesh_gl(-1);
+    let gl = cone
+        .set_properties(1, |p, pos, _| p[0] = pos.z)
+        .get_mesh_gl(-1);
     assert_eq!(gl.num_vert(), 17);
 }
 
 #[test]
 fn test_mirrored_cube_set_properties_shares_verts() {
     let cube = Manifold::cube(Vec3::new(1.0, 2.0, 3.0), true).mirror(Vec3::new(1.0, 0.0, 0.0));
-    let gl = cube.set_properties(1, |p, pos, _| p[0] = pos.x).get_mesh_gl(-1);
+    let gl = cube
+        .set_properties(1, |p, pos, _| p[0] = pos.x)
+        .get_mesh_gl(-1);
     assert_eq!(gl.num_vert(), 8);
 }
 

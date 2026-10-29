@@ -1,8 +1,8 @@
 // Boolean result assembly — extracted from boolean_result.rs
 // Contains update_reference, create_properties, and boolean_result entry point
 
-use crate::boolean_stage_progress::{self as stage_marks, report as report_stage, StageSink};
 use crate::boolean3::Boolean3;
+use crate::boolean_stage_progress::{self as stage_marks, report as report_stage, StageSink};
 use crate::cancel::{is_cancelled, CancelToken};
 use crate::edge_op::simplify_topology;
 use crate::face_op::{face2tri_ct, get_barycentric, reorder_halfedges};
