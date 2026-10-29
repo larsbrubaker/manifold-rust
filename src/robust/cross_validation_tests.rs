@@ -86,11 +86,13 @@ fn unmatched_verts(a: &Manifold, b: &Manifold, tol: f64) -> usize {
 fn cross_validate(a: &Manifold, b: &Manifold, what: &str) {
     for op in [OpType::Add, OpType::Subtract, OpType::Intersect] {
         let ctx = format!("{what} {op:?}");
-        // The exact engine can assert on rare rotated configurations (the
-        // pair_up "non-manifold edge" panic, a known C++-inherited failure
-        // class — see PORTING_PLAN.md). When it cannot produce a reference,
-        // sanity-check the robust result alone instead of comparing; the
-        // robust engine existing is the fix for those inputs, not the bug.
+        // The exact engine asserts when its pair_up meets a non-manifold
+        // edge. No pair in these batteries trips it, in debug or release
+        // (the centered cylinder's stale collider, which once did, is fixed
+        // in constructors.rs). Should a new pair trip it, the exact engine
+        // has no reference to offer, so sanity-check the robust result alone
+        // instead of comparing; the robust engine is the answer for such
+        // inputs, not the bug.
         let exact = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
             a.boolean_with_engine(b, op, BooleanEngine::Exact)
         })) {

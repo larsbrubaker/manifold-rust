@@ -4,11 +4,15 @@
 //! hull, Minkowski sum/difference, SDF meshing, smoothing and 2D
 //! cross-sections.
 //!
-//! The port targets **exact numerical match** with the C++ reference
-//! (v3.5.0): same algorithms, same floating-point results, same triangle
-//! topology. The optional `parallel` feature adds rayon parallelism that is
-//! restricted to determinism-preserving sites, so its results remain
-//! bit-identical to the sequential build.
+//! The port follows the C++ reference's algorithms (v3.5.4) and passes its
+//! ported test suite; that suite, with exact expected values, is the bar, and
+//! a change is judged on accuracy, robustness, performance and usefulness to
+//! callers rather than on matching the C++ more closely. Where the output
+//! differs from the C++ on purpose, a comment at the code says how and why;
+//! the differences still open are listed in `PORTING_PLAN.md`. The optional
+//! `parallel` feature adds rayon parallelism that is restricted to
+//! determinism-preserving sites, so its results remain bit-identical to the
+//! sequential build.
 //!
 //! # Example
 //!

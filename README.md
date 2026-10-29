@@ -18,9 +18,9 @@ Two things in one library:
 1. **A pure-Rust port of [Manifold](https://github.com/elalish/manifold)** (Emmett Lalish's
    C++ geometry kernel, v3.5.0) — union / intersection / difference on triangle meshes,
    plus constructors, cross-sections, convex hull, Minkowski, SDF meshing and smooth
-   subdivision. The port targets *exact numerical match*: same algorithms, same
-   floating-point results, same triangle topology, validated by instrumented
-   boolean-by-boolean trace comparison against a locally built C++ reference.
+   subdivision. The port follows the C++ algorithms and passes every ported C++ test,
+   with exact expected values pinned so no output changes by accident. Where it does
+   better than the C++ on purpose, the code says how and why.
 
 2. **A second, original "robust" boolean engine** that the C++ library does not have. It
    accepts the meshes real pipelines actually contain — triangle soup, scans, Thingiverse
@@ -31,9 +31,10 @@ Two things in one library:
 
 ## Why you'd use it
 
-- **The exact engine matches the C++ reference**, down to the tie-breaking order of the
-  symbolic-perturbation predicates — so results are reproducible against the reference
-  implementation the rest of the ecosystem uses, with no FFI and clean WASM builds.
+- **The exact engine is the C++ reference's algorithm**, down to the tie-breaking order of
+  the symbolic-perturbation predicates — so results agree with the implementation the rest
+  of the ecosystem uses, with no FFI and clean WASM builds. The few places its output
+  differs are listed in [PORTING_PLAN.md](PORTING_PLAN.md).
 - **The robust engine handles what the exact engine can't.** It has been swept over the
   whole [Thingi10K](https://ten-thousand-models.appspot.com/) corpus (~10k meshes):
   **0 `NotClosed` failures**, and every volume disagreement above the sampling-noise floor
@@ -155,9 +156,9 @@ exported meshes row for row with no slack.
 ## State of the project
 
 - **Port: complete.** All 18 phases of the C++ engine (v3.5.0) are implemented and every
-  C++ test is ported or covered — 721 tests passing, 0 failing in a debug run, and 730
-  passing with nothing ignored in release (the 9 `#[ignore]`d tests are debug-build-speed
-  only). Details in [PORTING_PLAN.md](PORTING_PLAN.md).
+  C++ test is ported or covered, and the suite passes. The `#[ignore]`d tests are slow
+  ones that pass in release, measurement fixtures run on demand, and an open bug pinned
+  until its fix lands. Open work is in [PORTING_PLAN.md](PORTING_PLAN.md).
 - **Performance: at parity with the sequential C++ build.** Sphere-minus-sphere at 2 M
   input triangles: 2.61 s (C++) vs 2.57 s (Rust); a 7 999-sphere grid union: 13.5 s vs
   14.5 s — identical triangle counts throughout, peak memory within ~10%. The `parallel`
@@ -190,7 +191,7 @@ cargo build
 cargo test --release
 ```
 
-Exact-match validation against the upstream C++ (needs the submodule):
+Run the upstream C++ tests next to the matching Rust tests (needs the submodule):
 
 ```bash
 git submodule update --init --recursive
