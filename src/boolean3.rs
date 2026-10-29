@@ -730,7 +730,7 @@ pub fn ray_cast(mesh: &ManifoldImpl, origin: Vec3, endpoint: Vec3) -> Vec<RayHit
             let dir_t = [dir.x, dir.y, dir.z][t_axis];
             let v_t = [v.x, v.y, v.z][t_axis];
             let t = (v_t - origin_t) / dir_t;
-            if t >= 0.0 && t <= 1.0 {
+            if (0.0..=1.0).contains(&t) {
                 hits.push(RayHit {
                     face_id: tri as u64,
                     distance: t,

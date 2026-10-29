@@ -171,10 +171,12 @@ fn import_stl_bytes(data: &[u8]) -> Manifold {
             positions[i * 3 + k] = ((positions[i * 3 + k] as f64 - c[k]) * s) as f32;
         }
     }
-    let mut mesh = MeshGL::default();
-    mesh.num_prop = 3;
-    mesh.tri_verts = (0..nv as u32).collect();
-    mesh.vert_properties = positions;
+    let mut mesh = MeshGL {
+        num_prop: 3,
+        tri_verts: (0..nv as u32).collect(),
+        vert_properties: positions,
+        ..Default::default()
+    };
     mesh.merge();
     Manifold::from_mesh_gl_robust(&mesh)
 }
@@ -211,7 +213,7 @@ fn operand_volume(tris: &[[Vec3; 3]], samples: usize) -> f64 {
     }
     let ext = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
     let idx = WindingIndex::new(tris);
-    let mut rng = Rng(0xA11_0F_5A);
+    let mut rng = Rng(0x0A11_0F5A);
     let mut hits = 0usize;
     for _ in 0..samples {
         let pt = R3::from_vec3(Vec3::new(
@@ -269,7 +271,8 @@ fn referee_volume(p: &[[Vec3; 3]], q: &[[Vec3; 3]], samples: usize) -> (f64, f64
             }
         }
     }
-    for _ in total..samples {
+    let first = total;
+    for _ in first..samples {
         let x = min[0] + ext[0] * rng.next_f64();
         let y = min[1] + ext[1] * rng.next_f64();
         let z = min[2] + ext[2] * rng.next_f64();

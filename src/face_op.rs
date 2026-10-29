@@ -170,7 +170,7 @@ pub fn set_normals_and_coplanar(mesh: &mut ManifoldImpl) {
                 if last == Some(mesh.halfedge[h2].paired_halfedge as usize) {
                     interior_halfedges.pop();
                 } else {
-                    interior_halfedges.push(h2 as usize);
+                    interior_halfedges.push(h2);
                 }
                 interior_halfedges.push(next_halfedge(h2 as i32) as usize);
             }
@@ -323,7 +323,7 @@ pub fn get_barycentric(v: Vec3, tri_pos: [Vec3; 3], tolerance: f64) -> Vec3 {
 
     if d2[long_side] < tol2 {
         // Degenerate point
-        return Vec3::new(1.0, 0.0, 0.0);
+        Vec3::new(1.0, 0.0, 0.0)
     } else if area2 > d2[long_side] * tol2 {
         // Triangle case
         for i in 0..3 {
@@ -343,7 +343,7 @@ pub fn get_barycentric(v: Vec3, tri_pos: [Vec3; 3], tolerance: f64) -> Vec3 {
         }
         let sum = uvw.x + uvw.y + uvw.z;
         uvw = uvw / sum;
-        return uvw;
+        uvw
     } else {
         // Line case
         let next_v = (long_side + 1) % 3;
@@ -360,7 +360,7 @@ pub fn get_barycentric(v: Vec3, tri_pos: [Vec3; 3], tolerance: f64) -> Vec3 {
             1 => uvw.y = alpha,
             _ => uvw.z = alpha,
         }
-        return uvw;
+        uvw
     }
 }
 
@@ -497,88 +497,6 @@ pub fn reorder_halfedges(mesh: &mut ManifoldImpl) {
             }
             mesh.halfedge[base].paired_halfedge = opp_face as i32 * 3 + index;
         }
-    }
-}
-
-// -----------------------------------------------------------------------
-// Tests
-// -----------------------------------------------------------------------
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::impl_mesh::ManifoldImpl;
-    use crate::linalg::Mat3x4;
-
-    #[test]
-    fn test_get_axis_aligned_projection_z() {
-        // Normal primarily in Z: should project to XY plane
-        let proj = get_axis_aligned_projection(Vec3::new(0.0, 0.0, 1.0));
-        let v = Vec3::new(3.0, 4.0, 5.0);
-        let p = proj.apply(v);
-        assert!((p.x - 3.0).abs() < 1e-12);
-        assert!((p.y - 4.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn test_get_axis_aligned_projection_y() {
-        // Normal primarily in Y: should project to ZX plane
-        let proj = get_axis_aligned_projection(Vec3::new(0.0, 1.0, 0.0));
-        let v = Vec3::new(3.0, 4.0, 5.0);
-        let p = proj.apply(v);
-        assert!((p.x - 5.0).abs() < 1e-12, "expected z=5, got {}", p.x);
-        assert!((p.y - 3.0).abs() < 1e-12, "expected x=3, got {}", p.y);
-    }
-
-    #[test]
-    fn test_get_axis_aligned_projection_x() {
-        // Normal primarily in X: should project to YZ plane
-        let proj = get_axis_aligned_projection(Vec3::new(1.0, 0.0, 0.0));
-        let v = Vec3::new(3.0, 4.0, 5.0);
-        let p = proj.apply(v);
-        assert!((p.x - 4.0).abs() < 1e-12, "expected y=4, got {}", p.x);
-        assert!((p.y - 5.0).abs() < 1e-12, "expected z=5, got {}", p.y);
-    }
-
-    #[test]
-    fn test_get_axis_aligned_projection_negative_z() {
-        // Normal primarily in -Z: row0 should be flipped
-        let proj = get_axis_aligned_projection(Vec3::new(0.0, 0.0, -1.0));
-        let v = Vec3::new(3.0, 4.0, 5.0);
-        let p = proj.apply(v);
-        // Flipped first row: x → -x
-        assert!((p.x + 3.0).abs() < 1e-12, "expected -x=-3, got {}", p.x);
-        assert!((p.y - 4.0).abs() < 1e-12);
-    }
-
-    #[test]
-    fn test_set_normals_tetrahedron() {
-        let mut m = ManifoldImpl::tetrahedron(&Mat3x4::identity());
-        set_normals_and_coplanar(&mut m);
-        // Every face normal should be unit length
-        for n in &m.face_normal {
-            let len = length2(*n).sqrt();
-            assert!(
-                (len - 1.0).abs() < 1e-10,
-                "face normal not unit: len={}",
-                len
-            );
-        }
-        // Every vert normal should be nonzero (tetrahedron has no degenerate verts)
-        for n in &m.vert_normal {
-            let len = length2(*n).sqrt();
-            assert!(len > 0.0, "vert normal is zero");
-        }
-    }
-
-    #[test]
-    fn test_set_normals_cube() {
-        let mut m = ManifoldImpl::cube(&Mat3x4::identity());
-        set_normals_and_coplanar(&mut m);
-        assert_eq!(m.face_normal.len(), m.num_tri());
-        // Coplanar IDs should be assigned
-        let any_coplanar_id_set = m.mesh_relation.tri_ref.iter().any(|r| r.coplanar_id >= 0);
-        assert!(any_coplanar_id_set, "no coplanar IDs were set");
     }
 }
 
@@ -724,5 +642,87 @@ impl ManifoldImpl {
         }
 
         polys
+    }
+}
+
+// -----------------------------------------------------------------------
+// Tests
+// -----------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::impl_mesh::ManifoldImpl;
+    use crate::linalg::Mat3x4;
+
+    #[test]
+    fn test_get_axis_aligned_projection_z() {
+        // Normal primarily in Z: should project to XY plane
+        let proj = get_axis_aligned_projection(Vec3::new(0.0, 0.0, 1.0));
+        let v = Vec3::new(3.0, 4.0, 5.0);
+        let p = proj.apply(v);
+        assert!((p.x - 3.0).abs() < 1e-12);
+        assert!((p.y - 4.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_get_axis_aligned_projection_y() {
+        // Normal primarily in Y: should project to ZX plane
+        let proj = get_axis_aligned_projection(Vec3::new(0.0, 1.0, 0.0));
+        let v = Vec3::new(3.0, 4.0, 5.0);
+        let p = proj.apply(v);
+        assert!((p.x - 5.0).abs() < 1e-12, "expected z=5, got {}", p.x);
+        assert!((p.y - 3.0).abs() < 1e-12, "expected x=3, got {}", p.y);
+    }
+
+    #[test]
+    fn test_get_axis_aligned_projection_x() {
+        // Normal primarily in X: should project to YZ plane
+        let proj = get_axis_aligned_projection(Vec3::new(1.0, 0.0, 0.0));
+        let v = Vec3::new(3.0, 4.0, 5.0);
+        let p = proj.apply(v);
+        assert!((p.x - 4.0).abs() < 1e-12, "expected y=4, got {}", p.x);
+        assert!((p.y - 5.0).abs() < 1e-12, "expected z=5, got {}", p.y);
+    }
+
+    #[test]
+    fn test_get_axis_aligned_projection_negative_z() {
+        // Normal primarily in -Z: row0 should be flipped
+        let proj = get_axis_aligned_projection(Vec3::new(0.0, 0.0, -1.0));
+        let v = Vec3::new(3.0, 4.0, 5.0);
+        let p = proj.apply(v);
+        // Flipped first row: x → -x
+        assert!((p.x + 3.0).abs() < 1e-12, "expected -x=-3, got {}", p.x);
+        assert!((p.y - 4.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_set_normals_tetrahedron() {
+        let mut m = ManifoldImpl::tetrahedron(&Mat3x4::identity());
+        set_normals_and_coplanar(&mut m);
+        // Every face normal should be unit length
+        for n in &m.face_normal {
+            let len = length2(*n).sqrt();
+            assert!(
+                (len - 1.0).abs() < 1e-10,
+                "face normal not unit: len={}",
+                len
+            );
+        }
+        // Every vert normal should be nonzero (tetrahedron has no degenerate verts)
+        for n in &m.vert_normal {
+            let len = length2(*n).sqrt();
+            assert!(len > 0.0, "vert normal is zero");
+        }
+    }
+
+    #[test]
+    fn test_set_normals_cube() {
+        let mut m = ManifoldImpl::cube(&Mat3x4::identity());
+        set_normals_and_coplanar(&mut m);
+        assert_eq!(m.face_normal.len(), m.num_tri());
+        // Coplanar IDs should be assigned
+        let any_coplanar_id_set = m.mesh_relation.tri_ref.iter().any(|r| r.coplanar_id >= 0);
+        assert!(any_coplanar_id_set, "no coplanar IDs were set");
     }
 }

@@ -127,6 +127,8 @@ impl EarClip {
     fn find_closer_bridge(&self, start: usize, edge: usize, edge_ring: usize) -> (usize, usize) {
         let start_pos = self.polygon[start].pos;
         let edge_right = self.polygon[edge].right;
+        // The four branches mirror the C++ connector choice one for one.
+        #[allow(clippy::if_same_then_else)]
         let mut connector = if self.polygon[edge].pos.x < start_pos.x {
             edge_right
         } else if self.polygon[edge_right].pos.x < start_pos.x {

@@ -479,7 +479,7 @@ mod tests {
     /// step (this is what catches an off-by-one in the budget derivation).
     #[test]
     fn i64_tier_boundary_sweep_matches_rational() {
-        let mut rng = Rng(0x64_64_64);
+        let mut rng = Rng(0x0064_6464);
         for k in 28..=32 {
             let scale = 2.0f64.powi(k);
             for _ in 0..400 {

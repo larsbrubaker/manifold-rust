@@ -431,7 +431,7 @@ impl QuickHull {
             let has_points = self.mesh.faces[i]
                 .points_on_positive_side
                 .as_ref()
-                .map_or(false, |v| !v.is_empty());
+                .is_some_and(|v| !v.is_empty());
             if has_points {
                 self.face_list.push_back(i);
                 self.mesh.faces[i].in_face_stack = true;
@@ -450,7 +450,7 @@ impl QuickHull {
             let has_points = self.mesh.faces[top_face_index]
                 .points_on_positive_side
                 .as_ref()
-                .map_or(false, |v| !v.is_empty());
+                .is_some_and(|v| !v.is_empty());
             if !has_points || self.mesh.faces[top_face_index].is_disabled() {
                 continue;
             }
@@ -645,7 +645,7 @@ impl QuickHull {
                 let has_points = self.mesh.faces[new_face_index]
                     .points_on_positive_side
                     .as_ref()
-                    .map_or(false, |v| !v.is_empty());
+                    .is_some_and(|v| !v.is_empty());
                 let in_stack = self.mesh.faces[new_face_index].in_face_stack;
                 if has_points && !in_stack {
                     self.face_list.push_back(new_face_index);

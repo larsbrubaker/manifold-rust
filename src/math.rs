@@ -433,7 +433,7 @@ pub fn acos(x: f64) -> f64 {
 /// Deterministic arcsine. Produces bit-identical results on all platforms.
 pub fn asin(x: f64) -> f64 {
     const HALF_PI: f64 = 1.57079632679489661923132169163975144;
-    if !x.is_finite() || x < -1.0 || x > 1.0 {
+    if !x.is_finite() || !(-1.0..=1.0).contains(&x) {
         return f64::NAN;
     }
     if x == 1.0 {
@@ -593,12 +593,11 @@ pub fn atan2(y: f64, x: f64) -> f64 {
         return if (m & 1) != 0 { -PI / 2.0 } else { PI / 2.0 };
     }
 
-    let z;
-    if (m & 2) != 0 && iy + (64 << 20) < ix {
-        z = 0.0; // |y/x| < 2^-64 and x < 0
+    let z = if (m & 2) != 0 && iy + (64 << 20) < ix {
+        0.0 // |y/x| < 2^-64 and x < 0
     } else {
-        z = atan((y / x).abs());
-    }
+        atan((y / x).abs())
+    };
 
     match m {
         0 => z,

@@ -72,9 +72,10 @@ pub fn extrude(
         let t10 = scale.x * -sin_phi; // col1.x
         let t11 = scale.y * cos_phi; // col1.y
 
-        let mut j: i32 = 0; // apex vertex index for cone top
         let mut poly_offset: i32 = 0; // offset within cross-section for this level
-        for (pi, poly) in cross_section.iter().enumerate() {
+
+        // j: the apex vertex index for the cone top, one per polygon.
+        for (j, poly) in (0i32..).zip(cross_section.iter()) {
             let poly_len = poly.len() as i32;
             for vert in 0..poly_len {
                 let offset = poly_offset + n_cross * i as i32;
@@ -82,7 +83,7 @@ pub fn extrude(
                 let last_vert = (if vert == 0 { poly_len } else { vert }) - 1 + offset;
                 if i == n_div as usize && is_cone {
                     // Connect to apex; apex index = n_cross * n_div + j
-                    let apex = n_cross * n_div as i32 + j;
+                    let apex = n_cross * n_div + j;
                     tri_verts.push(IVec3::new(apex, last_vert - n_cross, this_vert - n_cross));
                 } else {
                     let pos2 = poly[vert as usize];
@@ -97,9 +98,7 @@ pub fn extrude(
                     ));
                 }
             }
-            j += 1;
             poly_offset += poly_len;
-            let _ = pi; // suppress unused warning
         }
     }
 
@@ -120,9 +119,9 @@ pub fn extrude(
         // Top: forward winding
         if !is_cone {
             tri_verts.push(IVec3::new(
-                tri.x + n_cross * n_div as i32,
-                tri.y + n_cross * n_div as i32,
-                tri.z + n_cross * n_div as i32,
+                tri.x + n_cross * n_div,
+                tri.y + n_cross * n_div,
+                tri.z + n_cross * n_div,
             ));
         }
     }
@@ -250,11 +249,7 @@ pub fn revolve(
                 } else {
                     0
                 })
-                + if prev.x == 0.0 {
-                    -1
-                } else {
-                    -(n_slices as i32)
-                };
+                + if prev.x == 0.0 { -1 } else { -n_slices };
 
             for slice in 0..n_slices {
                 let phi = slice as f64 * d_phi;
@@ -267,23 +262,23 @@ pub fn revolve(
                     let last_slice = if slice == 0 { n_divisions } else { slice } - 1;
                     if curr.x > 0.0 {
                         tri_verts.push(IVec3::new(
-                            start_pos_index + slice as i32,
-                            start_pos_index + last_slice as i32,
+                            start_pos_index + slice,
+                            start_pos_index + last_slice,
                             if prev.x == 0.0 {
                                 prev_start_pos_index
                             } else {
-                                prev_start_pos_index + last_slice as i32
+                                prev_start_pos_index + last_slice
                             },
                         ));
                     }
                     if prev.x > 0.0 {
                         tri_verts.push(IVec3::new(
-                            prev_start_pos_index + last_slice as i32,
-                            prev_start_pos_index + slice as i32,
+                            prev_start_pos_index + last_slice,
+                            prev_start_pos_index + slice,
                             if curr.x == 0.0 {
                                 start_pos_index
                             } else {
-                                start_pos_index + slice as i32
+                                start_pos_index + slice
                             },
                         ));
                     }

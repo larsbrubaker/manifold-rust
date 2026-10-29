@@ -418,7 +418,7 @@ impl ManifoldImpl {
             let num_prop_vert = self.num_prop_vert();
             let added_verts = self.num_vert() - num_vert;
             let prop_offset = num_prop_vert as i32 - num_vert as i32;
-            let num_prop = self.num_prop as usize;
+            let num_prop = self.num_prop;
 
             // Allocate new property array
             let mut prop =

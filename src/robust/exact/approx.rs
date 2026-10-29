@@ -134,6 +134,7 @@ pub fn orient2d_a_exact(a: [f64; 2], b: [f64; 2], c: [f64; 2]) -> Option<Sign> {
 ///     ≤ (2γ₄ + ε + O(ε²))·alift·S < 9.1ε·alift·S;
 ///   * the two final additions add ≤ γ₂ ≈ 2ε times the sum of the three
 ///     terms' magnitudes, each of which is ≤ alift·S for its own group.
+///
 /// Total: |det − det*| < 11.2ε·permanent, permanent = Σ liftᵢ·Sᵢ. We use 16ε,
 /// which also covers the (relative-ε) error of the computed permanent itself.
 #[inline]
@@ -526,7 +527,7 @@ mod tests {
     /// a genuinely cocircular position on an integer-coordinate circle.
     #[test]
     fn exact_incircle_adversarial_near_cocircular() {
-        let mut rng = Lcg(0xC0FFEE_11);
+        let mut rng = Lcg(0xC0FF_EE11);
         for _ in 0..stress_n(5_000) {
             let pick = |rng: &mut Lcg| {
                 let i = ((rng.next_f64(1.0).abs() * 8.0) as usize).min(7);
@@ -600,9 +601,9 @@ mod tests {
             let ra = R2::from_vec2(a);
             let rb = R2::from_vec2(b);
             let ac = approx2(&c);
-            match orient2d_a([a.x, a.y], [b.x, b.y], ac) {
-                Some(s) => assert_eq!(s, orient2d_r(&ra, &rb, &c), "i={i}"),
-                None => {} // escalation is the correct answer here
+            // None (escalation) is also a correct answer here.
+            if let Some(s) = orient2d_a([a.x, a.y], [b.x, b.y], ac) {
+                assert_eq!(s, orient2d_r(&ra, &rb, &c), "i={i}");
             }
         }
     }

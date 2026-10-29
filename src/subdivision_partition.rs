@@ -407,7 +407,7 @@ fn partition_quad(
         if max_edge >= 0 {
             let mut edge = IVec4::default();
             for j in 0..4 {
-                edge[j] = ((j as i32 + max_edge) % 4) as i32;
+                edge[j] = (j as i32 + max_edge) % 4;
             }
             let middle = edge_added[max_edge as usize] / 2;
             tri_vert.push(IVec3::new(

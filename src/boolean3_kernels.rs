@@ -344,9 +344,7 @@ pub(super) fn kernel12(
                 xzy_lr1[k] = xzy_lr0[k];
                 xzy_lr1[k].y = xyzz.w;
                 if !forward {
-                    let tmp = xzy_lr0[k].y;
-                    xzy_lr0[k].y = xzy_lr1[k].y;
-                    xzy_lr1[k].y = tmp;
+                    std::mem::swap(&mut xzy_lr0[k].y, &mut xzy_lr1[k].y);
                 }
                 k += 1;
             }

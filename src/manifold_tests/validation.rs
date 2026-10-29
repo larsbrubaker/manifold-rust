@@ -490,7 +490,8 @@ fn test_cpp_warp2() {
             *v = Vec3::new(new_x, new_y, new_z);
         });
 
-    let simplified = Manifold::batch_boolean(&[shape.clone()], crate::types::OpType::Add);
+    let simplified =
+        Manifold::batch_boolean(std::slice::from_ref(&shape), crate::types::OpType::Add);
     assert!(
         (shape.volume() - simplified.volume()).abs() < 0.0001,
         "Warp2: volumes differ {} vs {}",

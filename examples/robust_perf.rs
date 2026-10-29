@@ -81,10 +81,12 @@ fn make_spiky_dodecahedron(spike_height: f64) -> Manifold {
             tri_verts.extend([spike_idx, face[j] as u32, face[(j + 1) % 5] as u32]);
         }
     }
-    let mut mesh = MeshGL::default();
-    mesh.num_prop = 3;
-    mesh.vert_properties = positions;
-    mesh.tri_verts = tri_verts;
+    let mesh = MeshGL {
+        num_prop: 3,
+        vert_properties: positions,
+        tri_verts,
+        ..Default::default()
+    };
     Manifold::from_mesh_gl(&mesh)
 }
 
@@ -135,10 +137,12 @@ fn import_stl(path: &str) -> Manifold {
             positions[i * 3 + k] = ((positions[i * 3 + k] as f64 - c[k]) * s) as f32;
         }
     }
-    let mut mesh = MeshGL::default();
-    mesh.num_prop = 3;
-    mesh.tri_verts = (0..nv as u32).collect();
-    mesh.vert_properties = positions;
+    let mut mesh = MeshGL {
+        num_prop: 3,
+        tri_verts: (0..nv as u32).collect(),
+        vert_properties: positions,
+        ..Default::default()
+    };
     mesh.merge();
     Manifold::from_mesh_gl_robust(&mesh)
 }

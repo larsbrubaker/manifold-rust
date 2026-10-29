@@ -123,7 +123,7 @@ impl Manifold {
             tri_run[new_tri] = current_run.max(0) as usize;
         }
         // Add runs for originals that contributed no tris
-        for (_id, rel) in &mesh_id_transform {
+        for rel in mesh_id_transform.values() {
             out.run_index.push(I::from_usize(3 * num_tri));
             out.run_original_id.push(rel.original_id.max(0) as u32);
             out.run_flags.push(run_flags_for(rel));

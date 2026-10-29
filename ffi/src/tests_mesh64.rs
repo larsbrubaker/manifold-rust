@@ -144,7 +144,7 @@ fn f64_coordinates_survive_the_ffi_boundary_losslessly() {
 
     let mesh = export64(cube);
     assert!(
-        mesh.vert_properties.iter().any(|&v| v == third),
+        mesh.vert_properties.contains(&third),
         "1/3 did not survive the f64 round trip bit-exactly"
     );
 

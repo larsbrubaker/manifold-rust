@@ -86,7 +86,7 @@ fn disjoint_cubes_have_three_cells() {
     let wind = all_windings(&graph, &complex, &p, &q);
     assert!(wind.known.iter().all(|&k| k), "seeding reaches every cell");
     assert!(
-        wind.w.iter().any(|&w| w == [0, 0]),
+        wind.w.contains(&[0, 0]),
         "the region outside both must be present"
     );
     assert_eq!(inside_winding(&graph, &complex, &wind, 0), vec![[1, 0]]);

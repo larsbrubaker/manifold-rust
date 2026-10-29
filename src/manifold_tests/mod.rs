@@ -459,8 +459,8 @@ fn read_test_obj(filename: &str) -> Manifold {
     let mut tri_verts: Vec<u32> = Vec::new();
     for line in contents.lines() {
         let line = line.trim();
-        if line.starts_with("v ") {
-            let parts: Vec<f64> = line[2..]
+        if let Some(rest) = line.strip_prefix("v ") {
+            let parts: Vec<f64> = rest
                 .split_whitespace()
                 .filter_map(|s| s.parse().ok())
                 .collect();
@@ -469,8 +469,8 @@ fn read_test_obj(filename: &str) -> Manifold {
                 verts.push(parts[1] as f32);
                 verts.push(parts[2] as f32);
             }
-        } else if line.starts_with("f ") {
-            let indices: Vec<u32> = line[2..]
+        } else if let Some(rest) = line.strip_prefix("f ") {
+            let indices: Vec<u32> = rest
                 .split_whitespace()
                 .filter_map(|s| s.split('/').next()?.parse::<u32>().ok().map(|i| i - 1))
                 .collect();

@@ -363,7 +363,7 @@ fn cpp_partition<T, P: Fn(&T) -> bool>(v: &mut [T], pred: P) -> usize {
     }
 }
 
-fn pair_up<F: FnMut(Halfedge)>(edge_pos: &mut Vec<EdgePos>, mut f: F) {
+fn pair_up<F: FnMut(Halfedge)>(edge_pos: &mut [EdgePos], mut f: F) {
     assert!(
         edge_pos.len() % 2 == 0,
         "Non-manifold edge! Not an even number of points. Got {} points: starts={}, ends={}",
@@ -396,10 +396,10 @@ fn pair_up<F: FnMut(Halfedge)>(edge_pos: &mut Vec<EdgePos>, mut f: F) {
 
 pub(super) fn append_partial_edges(
     out_r: &mut ManifoldImpl,
-    whole_halfedge_p: &mut Vec<bool>,
-    face_ptr_r: &mut Vec<i32>,
+    whole_halfedge_p: &mut [bool],
+    face_ptr_r: &mut [i32],
     edges_p: &EdgeGroups<i32>,
-    halfedge_ref: &mut Vec<TriRef>,
+    halfedge_ref: &mut [TriRef],
     in_p: &ManifoldImpl,
     i03: &[i32],
     vp2r: &[i32],
@@ -503,9 +503,9 @@ pub(super) fn append_partial_edges(
 
 pub(super) fn append_new_edges(
     out_r: &mut ManifoldImpl,
-    face_ptr_r: &mut Vec<i32>,
+    face_ptr_r: &mut [i32],
     edges_new: &EdgeGroups<(i32, i32)>,
-    halfedge_ref: &mut Vec<TriRef>,
+    halfedge_ref: &mut [TriRef],
     face_pq2r: &[i32],
     num_face_p: usize,
 ) {
@@ -586,8 +586,8 @@ pub(super) fn append_new_edges(
 
 pub(super) fn append_whole_edges(
     out_r: &mut ManifoldImpl,
-    face_ptr_r: &mut Vec<i32>,
-    halfedge_ref: &mut Vec<TriRef>,
+    face_ptr_r: &mut [i32],
+    halfedge_ref: &mut [TriRef],
     in_p: &ManifoldImpl,
     whole_halfedge_p: &[bool],
     i03: &[i32],

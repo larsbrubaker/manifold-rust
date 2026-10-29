@@ -95,7 +95,7 @@ fn test_cpp_cross_section_hull_error() {
     };
     let rr = rounded_rectangle(51.0, 36.0, 9.0, 36);
     assert!(
-        (rr.area() - 1765.179_037_5).abs() < 1.0,
+        (rr.area() - 1765.1790375).abs() < 1.0,
         "HullError area={}",
         rr.area()
     );
@@ -132,7 +132,7 @@ fn test_cpp_cross_section_batch_boolean() {
 
     let add = CrossSection::batch_boolean(&sections, OpType::Add);
     assert!(
-        (add.area() - 16278.637_002).abs() < 1.0,
+        (add.area() - 16278.637002).abs() < 1.0,
         "BatchBoolean add area={}",
         add.area()
     );
@@ -145,7 +145,7 @@ fn test_cpp_cross_section_batch_boolean() {
 
     let subtract = CrossSection::batch_boolean(&sections, OpType::Subtract);
     assert!(
-        (subtract.area() - 7234.478_452).abs() < 1.0,
+        (subtract.area() - 7234.478452).abs() < 1.0,
         "BatchBoolean subtract area={}",
         subtract.area()
     );

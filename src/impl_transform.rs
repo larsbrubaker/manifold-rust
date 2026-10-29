@@ -144,7 +144,7 @@ impl ManifoldImpl {
         // costs microseconds; propagating a stale `false` costs correctness.
 
         // Update mesh transforms
-        for (_, rel) in result.mesh_relation.mesh_id_transform.iter_mut() {
+        for rel in result.mesh_relation.mesh_id_transform.values_mut() {
             // rel.transform = t * Mat4(rel.transform) — combine transforms
             rel.transform = mat3x4_mul_mat3x4(t, &rel.transform);
         }

@@ -68,8 +68,7 @@ fn cube_stl() -> MeshGL {
         }
     }
 
-    cube.run_original_id
-        .push(crate::impl_mesh::reserve_ids(1) as u32);
+    cube.run_original_id.push(crate::impl_mesh::reserve_ids(1));
     cube
 }
 
@@ -90,8 +89,7 @@ pub(super) fn cube_uv() -> MeshGL {
     ];
     mgl.merge_from_vert = vec![8, 12, 13, 9, 10, 11];
     mgl.merge_to_vert = vec![4, 4, 5, 6, 6, 7];
-    mgl.run_original_id
-        .push(crate::impl_mesh::reserve_ids(1) as u32);
+    mgl.run_original_id.push(crate::impl_mesh::reserve_ids(1));
     mgl
 }
 

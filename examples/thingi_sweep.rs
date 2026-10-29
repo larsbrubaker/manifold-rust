@@ -194,10 +194,12 @@ fn import_stl_bytes(data: &[u8]) -> Manifold {
             positions[i * 3 + k] = ((positions[i * 3 + k] as f64 - c[k]) * s) as f32;
         }
     }
-    let mut mesh = MeshGL::default();
-    mesh.num_prop = 3;
-    mesh.tri_verts = (0..nv as u32).collect();
-    mesh.vert_properties = positions;
+    let mut mesh = MeshGL {
+        num_prop: 3,
+        tri_verts: (0..nv as u32).collect(),
+        vert_properties: positions,
+        ..Default::default()
+    };
     mesh.merge();
     Manifold::from_mesh_gl_robust(&mesh)
 }
@@ -448,7 +450,7 @@ fn main() {
         .iter()
         .enumerate()
         .filter(|(idx, _)| *idx >= args.skip)
-        .filter(|(_, (id, _))| args.ids.as_ref().is_none_or(|ids| ids.contains(id)))
+        .filter(|(_, (id, _))| args.ids.as_ref().map_or(true, |ids| ids.contains(id)))
         .take(args.limit)
         .map(|(_, (id, p))| (*id, p.clone()))
         .collect();

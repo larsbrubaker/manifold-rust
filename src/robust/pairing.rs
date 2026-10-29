@@ -139,9 +139,7 @@ pub fn plan_vertex_splits(tris: &[[u32; 3]], vt: VertTables) -> Option<SplitPlan
     const MAX_ATTEMPTS: usize = 4;
     let mut budget = MAX_ATTEMPTS;
     loop {
-        let Some(a) = attempt(tris, &base, &fans, vt, &mut budget) else {
-            return None;
-        };
+        let a = attempt(tris, &base, &fans, vt, &mut budget)?;
         if a.separated.iter().all(|&s| s) {
             return settle(tris, &base, &mut fans, vt, &mut budget, a);
         }

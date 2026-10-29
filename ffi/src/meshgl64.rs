@@ -114,13 +114,13 @@ unsafe fn from_mesh64_impl(
             set_last_error(format!("manifold_rs_from_mesh64: num_prop {num_prop} < 3"));
             return ptr::null_mut();
         }
-        if vert_properties_len % num_prop as usize != 0 {
+        if !vert_properties_len.is_multiple_of(num_prop as usize) {
             set_last_error(format!(
                 "manifold_rs_from_mesh64: vert_properties_len {vert_properties_len} is not a multiple of num_prop {num_prop}"
             ));
             return ptr::null_mut();
         }
-        if tri_verts_len % 3 != 0 {
+        if !tri_verts_len.is_multiple_of(3) {
             set_last_error(format!(
                 "manifold_rs_from_mesh64: tri_verts_len {tri_verts_len} is not a multiple of 3"
             ));

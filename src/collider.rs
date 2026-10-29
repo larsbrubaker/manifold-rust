@@ -125,13 +125,8 @@ impl Collider {
         // RangeEnd: find the other end of the range for internal node i
         let range_end = |i: i32| -> i32 {
             let dir_val = prefix_length(i, i + 1) - prefix_length(i, i - 1);
-            let dir = if dir_val > 0 {
-                1i32
-            } else if dir_val < 0 {
-                -1i32
-            } else {
-                -1i32
-            };
+            // A tie counts as -1, where the C++ sign would give 0.
+            let dir = if dir_val > 0 { 1i32 } else { -1i32 };
             let common_prefix = prefix_length(i, i - dir);
             let mut max_length = K_INITIAL_LENGTH;
             while prefix_length(i, i + dir * max_length) > common_prefix {

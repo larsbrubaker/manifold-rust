@@ -42,10 +42,12 @@ fn import(path: &str) -> Manifold {
             positions[i * 3 + k] = ((positions[i * 3 + k] as f64 - c[k]) * s) as f32;
         }
     }
-    let mut mesh = MeshGL::default();
-    mesh.num_prop = 3;
-    mesh.tri_verts = (0..nv as u32).collect();
-    mesh.vert_properties = positions;
+    let mut mesh = MeshGL {
+        num_prop: 3,
+        tri_verts: (0..nv as u32).collect(),
+        vert_properties: positions,
+        ..Default::default()
+    };
     mesh.merge();
     Manifold::from_mesh_gl_robust(&mesh)
 }
@@ -144,9 +146,11 @@ fn main() {
                 tri_verts.push(id);
             }
         }
-        let mut mesh = MeshGL64::default();
-        mesh.num_prop = 3;
-        mesh.vert_properties = Vec::with_capacity(3 * vert_order.len());
+        let mut mesh = MeshGL64 {
+            num_prop: 3,
+            vert_properties: Vec::with_capacity(3 * vert_order.len()),
+            ..Default::default()
+        };
         for vid in &vert_order {
             let p = graph.verts_f64[*vid as usize];
             mesh.vert_properties.extend([p.x, p.y, p.z]);

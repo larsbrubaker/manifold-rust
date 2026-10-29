@@ -81,10 +81,12 @@ impl ImportedMesh {
     /// geometry is closed and orientable.
     #[wasm_bindgen(constructor)]
     pub fn new(positions: &[f32], indices: &[u32]) -> ImportedMesh {
-        let mut mesh = MeshGL::default();
-        mesh.num_prop = 3;
-        mesh.vert_properties = positions.to_vec();
-        mesh.tri_verts = indices.to_vec();
+        let mut mesh = MeshGL {
+            num_prop: 3,
+            vert_properties: positions.to_vec(),
+            tri_verts: indices.to_vec(),
+            ..Default::default()
+        };
         mesh.merge();
         ImportedMesh {
             manifold: Manifold::from_mesh_gl_robust(&mesh),

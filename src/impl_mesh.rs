@@ -153,11 +153,10 @@ impl ManifoldImpl {
     }
 
     pub fn num_prop_vert(&self) -> usize {
-        if self.num_prop == 0 {
-            self.num_vert()
-        } else {
-            self.properties.len() / self.num_prop
-        }
+        self.properties
+            .len()
+            .checked_div(self.num_prop)
+            .unwrap_or_else(|| self.num_vert())
     }
 
     pub fn is_empty(&self) -> bool {
@@ -548,14 +547,13 @@ impl ManifoldImpl {
         if num_mesh_ids == 0 {
             return;
         }
-        let mut next_mesh_id = reserve_ids(num_mesh_ids) as i32;
+        let first_mesh_id = reserve_ids(num_mesh_ids) as i32;
         let mut old2new: HashMap<i32, i32> = HashMap::new();
-        for (old_id, relation) in old_transforms {
+        for (next_mesh_id, (old_id, relation)) in (first_mesh_id..).zip(old_transforms) {
             old2new.insert(old_id, next_mesh_id);
             self.mesh_relation
                 .mesh_id_transform
                 .insert(next_mesh_id, relation);
-            next_mesh_id += 1;
         }
 
         // Update all triRef.meshID

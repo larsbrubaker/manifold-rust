@@ -590,9 +590,8 @@ pub fn build(
             // Approx filter next: almost every remaining point is certifiably
             // off the segment's line; only near-collinear candidates pay for
             // Int.
-            match orient2d_a(apts[seg.a], apts[seg.b], apts[idx]) {
-                Some(_) => continue, // certified nonzero → not collinear
-                None => {}
+            if orient2d_a(apts[seg.a], apts[seg.b], apts[idx]).is_some() {
+                continue; // certified nonzero → not collinear
             }
             if orient2d_h(ha, hb, hp) != Sign::Zero {
                 continue;

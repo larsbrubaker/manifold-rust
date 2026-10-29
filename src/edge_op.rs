@@ -38,7 +38,7 @@ fn is_01_longest(v0: Vec2, v1: Vec2, v2: Vec2) -> bool {
 // -----------------------------------------------------------------------
 
 /// Pairs two halfedges bidirectionally.
-pub fn pair_up(halfedge: &mut Vec<Halfedge>, e0: usize, e1: usize) {
+pub fn pair_up(halfedge: &mut [Halfedge], e0: usize, e1: usize) {
     halfedge[e0].paired_halfedge = e1 as i32;
     halfedge[e1].paired_halfedge = e0 as i32;
 }
@@ -85,7 +85,7 @@ pub fn form_loop(mesh: &mut ManifoldImpl, current: usize, end: usize) {
 
 /// Collapse the two non-`edge`-index halfedges of a triangle by linking their
 /// paired partners directly. Marks the three halfedges as removed.
-pub fn collapse_tri(halfedge: &mut Vec<Halfedge>, tri_edge: [usize; 3]) {
+pub fn collapse_tri(halfedge: &mut [Halfedge], tri_edge: [usize; 3]) {
     if halfedge[tri_edge[1]].paired_halfedge == -1 {
         return;
     }
@@ -354,7 +354,7 @@ pub fn recursive_edge_swap(
     // the increment must persist into the caller's stack-drain loop so edges
     // visited before a collapse can be re-processed after it.
     tag: &mut i32,
-    visited: &mut Vec<i32>,
+    visited: &mut [i32],
     edge_swap_stack: &mut Vec<i32>,
     scratch: &mut Vec<usize>,
 ) {
@@ -502,7 +502,7 @@ pub fn recursive_edge_swap(
     } else if ccw(v[0], v[3], v[2], mesh.tolerance) <= 0
         || ccw(v[1], v[2], v[3], mesh.tolerance) <= 0
     {
-        return;
+        // The swap would fold a triangle over: leave the edge as it is.
     } else {
         // Normal swap path
         do_swap(mesh);
@@ -686,7 +686,7 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
             let curr_paired = mesh.halfedge[current].paired_halfedge as usize;
             mesh.halfedge.push(Halfedge {
                 start_vert: outside_vert,
-                end_vert: end_vert,
+                end_vert,
                 paired_halfedge: -1,
                 prop_vert: curr_prop_vert,
             });
@@ -706,7 +706,7 @@ pub fn dedupe_edge(mesh: &mut ManifoldImpl, edge: usize) {
             let outside_vert2 = mesh.halfedge[opposite].start_vert;
             mesh.halfedge.push(Halfedge {
                 start_vert: new_vert,
-                end_vert: end_vert,
+                end_vert,
                 paired_halfedge: -1,
                 prop_vert: end_prop,
             });

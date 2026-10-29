@@ -393,11 +393,11 @@ fn test_sphere_is_round() {
     // All vertices should be approximately at radius 1.0
     let mesh = m.get_mesh_gl(0);
     let num_prop = mesh.num_prop as usize;
-    let vert_count = if num_prop > 0 {
-        mesh.vert_properties.len() / num_prop
-    } else {
-        0
-    };
+    let vert_count = mesh
+        .vert_properties
+        .len()
+        .checked_div(num_prop)
+        .unwrap_or(0);
     for i in 0..vert_count {
         let x = mesh.vert_properties[i * num_prop] as f64;
         let y = mesh.vert_properties[i * num_prop + 1] as f64;
@@ -821,7 +821,7 @@ fn test_cpp_manifold_warp2() {
         },
     );
 
-    let simplified = Manifold::batch_boolean(&[shape.clone()], OpType::Add);
+    let simplified = Manifold::batch_boolean(std::slice::from_ref(&shape), OpType::Add);
 
     assert!(
         (shape.volume() - simplified.volume()).abs() < 0.0001,

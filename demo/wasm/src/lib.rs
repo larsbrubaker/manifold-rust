@@ -130,11 +130,7 @@ impl MeshData {
 pub(crate) fn mesh_data_from(m: &Manifold) -> MeshData {
     let gl = m.get_mesh_gl(-1);
     let num_prop = gl.num_prop as usize;
-    let vert_count = if num_prop > 0 {
-        gl.vert_properties.len() / num_prop
-    } else {
-        0
-    };
+    let vert_count = gl.vert_properties.len().checked_div(num_prop).unwrap_or(0);
     let tri_count = gl.tri_verts.len() / 3;
 
     // Extract positions
@@ -487,10 +483,12 @@ fn make_spiky_dodecahedron(spike_height: f64) -> Manifold {
         }
     }
 
-    let mut mesh = MeshGL::default();
-    mesh.num_prop = 3;
-    mesh.vert_properties = positions;
-    mesh.tri_verts = tri_verts;
+    let mesh = MeshGL {
+        num_prop: 3,
+        vert_properties: positions,
+        tri_verts,
+        ..Default::default()
+    };
     Manifold::from_mesh_gl(&mesh)
 }
 
@@ -530,6 +528,8 @@ pub fn boolean_gallery_mesh(
     )
 }
 
+// JavaScript calls this with each gallery setting as its own argument.
+#[allow(clippy::too_many_arguments)]
 #[wasm_bindgen]
 pub fn boolean_gallery_mesh_rotated(
     shape_a: i32,

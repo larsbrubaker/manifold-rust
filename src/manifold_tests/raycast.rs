@@ -196,7 +196,7 @@ fn test_cpp_ray_cast_silhouette_edge() {
     let cube = Manifold::cube(Vec3::splat(1.0), true);
     let hits = cube.ray_cast(Vec3::new(0.5, 0.0, -5.0), Vec3::new(0.5, 0.0, 5.0));
     assert!(
-        hits.len() == 0 || hits.len() == 2,
+        hits.is_empty() || hits.len() == 2,
         "expected 0 or 2 hits at silhouette edge, got {}",
         hits.len()
     );

@@ -241,6 +241,8 @@ impl Manifold {
                 .iter()
                 .map(|&v| v.to_u64() as usize)
                 .collect();
+            // The two branches mirror the C++ MeshGL constructor's.
+            #[allow(clippy::if_same_then_else)]
             if ri.len() == mesh.run_original_id.len() {
                 ri.push(3 * num_tri);
             } else if ri.len() == 1 {
@@ -515,7 +517,7 @@ impl Manifold {
         };
         let mut epsilon: Option<f64> = None;
         for line in source.lines() {
-            let trimmed = line.trim_end_matches(|c: char| c == '\r' || c == '\n');
+            let trimmed = line.trim_end_matches(['\r', '\n']);
             if let Some(rest) = trimmed.strip_prefix("# tolerance = ") {
                 if let Ok(v) = rest.trim().parse::<f64>() {
                     mesh.tolerance = v;

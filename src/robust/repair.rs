@@ -417,11 +417,7 @@ pub fn apply_flips(imp: &mut ManifoldImpl, flip: &[bool]) {
         if !flip[t] {
             continue;
         }
-        let (e0, e1, e2) = (
-            old[3 * t].clone(),
-            old[3 * t + 1].clone(),
-            old[3 * t + 2].clone(),
-        );
+        let (e0, e1, e2) = (old[3 * t], old[3 * t + 1], old[3 * t + 2]);
         imp.halfedge[3 * t] = Halfedge {
             start_vert: e0.start_vert,
             end_vert: e2.start_vert,

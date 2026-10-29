@@ -65,10 +65,12 @@ fn import_stl(path: &str) -> Manifold {
             positions[i * 3 + k] = ((positions[i * 3 + k] as f64 - c[k]) * s) as f32;
         }
     }
-    let mut mesh = MeshGL::default();
-    mesh.num_prop = 3;
-    mesh.tri_verts = (0..nv as u32).collect();
-    mesh.vert_properties = positions;
+    let mut mesh = MeshGL {
+        num_prop: 3,
+        tri_verts: (0..nv as u32).collect(),
+        vert_properties: positions,
+        ..Default::default()
+    };
     mesh.merge();
     Manifold::from_mesh_gl_robust(&mesh)
 }

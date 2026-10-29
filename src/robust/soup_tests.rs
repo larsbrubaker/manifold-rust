@@ -149,7 +149,7 @@ fn tiny_or_empty_meshes() {
         Manifold::from_mesh_gl_robust(&empty).status(),
         Error::NoError
     );
-    let two_tris = soup_mesh_gl(&cube_tris([0.0; 3], [1.0; 3])[..2].to_vec());
+    let two_tris = soup_mesh_gl(&cube_tris([0.0; 3], [1.0; 3])[..2]);
     assert_eq!(
         Manifold::from_mesh_gl_robust(&two_tris).status(),
         Error::NotClosed

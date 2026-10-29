@@ -214,7 +214,7 @@ fn rat_to_f64_matches_the_backend_oracle() {
     // Random rationals with multi-word numerators and denominators, scaled
     // across the whole exponent range so subnormal, normal and overflow
     // rounding all get exercised.
-    let mut rng = Lcg::new(0xC0FFEE_1234_5678);
+    let mut rng = Lcg::new(0x00C0_FFEE_1234_5678);
     let big = |rng: &mut Lcg, words: usize| -> Int {
         let mut v = Int::from(0u32);
         for _ in 0..words {
@@ -363,7 +363,7 @@ fn homogeneous_translation_rounds_identically_to_rational_subtraction() {
     use super::predicates::homog2_of;
     use super::rational::int_ratio_to_f64;
 
-    let mut rng = Lcg::new(0xA11CE_777);
+    let mut rng = Lcg::new(0xA11C_E777);
     let coord = |rng: &mut Lcg| -> super::backend::Rational {
         // A mix of plain f64 coordinates (exact dyadics, like mesh vertices)
         // and constructed fractions with large numerators and denominators,

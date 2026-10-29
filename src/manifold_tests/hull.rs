@@ -276,7 +276,7 @@ fn test_cpp_hull_menger_sponge() {
 #[ignore = "Slow: 1500-segment sphere hull"]
 fn test_cpp_hull_sphere() {
     let sphere = Manifold::sphere(1.0, 1500).translate(Vec3::new(0.5, 0.5, 0.5));
-    let hull = Manifold::hull_manifolds(&[sphere.clone()]);
+    let hull = Manifold::hull_manifolds(std::slice::from_ref(&sphere));
     assert_eq!(hull.num_tri(), sphere.num_tri());
     assert!(
         (hull.volume() - sphere.volume()).abs() < 1e-4,

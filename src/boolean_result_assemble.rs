@@ -645,7 +645,7 @@ pub fn boolean_result_with_token_and_stage(
     }
 
     // Simplify topology
-    simplify_topology(&mut out_r, (n_pv + n_qv) as i32);
+    simplify_topology(&mut out_r, n_pv + n_qv);
     out_r.remove_unreferenced_verts();
     crate::timing::print("Simplification", t);
     report_stage(stage, stage_marks::AFTER_SIMPLIFY);

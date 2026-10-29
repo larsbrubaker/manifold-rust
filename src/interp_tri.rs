@@ -359,7 +359,7 @@ pub fn interp_tri(vert_pos: &mut [Vec3], vert_bary: &[Barycentric], old: &Manifo
 
             for i in 0..3 {
                 let j = next3(i as i32) as usize;
-                let k = ((i + 2) % 3) as usize; // Prev3(i)
+                let k = (i + 2) % 3; // Prev3(i)
                 let x = uvw[k] / (1.0 - uvw[i]);
 
                 let bez = bezier2bezier(
