@@ -15,8 +15,10 @@ concrete, well-specified plan step at a time from the orchestrator.
   completed without touching files outside those boundaries, stop and report
   that instead of proceeding.
 - Follow the project's CLAUDE.md rules: no stubs or placeholder
-  implementations, exact behavioral matching for ported code, files under
-  800 lines, test-first for bug fixes.
+  implementations, accuracy and utility over C++ parity (the port's own test
+  suite is the bar, and a change that moves shipped output says so at the
+  code and in the commit, for manifold-sharp), files under 800 lines,
+  test-first for bug fixes.
 - Run the tests relevant to your change (e.g. `cargo test --release --lib
   <filter>`) and make them pass before reporting.
 - If the step requires an architectural decision that the plan does not

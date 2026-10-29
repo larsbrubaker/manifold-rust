@@ -3,7 +3,7 @@
 // tris) under a counting global allocator. With MANIFOLD_TIMING set, each
 // pipeline stage line also reports current heap and that stage's peak, via the
 // timing::set_mem_hook bridge. Used to chase the peak-memory gap vs the C++
-// reference (see PORTING_PLAN.md "Performance vs C++").
+// reference (see PORTING_PLAN.md "Performance open work").
 //
 // Run with: MANIFOLD_TIMING=1 cargo run --release --example mem_profile [round]
 

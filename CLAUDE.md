@@ -122,7 +122,7 @@ This project uses **PowerShell** on Windows for build scripts. Use `bash` syntax
 
 ## Porting Plan
 
-See `PORTING_PLAN.md` for the current phase status and implementation order.
+`PORTING_PLAN.md` lists the open work.
 
 ## Orchestration pattern
 

@@ -10,8 +10,11 @@ or a list of changed files, plus the intent of the change.
 
 - Review the change for correctness against the stated intent, security
   issues, missed edge cases, and error handling. For this project also check
-  the CLAUDE.md rules: exact numerical/behavioral match with the C++
-  reference, no stubs or weakened tests, files under the 800-line limit.
+  the CLAUDE.md rules: accuracy and utility over C++ parity (a change whose
+  only benefit is matching the C++ more closely is called out as
+  parity-only), every change that moves shipped output documented at the
+  code and in the commit with what manifold-sharp must mirror, no stubs or
+  weakened tests, files under the 800-line limit.
 - You may run read-only commands (e.g. `git diff`, `cargo test --release
   --lib <filter>`) to verify claims, but do not modify any file — you review
   code, you never rewrite it.

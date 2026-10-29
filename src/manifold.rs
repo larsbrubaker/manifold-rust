@@ -249,7 +249,7 @@ impl Manifold {
     /// axis matrices composed `rZ*rY*rX`. Quaternions (sin/cos of half-angles in
     /// radians) differ from this by ~1 ULP, which is enough to flip
     /// symbolic-perturbation ties in the boolean kernel on almost-coplanar
-    /// inputs (see PORTING_PLAN.md, `almost_coplanar`).
+    /// inputs (`test_cpp_almost_coplanar` pins this).
     pub fn rotate(&self, x_degrees: f64, y_degrees: f64, z_degrees: f64) -> Self {
         use crate::types::{cosd, sind};
         let (sx, cx) = (sind(x_degrees), cosd(x_degrees));
