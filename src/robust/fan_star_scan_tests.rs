@@ -81,24 +81,7 @@ fn measure_fan_capped_cylinder_scan() {
         );
         // The broad phase alone: every box pair a morton-ordered tree over
         // the triangles lists, as the scan's rows walk them.
-        let mesh = fan_capped_cylinder(sides, 1);
-        let p = |k: u64| {
-            let k = 3 * k as usize;
-            crate::linalg::Vec3::new(
-                mesh.vert_properties[k],
-                mesh.vert_properties[k + 1],
-                mesh.vert_properties[k + 2],
-            )
-        };
-        let tris: Vec<[crate::linalg::Vec3; 3]> = mesh
-            .tri_verts
-            .chunks(3)
-            .map(|t| [p(t[0]), p(t[1]), p(t[2])])
-            .collect();
-        let boxes: Vec<crate::types::Box> = tris
-            .iter()
-            .map(super::super::intersection_graph::tri_box)
-            .collect();
+        let (tris, boxes, live) = mesh_soup(&fan_capped_cylinder(sides, 1));
         let scene = boxes
             .iter()
             .fold(crate::types::Box::new(), |acc, b| acc.union_box(b));
@@ -111,10 +94,6 @@ fn measure_fan_capped_cylinder_scan() {
                 .map(|&i| crate::sort::morton_code(boxes[i].center(), &scene))
                 .collect(),
         );
-        let live: Vec<bool> = tris
-            .iter()
-            .map(|t| !super::super::intersection_graph::is_degenerate(t))
-            .collect();
         let t = Instant::now();
         let stars = super::super::fan_star::flat_stars(&tris, &live);
         eprintln!(
@@ -126,6 +105,11 @@ fn measure_fan_capped_cylinder_scan() {
                 super::scan_triangles(&tris, None, None);
                 t.elapsed().as_secs_f64() * 1000.0
             }
+        );
+        eprintln!(
+            "sides {sides}: the flat-star walk lists {} pairs for {} triangles",
+            super::super::fan_star_scan::listed_pairs(&boxes, &live, &stars),
+            tris.len()
         );
         if sides > 4_000 {
             // Listing this one's pairs takes about a minute even optimized.
@@ -145,6 +129,26 @@ fn measure_fan_capped_cylinder_scan() {
             t.elapsed().as_secs_f64() * 1000.0
         );
     }
+}
+
+/// Measurement only: what looking for flat stars adds to the scan of a
+/// mesh that has none (a fine sphere, every vertex of degree six or so).
+#[test]
+#[ignore]
+fn measure_flat_star_search_on_a_sphere() {
+    let sphere = Manifold::sphere(10.0, 640);
+    let (tris, _, live) = mesh_soup(&sphere.get_mesh_gl64(-1));
+    let t = Instant::now();
+    let stars = super::super::fan_star::flat_stars(&tris, &live);
+    let search = t.elapsed().as_secs_f64() * 1000.0;
+    let t = Instant::now();
+    let verdict = super::scan_triangles(&tris, None, None);
+    eprintln!(
+        "sphere: {} triangles, {} flat stars found in {search:.1} ms; scan {:.1} ms ({verdict:?})",
+        tris.len(),
+        stars.owned.len(),
+        t.elapsed().as_secs_f64() * 1000.0
+    );
 }
 
 type Tri = [crate::linalg::Vec3; 3];
@@ -175,13 +179,38 @@ fn scan(tris: &[Tri]) -> bool {
     super::scan_triangles(tris, None, None).expect("not cancelled")
 }
 
-/// Whether the flat-star path really runs on `tris` (anti-vacuity).
-fn has_a_flat_star(tris: &[Tri]) -> bool {
+/// The settled stars of `tris`: each star's owned triangles.
+fn settled_stars(tris: &[Tri]) -> Vec<Vec<usize>> {
     use super::super::intersection_graph::is_degenerate;
     let live: Vec<bool> = tris.iter().map(|t| !is_degenerate(t)).collect();
-    !super::super::fan_star::flat_stars(tris, &live)
-        .owned
-        .is_empty()
+    super::super::fan_star::flat_stars(tris, &live).owned
+}
+
+/// Whether the flat-star path really runs on `tris` (anti-vacuity).
+fn has_a_flat_star(tris: &[Tri]) -> bool {
+    !settled_stars(tris).is_empty()
+}
+
+/// The triangles of `mesh` as the scan reads them, with their boxes and
+/// which ones are live (not degenerate).
+fn mesh_soup(mesh: &MeshGL64) -> (Vec<Tri>, Vec<crate::types::Box>, Vec<bool>) {
+    use super::super::intersection_graph::{is_degenerate, tri_box};
+    let p = |k: u64| {
+        let k = 3 * k as usize;
+        v(
+            mesh.vert_properties[k],
+            mesh.vert_properties[k + 1],
+            mesh.vert_properties[k + 2],
+        )
+    };
+    let tris: Vec<Tri> = mesh
+        .tri_verts
+        .chunks(3)
+        .map(|t| [p(t[0]), p(t[1]), p(t[2])])
+        .collect();
+    let boxes = tris.iter().map(tri_box).collect();
+    let live = tris.iter().map(|t| !is_degenerate(t)).collect();
+    (tris, boxes, live)
 }
 
 /// `n` triangles round the origin in the z = 0 plane, the k-th spanning ring
@@ -279,14 +308,19 @@ fn triangles_outside_a_settled_star_are_still_tested_against_it() {
     touching.push([v(2.0, 1.0, 0.0), v(1.0, 1.0, -5.0), v(3.0, 1.5, -5.0)]);
     assert!(has_a_flat_star(&touching));
     assert_verdict("corner resting on the cap", &touching, false);
-    // A second flat star over the first, sharing its centre, rotated half a
-    // step: settled each alone, but their triangles overlap one another.
+    // A second fan over the first, rotated half a step round the same
+    // centre: the two make one 600-triangle star whose wedges overlap, so it
+    // is never settled and the pair scan finds the overlap.
     let mut doubled = base.clone();
     let half_step = |j: usize| {
         let a = std::f64::consts::TAU * (j as f64 + 0.5) / 300.0;
         v(10.0 * a.cos(), 10.0 * a.sin(), 0.0)
     };
     doubled.extend((0..300).map(|k| [v(0.0, 0.0, 0.0), half_step(k), half_step(k + 1)]));
+    assert!(
+        !has_a_flat_star(&doubled),
+        "one shared centre makes one overlapping star"
+    );
     assert_verdict("two fans over each other", &doubled, true);
     // Two disjoint fans side by side in one plane.
     let mut beside = base;
@@ -305,13 +339,103 @@ fn a_fan_capped_cylinder_is_clean_and_quick() {
     assert!(!small.has_self_intersections(), "300 sides");
     // Pair-by-pair this lists about 450 million box pairs (tens of seconds
     // even in an optimized parallel build); settled as stars it is a sort.
-    // The bound is generous for a debug build on a loaded machine and still
-    // far below what the pair walk costs.
-    let big = import(&fan_capped_cylinder(30_000, 1));
-    let t = Instant::now();
-    assert!(!big.has_self_intersections(), "30,000 sides");
-    let secs = t.elapsed().as_secs_f64();
-    assert!(secs < 10.0, "the 30,000-sided scan took {secs:.1} s");
+    let mesh = fan_capped_cylinder(30_000, 1);
+    assert!(!import(&mesh).has_self_intersections(), "30,000 sides");
+    // The walk's cost counted in pairs, not seconds: both caps settled whole,
+    // and every row listing a few partners, not its cap's 30,000.
+    let (tris, boxes, live) = mesh_soup(&mesh);
+    let stars = super::super::fan_star::flat_stars(&tris, &live);
+    let sizes: Vec<usize> = stars.owned.iter().map(Vec::len).collect();
+    assert_eq!(sizes, [30_000, 30_000], "both caps settled whole");
+    let listed = super::super::fan_star_scan::listed_pairs(&boxes, &live, &stars);
+    assert!(
+        listed <= LISTED_PAIRS_PER_TRIANGLE * tris.len(),
+        "the walk listed {listed} pairs for {} triangles",
+        tris.len()
+    );
+}
+
+/// The most pairs per triangle the flat-star walk may list on a
+/// fan-capped cylinder. The 30,000-sided one lists 510,020 pairs for
+/// 120,000 triangles (4.25 each, mostly the walls' neighbours); listing a
+/// cap pair by pair would be about 3,750 each.
+const LISTED_PAIRS_PER_TRIANGLE: usize = 5;
+
+#[test]
+fn overlapping_settled_stars_are_tested_against_each_other() {
+    // Two disjoint fans, each settled, the second's centre inside the first.
+    let mut tris = fan(300, 300, 1, 1, |_| 1.0);
+    tris.extend(
+        fan(300, 300, 1, 1, |_| 1.0)
+            .iter()
+            .map(|t| t.map(|p| p + v(5.0, 0.0, 0.0))),
+    );
+    assert_eq!(settled_stars(&tris).len(), 2, "both fans settled");
+    assert_verdict("two settled fans overlapping", &tris, true);
+}
+
+#[test]
+fn a_triangle_in_two_stars_is_owned_once_and_tested_against_the_other() {
+    // Fan A round the origin with a gap about +x, fan B the same fan turned
+    // half a turn about (12.5, 0, 0), so its gap faces A's; one triangle
+    // bridges the two centres through both gaps, a member of both stars.
+    let point = |j: usize| {
+        let a = std::f64::consts::TAU * j as f64 / 300.0;
+        v(10.0 * a.cos(), 10.0 * a.sin(), 0.0)
+    };
+    let fan_a: Vec<Tri> = (5..295)
+        .map(|k| [v(0.0, 0.0, 0.0), point(k), point(k + 1)])
+        .collect();
+    let turn = |p: crate::linalg::Vec3| v(25.0 - p.x, -p.y, p.z);
+    let mut tris = fan_a.clone();
+    tris.extend(fan_a.iter().map(|t| t.map(turn)));
+    tris.push([v(0.0, 0.0, 0.0), v(25.0, 0.0, 0.0), v(12.5, 1.0, 0.0)]);
+    let stars = settled_stars(&tris);
+    assert_eq!(stars.len(), 2, "both fans settled with the bridge");
+    let mut owned: Vec<usize> = stars.concat();
+    owned.sort_unstable();
+    assert_eq!(
+        owned,
+        (0..tris.len()).collect::<Vec<_>>(),
+        "every triangle owned exactly once"
+    );
+    assert_verdict("bridge between two fans", &tris, false);
+}
+
+/// A 16 by 16 grid of closed 64-triangle fans in staggered rows, placed so
+/// diagonal neighbours' boxes overlap while their discs stay apart.
+fn staggered_fan_grid() -> Vec<Vec<Tri>> {
+    let mut fans = Vec::new();
+    for row in 0..16 {
+        for col in 0..16 {
+            let x = 22.0 * col as f64 + if row % 2 == 1 { 11.0 } else { 0.0 };
+            let y = 18.0 * row as f64;
+            fans.push(
+                fan(64, 64, 1, 1, |_| 1.0)
+                    .iter()
+                    .map(|t| t.map(|p| p + v(x, y, 0.0)))
+                    .collect(),
+            );
+        }
+    }
+    fans
+}
+
+#[test]
+fn many_settled_stars_with_overlapping_boxes_keep_their_verdict() {
+    let fans = staggered_fan_grid();
+    let tris: Vec<Tri> = fans.concat();
+    assert_eq!(settled_stars(&tris).len(), 256, "every fan settled");
+    assert_verdict("staggered fan grid", &tris, false);
+    // One fan moved halfway onto its neighbour.
+    let mut moved = fans;
+    moved[1] = moved[0]
+        .iter()
+        .map(|t| t.map(|p| p + v(5.0, 0.0, 0.0)))
+        .collect();
+    let tris: Vec<Tri> = moved.concat();
+    assert_eq!(settled_stars(&tris).len(), 256, "every fan settled");
+    assert_verdict("one fan moved onto its neighbour", &tris, true);
 }
 
 /// A fan of `n` triangles in the tilted plane z = -(x + y), on integer
