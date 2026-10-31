@@ -239,6 +239,43 @@ pub fn has_self_intersections_with_token(
     }
 }
 
+/// Whether two triangles that share no vertex are proven apart before the
+/// full test: `t2` strictly on one side of `t1`'s plane by the float filter
+/// alone (no exact fallback), or else, when the filter cannot settle that
+/// or finds a corner on the plane (the pair lies in or near one plane),
+/// their projections strictly
+/// separated by an edge line (tri_tri.rs `coplanar_separated_2d`, the same
+/// predicate and axis `real_self_contact`'s coplanar path uses).
+///
+/// Sound because two triangles that meet share a point, and so does any
+/// projection of them; either proof leaves no contact, so
+/// `real_self_contact` would answer `None` and no verdict moves. The order
+/// keeps ordinary pairs cheap (three filtered signs, the test
+/// `real_self_contact` would start with anyway) and spends the projection
+/// test only where it pays: on exactly coplanar pairs every plane sign is
+/// zero, and in `real_self_contact` each would escalate to the exact
+/// `orient3d_i` before the coplanar path rejected the pair. A finely
+/// revolved part's flat annuli are nearly all such pairs.
+fn vertex_disjoint_apart(t1: [Vec3; 3], t2: [Vec3; 3]) -> bool {
+    use super::exact::approx::orient3d_a;
+    use super::exact::Sign;
+    let p = |v: Vec3| [v.x, v.y, v.z];
+    let side = |v: Vec3| orient3d_a(p(t1[0]), p(t1[1]), p(t1[2]), p(v));
+    let signs = [side(t2[0]), side(t2[1]), side(t2[2])];
+    if let [Some(a), Some(b), Some(c)] = signs {
+        if a != Sign::Zero && a == b && b == c {
+            return true;
+        }
+    }
+    if signs.iter().all(|s| s.is_some_and(|s| s != Sign::Zero)) {
+        // Decided, off the plane and not one-sided: `t2` crosses the
+        // plane, so the pair is not near-coplanar and the projection test
+        // is unlikely to help.
+        return false;
+    }
+    super::tri_tri::coplanar_separated_2d(t1, t2, super::tri_tri::f64_drop_axis(t1))
+}
+
 /// Do these two triangles of one mesh meet in anything beyond ordinary
 /// adjacency?
 ///
@@ -260,6 +297,9 @@ pub fn has_self_intersections_with_token(
 /// verdict. (manifold-sharp, its commit 1d9162c: on a 21.6k-triangle part it
 /// settles about 171k of the 209k vertex-neighbour pairs that would
 /// otherwise pay for the full test.)
+///
+/// First of all, a pair sharing no vertex that `vertex_disjoint_apart`
+/// proves apart is benign: no point in common means no contact of any kind.
 pub(super) fn genuine_contact(
     t1: [Vec3; 3],
     t2: [Vec3; 3],
@@ -272,11 +312,8 @@ pub(super) fn genuine_contact(
     if n_shared == 3 {
         return true;
     }
-    // Vertex-disjoint pairs whose shadows are strictly apart cannot touch
-    // (graph_self_cut.rs `apart_in_projection`): the coplanar slivers of a
-    // finely revolved part's flat faces are nearly all such pairs.
-    if n_shared == 0 && super::graph_self_cut::apart_in_projection(t1, t2) {
-        stats.apart_2d += 1;
+    if n_shared == 0 && vertex_disjoint_apart(t1, t2) {
+        stats.apart += 1;
         return false;
     }
     if n_shared == 1 {

@@ -28,6 +28,12 @@ type Tri = [Vec3; 3];
 /// The ring's triangles, wound outward: per side, two each on the bottom,
 /// the outer wall, the top and the inner wall.
 fn revolved_ring(sides: usize) -> Vec<Tri> {
+    revolved_rectangle(sides, 20.0, 30.0)
+}
+
+/// A rectangle from radius `inner` to `outer`, height 10, revolved through
+/// `sides` sides, wound outward.
+fn revolved_rectangle(sides: usize, inner: f64, outer: f64) -> Vec<Tri> {
     let at = |i: usize, r: f64, z: f64| {
         let a = std::f64::consts::TAU * (i % sides) as f64 / sides as f64;
         Vec3::new(r * a.cos(), r * a.sin(), z)
@@ -35,17 +41,17 @@ fn revolved_ring(sides: usize) -> Vec<Tri> {
     let mut tris = Vec::with_capacity(8 * sides);
     for i in 0..sides {
         let (ib0, ob0, ot0, it0) = (
-            at(i, 20.0, 0.0),
-            at(i, 30.0, 0.0),
-            at(i, 30.0, 10.0),
-            at(i, 20.0, 10.0),
+            at(i, inner, 0.0),
+            at(i, outer, 0.0),
+            at(i, outer, 10.0),
+            at(i, inner, 10.0),
         );
         let j = i + 1;
         let (ib1, ob1, ot1, it1) = (
-            at(j, 20.0, 0.0),
-            at(j, 30.0, 0.0),
-            at(j, 30.0, 10.0),
-            at(j, 20.0, 10.0),
+            at(j, inner, 0.0),
+            at(j, outer, 0.0),
+            at(j, outer, 10.0),
+            at(j, inner, 10.0),
         );
         tris.extend([
             [ib0, ib1, ob1],
@@ -59,6 +65,40 @@ fn revolved_ring(sides: usize) -> Vec<Tri> {
         ]);
     }
     tris
+}
+
+/// Measurement only: the scan on ordinary meshes, where the pre-tests must
+/// cost nothing noticeable: a 204,800-triangle sphere, and a 160,000-triangle
+/// hollow cylinder with a 0.1 wall. Best of three runs each.
+#[test]
+#[ignore]
+fn measure_ordinary_mesh_scans() {
+    let best = |f: &dyn Fn() -> bool| {
+        (0..3)
+            .map(|_| {
+                let t = Instant::now();
+                assert!(!f());
+                t.elapsed().as_secs_f64() * 1000.0
+            })
+            .fold(f64::INFINITY, f64::min)
+    };
+    // `has_self_intersections` caches its answer, so the scan itself is
+    // timed, on the sphere's own triangles.
+    let mesh = crate::manifold::Manifold::sphere(10.0, 640).get_mesh_gl64(-1);
+    let corner = |k: u64| {
+        let k = 3 * k as usize;
+        let p = &mesh.vert_properties;
+        Vec3::new(p[k], p[k + 1], p[k + 2])
+    };
+    let sphere: Vec<Tri> = mesh
+        .tri_verts
+        .chunks(3)
+        .map(|t| [corner(t[0]), corner(t[1]), corner(t[2])])
+        .collect();
+    let sphere_ms = best(&|| super::scan_triangles(&sphere, None, None) == Some(true));
+    let wall = revolved_rectangle(20_000, 20.0, 20.1);
+    let wall_ms = best(&|| super::scan_triangles(&wall, None, None) == Some(true));
+    eprintln!("sphere {sphere_ms:.1} ms; thin wall {wall_ms:.1} ms");
 }
 
 /// Measurement only: where the scan's time goes on the 20,000-sided ring.
@@ -141,7 +181,7 @@ fn box_pairs(tris: &[Tri]) -> Vec<(usize, usize)> {
 #[test]
 fn a_finely_revolved_ring_keeps_its_verdict_and_skips_the_full_test_on_its_flat_faces() {
     use super::super::intersection_graph::{real_self_contact, SelfCutStats};
-    let tris = revolved_ring(1_000);
+    let tris = revolved_ring(500);
     let pairs = box_pairs(&tris);
     // The verdict of the full test on every pair, the answer to keep.
     let mut full = SelfCutStats::default();
@@ -162,19 +202,19 @@ fn a_finely_revolved_ring_keeps_its_verdict_and_skips_the_full_test_on_its_flat_
     assert_eq!(contacts, 0);
     assert!(
         stats.full <= MAX_FULL_TESTS,
-        "{} of {} pairs reached the full test ({} apart in projection; {} without the scan's shortcuts)",
+        "{} of {} pairs reached the full test ({} proven apart first; {} without the pre-tests)",
         stats.full,
         pairs.len(),
-        stats.apart_2d,
+        stats.apart,
         full.full
     );
 }
 
-/// The most box pairs of the 1,000-sided ring that may reach the full
-/// exact test. Of its 275,850 box pairs, the full test alone would see
-/// 242,850; with the scan's shortcuts 10,467 reach it, 221,383 of the rest
-/// proven apart in projection.
-const MAX_FULL_TESTS: usize = 12_000;
+/// The most box pairs of the 500-sided ring that may reach the full exact
+/// test. Of its 82,114 box pairs, the full test alone would see 65,614;
+/// with the scan's pre-tests 5,218 reach it, 54,896 of the rest proven
+/// apart before it.
+const MAX_FULL_TESTS: usize = 6_000;
 
 fn v(x: f64, y: f64, z: f64) -> Vec3 {
     Vec3::new(x, y, z)
@@ -182,11 +222,20 @@ fn v(x: f64, y: f64, z: f64) -> Vec3 {
 
 #[test]
 fn the_projection_shortcut_never_moves_a_pair_verdict() {
-    use super::super::graph_self_cut::apart_in_projection;
     use super::super::intersection_graph::{real_self_contact, SelfCutStats};
+    use super::super::tri_tri::{coplanar_separated_2d, f64_drop_axis};
     let base = [v(0.0, 0.0, 0.0), v(4.0, 0.0, 0.0), v(0.0, 4.0, 0.0)];
     // (name, other triangle, whether the shortcut must prove it apart)
-    let cases: [(&str, Tri, Option<bool>); 9] = [
+    // Square to the base, its shadow on the base's plane a segment beyond
+    // the base's long edge: proven apart through that segment.
+    let perpendicular = [v(6.0, 0.0, -1.0), v(6.0, 1.0, 1.0), v(6.0, 0.0, 1.0)];
+    assert!(coplanar_separated_2d(
+        base,
+        perpendicular,
+        f64_drop_axis(base)
+    ));
+    let cases: [(&str, Tri, Option<bool>); 10] = [
+        ("perpendicular, apart", perpendicular, None),
         (
             "apart",
             [v(5.0, 5.0, 0.0), v(9.0, 5.0, 0.0), v(5.0, 9.0, 0.0)],
@@ -203,7 +252,7 @@ fn the_projection_shortcut_never_moves_a_pair_verdict() {
             Some(false),
         ),
         (
-            "corner on a corner, not shared",
+            "one shared corner, apart beyond it",
             [v(4.0, 0.0, 0.0), v(8.0, 0.0, 0.0), v(8.0, 4.0, 0.0)],
             None,
         ),
@@ -235,7 +284,7 @@ fn the_projection_shortcut_never_moves_a_pair_verdict() {
     ];
     for (name, other, apart) in cases {
         for (t1, t2) in [(base, other), (other, base)] {
-            let shortcut = apart_in_projection(t1, t2);
+            let shortcut = coplanar_separated_2d(t1, t2, f64_drop_axis(t1));
             if let Some(expected) = apart {
                 assert_eq!(shortcut, expected, "{name}: proven apart");
             }

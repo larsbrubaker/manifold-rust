@@ -381,7 +381,11 @@ fn all_same_strict(s: &[Sign; 3]) -> bool {
 /// projected triangles — strict 2D separation therefore proves 3D
 /// disjointness even when the projection degenerates the triangles. Signs
 /// come from the exact filtered orient2d, so a `true` answer is certain.
-fn coplanar_separated_2d(t1: [Vec3; 3], t2: [Vec3; 3], axis: usize) -> bool {
+///
+/// Also the self-intersection scan's pre-test for vertex-disjoint pairs
+/// near one plane (robust/soup.rs `genuine_contact`), so both paths share
+/// one predicate.
+pub(super) fn coplanar_separated_2d(t1: [Vec3; 3], t2: [Vec3; 3], axis: usize) -> bool {
     use super::exact::filtered::orient2d;
     // Same cyclic drop-axis convention as R3::project_drop.
     let proj = |v: Vec3| match axis {
@@ -409,18 +413,23 @@ fn coplanar_separated_2d(t1: [Vec3; 3], t2: [Vec3; 3], axis: usize) -> bool {
 /// Intersection of two coplanar triangles: Sutherland–Hodgman clip of t2
 /// against t1 in the exact 2D projection, classified by the dimension of the
 /// result (empty / point / segment / convex polygon).
+/// The coordinate `coplanar_separated_2d` drops for a pair seen from `t`:
+/// the largest component of `t`'s f64 normal (z, then y, on ties).
+pub(super) fn f64_drop_axis(t: [Vec3; 3]) -> usize {
+    let n = crate::linalg::cross(t[1] - t[0], t[2] - t[0]);
+    let (ax, ay, az) = (n.x.abs(), n.y.abs(), n.z.abs());
+    if az >= ax && az >= ay {
+        2
+    } else if ay >= ax {
+        1
+    } else {
+        0
+    }
+}
+
 fn coplanar_overlap(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
     {
-        let n = crate::linalg::cross(t1[1] - t1[0], t1[2] - t1[0]);
-        let (ax, ay, az) = (n.x.abs(), n.y.abs(), n.z.abs());
-        let axis = if az >= ax && az >= ay {
-            2
-        } else if ay >= ax {
-            1
-        } else {
-            0
-        };
-        if coplanar_separated_2d(t1, t2, axis) {
+        if coplanar_separated_2d(t1, t2, f64_drop_axis(t1)) {
             stats::COPLANAR_SAT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return TriTriIsect::None;
         }
