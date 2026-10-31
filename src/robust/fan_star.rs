@@ -83,7 +83,8 @@ pub(super) fn may_hold_a_star(tris: &[[Vec3; 3]], live: &[bool]) -> bool {
     }
     // At least one bucket per corner, so collisions stay rare and an
     // ordinary mesh passes; a power of two, so the top hash bits index it.
-    let bits = corners.next_power_of_two().trailing_zeros().max(1);
+    // At least 64 corners reach here, so `bits` is at least 6.
+    let bits = corners.next_power_of_two().trailing_zeros();
     let mut counts = vec![0u32; 1usize << bits];
     for (t, tri) in tris.iter().enumerate() {
         if !live[t] {

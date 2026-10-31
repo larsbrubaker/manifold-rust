@@ -209,3 +209,18 @@ pub(super) fn listed_pairs(boxes: &[Box], live: &[bool], stars: &FlatStars) -> u
     }
     count
 }
+
+/// How many stars the rows' boxes reach through the star tree, summed over
+/// every row: the walk's cross-star cost, which a loop over every star
+/// would make rows times stars.
+#[cfg(test)]
+pub(super) fn star_tree_hits(boxes: &[Box], live: &[bool], stars: &FlatStars) -> usize {
+    let walk = FlatStarWalk::new(boxes, live, stars);
+    let (mut cands, mut hit_stars, mut count) = (Vec::new(), Vec::new(), 0usize);
+    for i in 0..boxes.len() {
+        hit_stars.clear();
+        walk.row_any(i, &mut cands, &mut hit_stars, |_| false);
+        count += hit_stars.len();
+    }
+    count
+}

@@ -373,6 +373,11 @@ fn a_mesh_without_fans_skips_the_corner_grouping() {
     assert_eq!(stars.owned.len(), 1);
 }
 
+/// The most stars one row of the fan grid may reach through the star tree,
+/// on average. Measured: 21,964 for 16,384 triangles (1.34 each), the row's
+/// own star plus the diagonal neighbours its box overlaps.
+const STAR_TREE_HITS_PER_TRIANGLE: usize = 2;
+
 /// The most pairs per triangle the flat-star walk may list on a
 /// fan-capped cylinder. The 30,000-sided one lists 510,020 pairs for
 /// 120,000 triangles (4.25 each, mostly the walls' neighbours); listing a
@@ -393,7 +398,7 @@ fn overlapping_settled_stars_are_tested_against_each_other() {
 }
 
 #[test]
-fn a_triangle_in_two_stars_is_owned_once_and_tested_against_the_other() {
+fn a_triangle_in_two_stars_is_owned_once_and_keeps_its_verdict() {
     // Fan A round the origin with a gap about +x, fan B the same fan turned
     // half a turn about (12.5, 0, 0), so its gap faces A's; one triangle
     // bridges the two centres through both gaps, a member of both stars.
@@ -445,6 +450,20 @@ fn many_settled_stars_with_overlapping_boxes_keep_their_verdict() {
     let tris: Vec<Tri> = fans.concat();
     assert_eq!(settled_stars(&tris).len(), 256, "every fan settled");
     assert_verdict("staggered fan grid", &tris, false);
+    // Each row reaches its own star and its few diagonal neighbours, not
+    // all 256: a loop over every star would be 16,384 x 256 = 4,194,304.
+    let live = vec![true; tris.len()];
+    let stars = super::super::fan_star::flat_stars(&tris, &live);
+    let boxes: Vec<crate::types::Box> = tris
+        .iter()
+        .map(super::super::intersection_graph::tri_box)
+        .collect();
+    let hits = super::super::fan_star_scan::star_tree_hits(&boxes, &live, &stars);
+    assert!(
+        hits <= STAR_TREE_HITS_PER_TRIANGLE * tris.len(),
+        "the rows reached {hits} stars for {} triangles",
+        tris.len()
+    );
     // One fan moved halfway onto its neighbour.
     let mut moved = fans;
     moved[1] = moved[0]
