@@ -342,9 +342,19 @@ fn a_coplanar_overlap_at_subnormal_scale_is_still_found() {
     let t2 = [b / 8.0, c / 2.0, c / 8.0];
     assert!(full_verdict(t1, t2), "the full test finds the overlap");
     assert_eq!(super::scan_triangles(&[t1, t2], None, None), Some(true));
-    // Sharing the origin: the one-shared-vertex shortcuts must not call the
-    // pair a point contact either.
-    let t3 = [o, b / 2.0, c / 2.0];
-    assert!(full_verdict(t1, t3), "the full test finds the overlap");
-    assert_eq!(super::scan_triangles(&[t1, t3], None, None), Some(true));
+    // Sharing the origin, one wedge inside the other: the float filter
+    // without its underflow guard certified both of the small triangle's
+    // other corners strictly on one side of the large one's plane (a
+    // spurious, same sign for both), so the one-shared-vertex shortcut
+    // called the overlap a point contact.
+    let small = [o, b / 256.0, c / 256.0];
+    let large = [o, b * 4.0, c * 8.0];
+    assert!(
+        full_verdict(small, large),
+        "the full test finds the overlap"
+    );
+    assert_eq!(
+        super::scan_triangles(&[small, large], None, None),
+        Some(true)
+    );
 }

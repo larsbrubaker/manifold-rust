@@ -32,10 +32,16 @@ const EPS: f64 = f64::EPSILON * 0.5; // 2⁻⁵³
 /// not cover, and the bound itself can round to zero while an exactly zero
 /// determinant comes out as ±2⁻¹⁰⁷⁴ - a coplanar quadruple at subnormal
 /// scale would then be "certified" off its plane. So a bound below the
-/// normal range certifies nothing. A bound at or above it leaves slack of
-/// at least 2⁻¹⁰²³ over the relative error, far more than the few 2⁻¹⁰⁷⁵
-/// any underflowed intermediate adds. The guard only sends more cases to
-/// the exact predicates, so it can only change an answer that was wrong.
+/// normal range certifies nothing. The guard only sends more cases to the
+/// exact predicates, so it can only change an answer that was wrong.
+///
+/// Its scope is the case where the whole computation is at tiny scale.
+/// Known gaps it does not close: a partial product that underflows and is
+/// then multiplied by a large factor (coordinates below about 2⁻⁵¹⁰ beside
+/// ones of 2⁴⁰ or more), whose lost bits the bound, normal by then, does not
+/// cover; and approximate inputs that `rat_to_f64` rounded into the
+/// subnormal range, whose error is absolute rather than the relative ε the
+/// bounds assume.
 #[inline]
 fn certify(det: f64, bound: f64) -> Option<Sign> {
     if !det.is_finite() || !bound.is_finite() || bound < f64::MIN_POSITIVE {

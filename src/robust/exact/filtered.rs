@@ -13,7 +13,11 @@
 // simplicity wins.
 //
 // The classic bounds assume no underflow/overflow, so any permanent that is
-// subnormal, zero, or non-finite also escalates to the exact path.
+// subnormal, zero, or non-finite also escalates to the exact path. That
+// covers a computation wholly at tiny scale, not every magnitude: a partial
+// product that underflows and is then multiplied by a large factor
+// (coordinates below about 2^-510 beside ones of 2^40 or more) can leave a
+// normal permanent with the lost bits uncovered, a known gap.
 
 use crate::linalg::{Vec2, Vec3};
 

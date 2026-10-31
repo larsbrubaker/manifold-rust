@@ -241,9 +241,10 @@ pub fn has_self_intersections_with_token(
 
 /// Whether two triangles that share no vertex are proven apart before the
 /// full test: `t2` strictly on one side of `t1`'s plane by the float filter
-/// alone (`filtered::orient3d_filter`, the filter `real_self_contact`'s
-/// plane signs start with: Shewchuk's static bound, refusing subnormal
-/// magnitudes; no exact fallback), or else, when the filter cannot settle that
+/// alone (`filtered::orient3d_filter`, the very filter
+/// `real_self_contact`'s plane signs start with, so the two always agree
+/// wherever it certifies a sign, including at magnitudes where its own
+/// bound has known gaps (see filtered.rs); no exact fallback), or else, when the filter cannot settle that
 /// or finds a corner on the plane (the pair lies in or near one plane),
 /// their projections strictly
 /// separated by an edge line (tri_tri.rs `coplanar_separated_2d`, the same
