@@ -49,6 +49,10 @@ pub(super) struct FlatStars {
     pub(super) owner: Vec<Option<usize>>,
     /// Per star, the triangles it owns, ascending.
     pub(super) owned: Vec<Vec<usize>>,
+    /// Whether the corners were sorted and grouped, rather than skipped by
+    /// [`may_hold_a_star`]: how the tests see the skip without a clock.
+    #[cfg(test)]
+    pub(super) grouped: bool,
 }
 
 /// Weld key: exact position identity, with -0.0 read as 0.0 (the same key
@@ -59,8 +63,61 @@ fn pos_key(v: Vec3) -> (u64, u64, u64) {
     (norm(v.x), norm(v.y), norm(v.z))
 }
 
+/// Whether some position could be the corner of at least
+/// `FLAT_STAR_MIN_TRIANGLES` live triangles, counted in hashed buckets: a
+/// few milliseconds where the sort and grouping below cost about a sixth of
+/// the whole scan on an ordinary mesh (48 of 330 ms for a 200k-triangle
+/// sphere), which has no star to find.
+///
+/// Exact in the direction that matters: equal positions have equal
+/// `pos_key`s and so share a bucket, and other positions hashing into it
+/// only add to its count, so a bucket's count is at least the size of every
+/// star in it. When no bucket reaches the threshold, no star does, and
+/// skipping the grouping gives exactly the stars (none) it would have found.
+/// A collision can only send a mesh to the grouping needlessly, never skip
+/// a star; the scan's verdict is the same either way.
+pub(super) fn may_hold_a_star(tris: &[[Vec3; 3]], live: &[bool]) -> bool {
+    let corners = 3 * live.iter().filter(|&&l| l).count();
+    if corners < FLAT_STAR_MIN_TRIANGLES {
+        return false;
+    }
+    // At least one bucket per corner, so collisions stay rare and an
+    // ordinary mesh passes; a power of two, so the top hash bits index it.
+    let bits = corners.next_power_of_two().trailing_zeros().max(1);
+    let mut counts = vec![0u32; 1usize << bits];
+    for (t, tri) in tris.iter().enumerate() {
+        if !live[t] {
+            continue;
+        }
+        for &v in tri {
+            let (x, y, z) = pos_key(v);
+            let mut h = 0u64;
+            for part in [x, y, z] {
+                h = (h.rotate_left(26) ^ part).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            }
+            let count = &mut counts[(h >> (64 - bits)) as usize];
+            *count += 1;
+            // Every triangle with a corner at a position adds at least one to
+            // that position's bucket, so reaching the threshold is the only
+            // way a star of that size can exist.
+            if *count as usize >= FLAT_STAR_MIN_TRIANGLES {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Finds and proves the flat, disjoint stars among the live triangles.
 pub(super) fn flat_stars(tris: &[[Vec3; 3]], live: &[bool]) -> FlatStars {
+    if !may_hold_a_star(tris, live) {
+        return FlatStars {
+            owner: vec![None; tris.len()],
+            owned: Vec::new(),
+            #[cfg(test)]
+            grouped: false,
+        };
+    }
     let mut corners: Vec<((u64, u64, u64), usize)> = Vec::with_capacity(3 * tris.len());
     for (t, tri) in tris.iter().enumerate() {
         if live[t] {
@@ -93,7 +150,12 @@ pub(super) fn flat_stars(tris: &[[Vec3; 3]], live: &[bool]) -> FlatStars {
         }
         start = end;
     }
-    FlatStars { owner, owned }
+    FlatStars {
+        owner,
+        owned,
+        #[cfg(test)]
+        grouped: true,
+    }
 }
 
 /// One triangle of a star as a wedge at the centre: its two other corners,

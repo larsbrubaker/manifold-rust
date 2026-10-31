@@ -347,12 +347,30 @@ fn a_fan_capped_cylinder_is_clean_and_quick() {
     let stars = super::super::fan_star::flat_stars(&tris, &live);
     let sizes: Vec<usize> = stars.owned.iter().map(Vec::len).collect();
     assert_eq!(sizes, [30_000, 30_000], "both caps settled whole");
+    assert!(stars.grouped, "the bucket count lets the caps through");
     let listed = super::super::fan_star_scan::listed_pairs(&boxes, &live, &stars);
     assert!(
         listed <= LISTED_PAIRS_PER_TRIANGLE * tris.len(),
         "the walk listed {listed} pairs for {} triangles",
         tris.len()
     );
+}
+
+#[test]
+fn a_mesh_without_fans_skips_the_corner_grouping() {
+    // A sphere's vertices each touch about six triangles: the bucket count
+    // proves there is no star before any sorting.
+    let (tris, _, live) = mesh_soup(&Manifold::sphere(10.0, 64).get_mesh_gl64(-1));
+    let stars = super::super::fan_star::flat_stars(&tris, &live);
+    assert!(!stars.grouped, "no position reaches a star's size");
+    assert!(stars.owned.is_empty() && stars.owner.iter().all(Option::is_none));
+    assert_verdict("sphere", &tris, false);
+    // One flat fan of exactly the threshold's size is still grouped.
+    let tris = fan(64, 64, 1, 1, |_| 1.0);
+    let live = vec![true; tris.len()];
+    let stars = super::super::fan_star::flat_stars(&tris, &live);
+    assert!(stars.grouped, "a 64-triangle star passes the bucket count");
+    assert_eq!(stars.owned.len(), 1);
 }
 
 /// The most pairs per triangle the flat-star walk may list on a
