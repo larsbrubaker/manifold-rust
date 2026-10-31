@@ -260,7 +260,7 @@ pub fn has_self_intersections_with_token(
 /// verdict. (manifold-sharp, its commit 1d9162c: on a 21.6k-triangle part it
 /// settles about 171k of the 209k vertex-neighbour pairs that would
 /// otherwise pay for the full test.)
-fn genuine_contact(
+pub(super) fn genuine_contact(
     t1: [Vec3; 3],
     t2: [Vec3; 3],
     stats: &mut super::intersection_graph::SelfCutStats,
@@ -307,10 +307,20 @@ fn compute_self_intersections(
     imp: &ManifoldImpl,
     token: Option<&crate::cancel::CancelToken>,
 ) -> Option<bool> {
+    scan_triangles(&impl_to_tris(imp), Some(&imp.collider), token)
+}
+
+/// [`compute_self_intersections`] over plain triangles. `face_collider` is a
+/// tree whose leaves are the triangles in order, reused when its leaf count
+/// matches; any other tree (or `None`) builds a private one.
+pub(super) fn scan_triangles(
+    tris: &[[Vec3; 3]],
+    face_collider: Option<&crate::collider::Collider>,
+    token: Option<&crate::cancel::CancelToken>,
+) -> Option<bool> {
     use super::intersection_graph::{is_degenerate as is_degenerate_tri, tri_box, SelfCutStats};
     use crate::types::Box;
 
-    let tris = impl_to_tris(imp);
     if tris.len() < 2 {
         return Some(false);
     }
@@ -330,12 +340,22 @@ fn compute_self_intersections(
     let boxes: Vec<Box> = tris.iter().map(tri_box).collect();
     let live: Vec<bool> = tris.iter().map(|t| !is_degenerate_tri(t)).collect();
 
+    // Flat fans settle their own pairs in one sort (robust/fan_star.rs); no
+    // verdict moves, only which pairs are listed.
+    let stars = super::fan_star::flat_stars(tris, &live);
+    if !stars.owned.is_empty() {
+        if token.is_some_and(|t| t.is_cancelled()) {
+            return None;
+        }
+        return super::fan_star_scan::scan_with_flat_stars(tris, &boxes, &live, &stars, token);
+    }
+
     // Leaf index -> triangle index; empty when the cached face collider is
     // used, whose leaves already are triangle indices.
     let mut leaf_tri: Vec<usize> = Vec::new();
     let owned;
-    let collider = if imp.collider.num_leaves() == tris.len() {
-        &imp.collider
+    let collider = if let Some(face) = face_collider.filter(|c| c.num_leaves() == tris.len()) {
+        face
     } else {
         let mut order: Vec<usize> = (0..tris.len()).filter(|&i| live[i]).collect();
         if order.len() < 2 {
@@ -398,6 +418,10 @@ mod tests;
 #[cfg(test)]
 #[path = "self_intersection_scan_tests.rs"]
 mod scan_tests;
+
+#[cfg(test)]
+#[path = "fan_star_scan_tests.rs"]
+mod fan_star_tests;
 
 /// Per-corner vertex properties of an impl, flattened as
 /// `props[(3*tri + corner) * num_prop + channel]`, aligned with

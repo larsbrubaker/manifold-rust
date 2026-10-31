@@ -81,6 +81,8 @@ pub mod cells;
 pub mod cells_extract;
 mod coplanar_clip;
 pub mod exact;
+mod fan_star;
+mod fan_star_scan;
 mod graph_geom;
 mod graph_self_cut;
 mod graph_types;
