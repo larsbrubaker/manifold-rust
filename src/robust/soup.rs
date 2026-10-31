@@ -241,7 +241,9 @@ pub fn has_self_intersections_with_token(
 
 /// Whether two triangles that share no vertex are proven apart before the
 /// full test: `t2` strictly on one side of `t1`'s plane by the float filter
-/// alone (no exact fallback), or else, when the filter cannot settle that
+/// alone (`filtered::orient3d_filter`, the filter `real_self_contact`'s
+/// plane signs start with: Shewchuk's static bound, refusing subnormal
+/// magnitudes; no exact fallback), or else, when the filter cannot settle that
 /// or finds a corner on the plane (the pair lies in or near one plane),
 /// their projections strictly
 /// separated by an edge line (tri_tri.rs `coplanar_separated_2d`, the same
@@ -257,10 +259,9 @@ pub fn has_self_intersections_with_token(
 /// `orient3d_i` before the coplanar path rejected the pair. A finely
 /// revolved part's flat annuli are nearly all such pairs.
 fn vertex_disjoint_apart(t1: [Vec3; 3], t2: [Vec3; 3]) -> bool {
-    use super::exact::approx::orient3d_a;
+    use super::exact::filtered::orient3d_filter;
     use super::exact::Sign;
-    let p = |v: Vec3| [v.x, v.y, v.z];
-    let side = |v: Vec3| orient3d_a(p(t1[0]), p(t1[1]), p(t1[2]), p(v));
+    let side = |v: Vec3| orient3d_filter(t1[0], t1[1], t1[2], v);
     let signs = [side(t2[0]), side(t2[1]), side(t2[2])];
     if let [Some(a), Some(b), Some(c)] = signs {
         if a != Sign::Zero && a == b && b == c {

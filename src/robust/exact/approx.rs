@@ -25,9 +25,20 @@ const EPS: f64 = f64::EPSILON * 0.5; // 2⁻⁵³
 /// Conservative certified-sign helper: `det` was computed in f64 from
 /// ε-perturbed inputs; `bound` ≥ the true error. Returns None when the sign
 /// cannot be certified (including any non-finite intermediate).
+///
+/// The bounds are relative (a multiple of ε times a magnitude), which holds
+/// only while the arithmetic stays normal. Below `f64::MIN_POSITIVE` an
+/// underflowed product carries an absolute error the relative bound does
+/// not cover, and the bound itself can round to zero while an exactly zero
+/// determinant comes out as ±2⁻¹⁰⁷⁴ - a coplanar quadruple at subnormal
+/// scale would then be "certified" off its plane. So a bound below the
+/// normal range certifies nothing. A bound at or above it leaves slack of
+/// at least 2⁻¹⁰²³ over the relative error, far more than the few 2⁻¹⁰⁷⁵
+/// any underflowed intermediate adds. The guard only sends more cases to
+/// the exact predicates, so it can only change an answer that was wrong.
 #[inline]
 fn certify(det: f64, bound: f64) -> Option<Sign> {
-    if !det.is_finite() || !bound.is_finite() {
+    if !det.is_finite() || !bound.is_finite() || bound < f64::MIN_POSITIVE {
         return None;
     }
     if det > bound {
@@ -645,5 +656,23 @@ mod tests {
             assert!(point_on_segment_r(&on, &a, &b));
             assert_ne!(not_on_segment_a(approx3(&on), aa, ab), Some(false), "k={k}");
         }
+    }
+}
+
+#[cfg(test)]
+mod certify_tests {
+    use super::*;
+
+    #[test]
+    fn certify_refuses_a_bound_below_the_normal_range() {
+        // The smallest subnormal against a bound that underflowed to zero.
+        assert_eq!(certify(f64::from_bits(1), 0.0), None);
+        assert_eq!(certify(-f64::from_bits(1), 0.0), None);
+        // A subnormal bound is no bound either.
+        assert_eq!(certify(1e-300, f64::MIN_POSITIVE / 4.0), None);
+        // Normal bounds certify as before.
+        assert_eq!(certify(1e-300, f64::MIN_POSITIVE), Some(Sign::Pos));
+        assert_eq!(certify(-1.0, 0.5), Some(Sign::Neg));
+        assert_eq!(certify(0.25, 0.5), None);
     }
 }

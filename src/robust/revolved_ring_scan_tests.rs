@@ -309,3 +309,42 @@ fn the_projection_shortcut_never_moves_a_pair_verdict() {
         }
     }
 }
+
+/// Points at subnormal-product scale (coordinates near 2⁻³⁴⁶, so products of
+/// three land below the normal range): `b` and `c` with the origin span a
+/// plane; halving or eighthing them stays exactly in it.
+fn subnormal_plane() -> (Vec3, Vec3) {
+    let b = Vec3::new(
+        f64::from_bits(0x2a50549ae3dc2d94),
+        f64::from_bits(0x2a51ad2109517d2e),
+        f64::from_bits(0x2a5a02929b27eae0),
+    );
+    let c = Vec3::new(
+        f64::from_bits(0x2a450fc229ea9000),
+        f64::from_bits(0x2a5cf0ce06c472c2),
+        f64::from_bits(0xaa3149aee586a2a8),
+    );
+    (b, c)
+}
+
+/// The full exact test's verdict on one pair: the answer the scan must give.
+fn full_verdict(t1: Tri, t2: Tri) -> bool {
+    use super::super::intersection_graph::{real_self_contact, SelfCutStats};
+    real_self_contact(t1, t2, &mut SelfCutStats::default()).is_some()
+}
+
+#[test]
+fn a_coplanar_overlap_at_subnormal_scale_is_still_found() {
+    let (b, c) = subnormal_plane();
+    let o = Vec3::new(0.0, 0.0, 0.0);
+    // `t2` lies inside `t1`, sharing no corner.
+    let t1 = [o, b, c];
+    let t2 = [b / 8.0, c / 2.0, c / 8.0];
+    assert!(full_verdict(t1, t2), "the full test finds the overlap");
+    assert_eq!(super::scan_triangles(&[t1, t2], None, None), Some(true));
+    // Sharing the origin: the one-shared-vertex shortcuts must not call the
+    // pair a point contact either.
+    let t3 = [o, b / 2.0, c / 2.0];
+    assert!(full_verdict(t1, t3), "the full test finds the overlap");
+    assert_eq!(super::scan_triangles(&[t1, t3], None, None), Some(true));
+}

@@ -14,7 +14,7 @@ use crate::linalg::Vec3;
 use super::exact::rational::R3;
 use super::exact::Sign;
 use super::graph_geom::point_on_segment;
-use super::tri_tri::{tri_tri_intersect, TriTriIsect};
+use super::tri_tri::{f64_drop_axis, project_f64, tri_tri_intersect, TriTriIsect};
 
 /// orient3d(t[0], t[1], t[2], v): float filter first, exact integer
 /// determinant on escalation. This replaced a cached exact-plane structure
@@ -35,31 +35,6 @@ pub(super) fn orient3d_plane(t: &[Vec3; 3], v: Vec3) -> Sign {
         [t[2].x, t[2].y, t[2].z],
         [v.x, v.y, v.z],
     )
-}
-
-/// Axis of the largest |component| of the (f64) triangle normal. Only a
-/// projection *choice*: when the exact normal's chosen component happens to
-/// be zero, the projected points go collinear, the exact 2D signs come back
-/// Zero, and every shortcut below falls through — sound, just unoptimized.
-fn dominant_axis_f64(t: [Vec3; 3]) -> usize {
-    let n = crate::linalg::cross(t[1] - t[0], t[2] - t[0]);
-    let (ax, ay, az) = (n.x.abs(), n.y.abs(), n.z.abs());
-    if az >= ax && az >= ay {
-        2
-    } else if ay >= ax {
-        1
-    } else {
-        0
-    }
-}
-
-/// `R3::project_drop` for raw f64 points (same cyclic axis convention).
-fn project_f64(v: Vec3, axis: usize) -> crate::linalg::Vec2 {
-    match axis {
-        0 => crate::linalg::Vec2::new(v.y, v.z),
-        1 => crate::linalg::Vec2::new(v.z, v.x),
-        _ => crate::linalg::Vec2::new(v.x, v.y),
-    }
 }
 
 /// Per-path counters for the self-cut narrow phase, printed under
@@ -160,7 +135,7 @@ pub(super) fn real_self_contact(
             // plane (the flat-plate case) — then the closed half-plane
             // intersection is the shared edge itself.
             if let Some(&own) = t1.iter().find(|v| !t2.contains(v)) {
-                let axis = dominant_axis_f64(t1);
+                let axis = f64_drop_axis(t1);
                 let p2 = |v: Vec3| project_f64(v, axis);
                 let s_own =
                     super::exact::filtered::orient2d(p2(shared_f[0]), p2(shared_f[1]), p2(own));
@@ -193,7 +168,7 @@ pub(super) fn real_self_contact(
         // an edge through the shared vertex that strictly separates the two
         // triangles certifies the contact is exactly that vertex.
         if others.len() == 2 && others[0].1 == Sign::Zero && others[1].1 == Sign::Zero {
-            let axis = dominant_axis_f64(t1);
+            let axis = f64_drop_axis(t1);
             let p2 = |v: Vec3| project_f64(v, axis);
             let v0 = shared_f[0];
             let mut own = [Vec3::default(); 3];

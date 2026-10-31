@@ -387,12 +387,7 @@ fn all_same_strict(s: &[Sign; 3]) -> bool {
 /// one predicate.
 pub(super) fn coplanar_separated_2d(t1: [Vec3; 3], t2: [Vec3; 3], axis: usize) -> bool {
     use super::exact::filtered::orient2d;
-    // Same cyclic drop-axis convention as R3::project_drop.
-    let proj = |v: Vec3| match axis {
-        0 => crate::linalg::Vec2::new(v.y, v.z),
-        1 => crate::linalg::Vec2::new(v.z, v.x),
-        _ => crate::linalg::Vec2::new(v.x, v.y),
-    };
+    let proj = |v: Vec3| project_f64(v, axis);
     let p1 = t1.map(proj);
     let p2 = t2.map(proj);
     let separates = |tri: &[crate::linalg::Vec2; 3], other: &[crate::linalg::Vec2; 3]| {
@@ -410,11 +405,13 @@ pub(super) fn coplanar_separated_2d(t1: [Vec3; 3], t2: [Vec3; 3], axis: usize) -
     separates(&p1, &p2) || separates(&p2, &p1)
 }
 
-/// Intersection of two coplanar triangles: Sutherland–Hodgman clip of t2
-/// against t1 in the exact 2D projection, classified by the dimension of the
-/// result (empty / point / segment / convex polygon).
-/// The coordinate `coplanar_separated_2d` drops for a pair seen from `t`:
-/// the largest component of `t`'s f64 normal (z, then y, on ties).
+/// The coordinate to drop when projecting a pair seen from `t`: the largest
+/// |component| of `t`'s f64 normal (z, then y, on ties). Used by
+/// `coplanar_overlap` here and by the self-cut shortcuts in
+/// robust/graph_self_cut.rs, one rule for both. Only a projection *choice*:
+/// when the exact normal's chosen component happens to be zero, the
+/// projected points go collinear, the exact 2D signs come back Zero, and
+/// every test built on them falls through - sound, just unoptimized.
 pub(super) fn f64_drop_axis(t: [Vec3; 3]) -> usize {
     let n = crate::linalg::cross(t[1] - t[0], t[2] - t[0]);
     let (ax, ay, az) = (n.x.abs(), n.y.abs(), n.z.abs());
@@ -427,6 +424,19 @@ pub(super) fn f64_drop_axis(t: [Vec3; 3]) -> usize {
     }
 }
 
+/// `R3::project_drop` for raw f64 points (the same cyclic axis convention):
+/// drops coordinate `axis`.
+pub(super) fn project_f64(v: Vec3, axis: usize) -> crate::linalg::Vec2 {
+    match axis {
+        0 => crate::linalg::Vec2::new(v.y, v.z),
+        1 => crate::linalg::Vec2::new(v.z, v.x),
+        _ => crate::linalg::Vec2::new(v.x, v.y),
+    }
+}
+
+/// Intersection of two coplanar triangles: Sutherland–Hodgman clip of t2
+/// against t1 in the exact 2D projection, classified by the dimension of the
+/// result (empty / point / segment / convex polygon).
 fn coplanar_overlap(t1: [Vec3; 3], t2: [Vec3; 3]) -> TriTriIsect {
     {
         if coplanar_separated_2d(t1, t2, f64_drop_axis(t1)) {

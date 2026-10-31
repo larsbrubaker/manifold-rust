@@ -62,7 +62,7 @@ pub fn orient2d(a: Vec2, b: Vec2, c: Vec2) -> Sign {
 /// The float filter behind [`orient3d`]; see [`orient2d_filter`] for why it is
 /// a separate, `Option`-returning function.
 #[inline]
-pub(super) fn orient3d_filter(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> Option<Sign> {
+pub(crate) fn orient3d_filter(a: Vec3, b: Vec3, c: Vec3, d: Vec3) -> Option<Sign> {
     let ux = b.x - a.x;
     let uy = b.y - a.y;
     let uz = b.z - a.z;
