@@ -62,6 +62,43 @@ fn project_f64(v: Vec3, axis: usize) -> crate::linalg::Vec2 {
     }
 }
 
+/// Whether `t1` and `t2` are proven disjoint because their shadows on the
+/// plane `t1` faces most squarely are: some edge of either shadow has the
+/// rest of its own triangle strictly on one side and all three corners of
+/// the other strictly on the other. Two triangles that meet share a point,
+/// and so do its shadows, so a strict separation proves no contact of any
+/// kind; `real_self_contact` would answer `None` for the pair. Exact: the
+/// shadow only drops a coordinate and every side test is the filtered,
+/// exactly-escalating `orient2d`. Anything not proven strictly (a corner on
+/// the line, a shadow flattened to a segment, overlapping shadows of
+/// triangles apart in space) answers false and the caller runs the full
+/// test, so this can only skip pairs, never move a verdict.
+///
+/// It exists for flat regions meshed into long thin triangles (a revolved
+/// part's top and bottom annuli): their boxes overlap hundreds of
+/// neighbours' each, and every such coplanar, vertex-disjoint pair would
+/// otherwise pay for a full exact coplanar clip.
+pub(super) fn apart_in_projection(t1: [Vec3; 3], t2: [Vec3; 3]) -> bool {
+    use super::exact::filtered::orient2d;
+    let axis = dominant_axis_f64(t1);
+    let a = t1.map(|v| project_f64(v, axis));
+    let b = t2.map(|v| project_f64(v, axis));
+    let separates = |own: &[crate::linalg::Vec2; 3], other: &[crate::linalg::Vec2; 3]| {
+        let inside = orient2d(own[0], own[1], own[2]);
+        if inside == Sign::Zero {
+            return false;
+        }
+        (0..3).any(|k| {
+            let (p, q) = (own[k], own[(k + 1) % 3]);
+            other.iter().all(|&v| {
+                let s = orient2d(p, q, v);
+                s != Sign::Zero && s != inside
+            })
+        })
+    };
+    separates(&a, &b) || separates(&b, &a)
+}
+
 /// Per-path counters for the self-cut narrow phase, printed under
 /// MANIFOLD_TIMING to show where box-pair time goes (shortcut hits vs full
 /// tri_tri calls and their outcomes).
@@ -70,6 +107,8 @@ pub(super) struct SelfCutStats {
     pub(super) identical: usize,
     pub(super) edge_benign: usize,
     pub(super) vert_benign: usize,
+    /// Vertex-disjoint pairs whose shadows are strictly apart.
+    pub(super) apart_2d: usize,
     pub(super) full: usize,
     pub(super) full_none: usize,
     pub(super) full_point: usize,
@@ -84,6 +123,7 @@ impl SelfCutStats {
         self.identical += o.identical;
         self.edge_benign += o.edge_benign;
         self.vert_benign += o.vert_benign;
+        self.apart_2d += o.apart_2d;
         self.full += o.full;
         self.full_none += o.full_none;
         self.full_point += o.full_point;

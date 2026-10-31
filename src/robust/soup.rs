@@ -272,6 +272,13 @@ pub(super) fn genuine_contact(
     if n_shared == 3 {
         return true;
     }
+    // Vertex-disjoint pairs whose shadows are strictly apart cannot touch
+    // (graph_self_cut.rs `apart_in_projection`): the coplanar slivers of a
+    // finely revolved part's flat faces are nearly all such pairs.
+    if n_shared == 0 && super::graph_self_cut::apart_in_projection(t1, t2) {
+        stats.apart_2d += 1;
+        return false;
+    }
     if n_shared == 1 {
         let mut first = Sign::Zero;
         let mut one_sided = true;
@@ -422,6 +429,10 @@ mod scan_tests;
 #[cfg(test)]
 #[path = "fan_star_scan_tests.rs"]
 mod fan_star_tests;
+
+#[cfg(test)]
+#[path = "revolved_ring_scan_tests.rs"]
+mod revolved_ring_tests;
 
 /// Per-corner vertex properties of an impl, flattened as
 /// `props[(3*tri + corner) * num_prop + channel]`, aligned with
