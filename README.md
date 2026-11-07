@@ -214,7 +214,6 @@ manifold-rust is open source, free to use, and maintained in spare time as a lab
 extensively in production 3D-printing workflows, which is why a dependable pure-Rust
 kernel exists at all.
 
-- **Donate:** [Buy Me a Coffee](https://buymeacoffee.com/larsbrubaker)
 - **Star the repo** — costs nothing, helps others find it
 - **Report issues:** [open an issue](https://github.com/larsbrubaker/manifold-rust/issues);
   the demo's *Copy Debug Info* button captures everything a boolean bug report needs
