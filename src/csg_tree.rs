@@ -622,3 +622,7 @@ pub(crate) fn batch_union(
 #[cfg(test)]
 #[path = "csg_tree_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "csg_tree_nary_contact_tests.rs"]
+mod nary_contact_tests;

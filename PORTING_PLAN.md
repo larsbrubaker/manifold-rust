@@ -57,6 +57,16 @@ in step.
   `minkowski::union_regression_tests::exact_union_of_thingi641145_partial_unions_contains_both_operands`,
   shared with manifold-sharp. Needed: an orientation-aware seed for the coplanar flood
   fill that keeps both C++ tests passing.
+- **Unions of operands that abut exactly can leave zero-width seams, depending on order.**
+  The eight tools in `src/testdata/nary-union-abutting-tools.txt` are clean and the n-ary
+  union reaches the right solid, but on the auto engine it reports self-contact where a
+  pairwise left fold does not. Sheets end up on one line with vertices that do not line up;
+  no volume is enclosed. It is not specific to the n-ary tree: a single two-operand union of
+  these tools reports contact, and the robust engine is order-dependent the same way. Over a
+  bevel corpus 23 of 569 n-ary unions of clean operands reported contact where the fold did
+  not, and 2 the other way round. Pinned, ignored, by
+  `csg_tree::nary_contact_tests::the_n_ary_union_of_abutting_tools_leaves_no_self_contact`.
+  Needed: a pass that removes a zero-width seam without moving the solid.
 - **`boolean_with_token` composes the disjoint operands of an Add** (the non-overlapping
   fast path in `src/boolean3.rs`). C++ `Boolean3` has no such shortcut, so when leaf
   boxes overlap but the meshes don't, the order of `vert_properties`, `tri_verts` and
