@@ -496,6 +496,7 @@ mod complex;
 mod compose;
 mod compose_tolerance;
 mod cross_section2;
+mod decompose;
 mod error_propagation;
 mod face_id_provenance;
 mod face_id_provenance_cases;
