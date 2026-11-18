@@ -137,7 +137,7 @@ pub(super) fn create_properties(
         }
         let ref_pq = out_r.mesh_relation.tri_ref[tri];
         let pq = ref_pq.mesh_id == 0;
-        let pq_flag: i32 = if pq { 0 } else { 1 };
+        let pq_flag: i32 = if pq { 1 } else { 0 };
         let old_num_prop = if pq { num_prop_p } else { num_prop_q };
         let properties = if pq {
             &in_p.properties

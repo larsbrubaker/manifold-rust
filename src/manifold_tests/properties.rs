@@ -123,3 +123,19 @@ fn test_cpp_properties_mingap_stretchy_bracelet() {
         distance
     );
 }
+
+/// A Boolean reuses the property vertex of every input vertex it retains,
+/// whichever operand has more of them: subtracting a disjoint solid leaves
+/// the other's property vertices one for one.
+#[test]
+fn boolean_keeps_retained_property_vertices_shared() {
+    let large = Manifold::sphere(1.0, 48).calculate_normals(0, 60.0);
+    let small = Manifold::sphere(0.5, 12)
+        .translate(Vec3::new(5.0, 0.0, 0.0))
+        .calculate_normals(0, 60.0);
+    assert_eq!((large.num_vert(), large.num_prop_vert()), (578, 578));
+    assert_eq!((small.num_vert(), small.num_prop_vert()), (38, 38));
+
+    assert_eq!(large.difference(&small).num_prop_vert(), 578);
+    assert_eq!(small.difference(&large).num_prop_vert(), 38);
+}
