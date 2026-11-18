@@ -464,55 +464,91 @@ impl Manifold {
             return vec![self.clone()];
         }
 
-        let num_tri = self.imp.num_tri();
+        // Each component is gathered from its own vertices, faces and property
+        // vertices, in their original order, so the cost does not grow with
+        // the number of components. `vert_local` and `face_local` hold every
+        // vertex's and face's index within its own component.
+        let source = &self.imp;
+        let num_tri = source.num_tri();
+        let num_prop = source.num_prop;
+        let mut vert_local = vec![0i32; num_vert];
+        let mut verts: Vec<Vec<usize>> = vec![Vec::new(); num_components as usize];
+        for (vert, &comp) in component_indices.iter().enumerate() {
+            vert_local[vert] = verts[comp as usize].len() as i32;
+            verts[comp as usize].push(vert);
+        }
+        let mut face_local = vec![0i32; num_tri];
+        let mut faces: Vec<Vec<usize>> = vec![Vec::new(); num_components as usize];
+        for face in 0..num_tri {
+            let start = source.halfedge[3 * face].start_vert;
+            if start >= 0 {
+                let comp = component_indices[start as usize] as usize;
+                face_local[face] = faces[comp].len() as i32;
+                faces[comp].push(face);
+            }
+        }
+        let mut prop_local = vec![0i32; source.num_prop_vert()];
+
         let mut meshes = Vec::new();
-
-        for comp in 0..num_components {
-            let mut imp = ManifoldImpl::new();
-            imp.tolerance = self.imp.tolerance;
-
-            // Collect vertices belonging to this component
-            let vert_new2old: Vec<i32> = (0..num_vert as i32)
-                .filter(|&v| component_indices[v as usize] == comp)
-                .collect();
-            let n_vert = vert_new2old.len();
-            if n_vert == 0 {
+        for (verts, faces) in verts.iter().zip(&faces) {
+            if faces.is_empty() {
                 continue;
             }
+            let edges = || faces.iter().flat_map(|&face| 3 * face..3 * face + 3);
 
-            imp.vert_pos = vert_new2old
-                .iter()
-                .map(|&v| self.imp.vert_pos[v as usize])
-                .collect();
-            if !self.imp.vert_normal.is_empty() {
-                imp.vert_normal = vert_new2old
+            let mut imp = ManifoldImpl::new();
+            imp.tolerance = source.tolerance;
+            imp.vert_pos = verts.iter().map(|&v| source.vert_pos[v]).collect();
+            if !source.vert_normal.is_empty() {
+                imp.vert_normal = verts.iter().map(|&v| source.vert_normal[v]).collect();
+            }
+            if source.face_normal.len() == num_tri {
+                imp.face_normal = faces.iter().map(|&f| source.face_normal[f]).collect();
+            }
+            if !source.halfedge_tangent.is_empty() {
+                imp.halfedge_tangent = edges().map(|e| source.halfedge_tangent[e]).collect();
+            }
+            imp.mesh_relation.original_id = source.mesh_relation.original_id;
+            imp.mesh_relation.mesh_id_transform = source.mesh_relation.mesh_id_transform.clone();
+            if source.mesh_relation.tri_ref.len() == num_tri {
+                imp.mesh_relation.tri_ref = faces
                     .iter()
-                    .map(|&v| self.imp.vert_normal[v as usize])
+                    .map(|&f| source.mesh_relation.tri_ref[f])
                     .collect();
             }
+            imp.halfedge = edges().map(|e| source.halfedge[e]).collect();
 
-            // Collect faces belonging to this component
-            let face_new2old: Vec<usize> = (0..num_tri)
-                .filter(|&f| {
-                    let sv = self.imp.halfedge[3 * f].start_vert;
-                    sv >= 0 && component_indices[sv as usize] == comp
-                })
-                .collect();
-
-            if face_new2old.is_empty() {
-                continue;
+            imp.num_prop = num_prop;
+            if num_prop > 0 {
+                let mut props: Vec<usize> = imp
+                    .halfedge
+                    .iter()
+                    .filter(|edge| edge.prop_vert >= 0)
+                    .map(|edge| edge.prop_vert as usize)
+                    .collect();
+                props.sort_unstable();
+                props.dedup();
+                for (new_prop, &old_prop) in props.iter().enumerate() {
+                    prop_local[old_prop] = new_prop as i32;
+                    imp.properties.extend_from_slice(
+                        &source.properties[old_prop * num_prop..(old_prop + 1) * num_prop],
+                    );
+                }
+            }
+            for edge in &mut imp.halfedge {
+                edge.start_vert = vert_local[edge.start_vert as usize];
+                edge.end_vert = vert_local[edge.end_vert as usize];
+                if edge.paired_halfedge >= 0 {
+                    let paired = edge.paired_halfedge as usize;
+                    edge.paired_halfedge = 3 * face_local[paired / 3] + (paired % 3) as i32;
+                }
+                if num_prop == 0 {
+                    edge.prop_vert = edge.start_vert;
+                } else if edge.prop_vert >= 0 {
+                    edge.prop_vert = prop_local[edge.prop_vert as usize];
+                }
             }
 
-            // Copy full data from original, then gather_faces will filter
-            imp.halfedge = self.imp.halfedge.clone();
-            imp.face_normal = self.imp.face_normal.clone();
-            imp.halfedge_tangent = self.imp.halfedge_tangent.clone();
-            imp.num_prop = self.imp.num_prop;
-            imp.properties = self.imp.properties.clone();
-            imp.mesh_relation = self.imp.mesh_relation.clone();
-
-            crate::sort::gather_faces(&mut imp, &face_new2old);
-            crate::sort::reindex_verts(&mut imp, &vert_new2old, self.imp.num_vert());
             imp.calculate_bbox();
             imp.sort_geometry();
 
