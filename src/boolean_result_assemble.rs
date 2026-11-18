@@ -137,6 +137,18 @@ pub(super) fn create_properties(
         }
         let ref_pq = out_r.mesh_relation.tri_ref[tri];
         let pq = ref_pq.mesh_id == 0;
+        // pq_flag picks the propMissIdx table: 1 = P, 0 = Q, as in C++
+        // `ivec4 key(PQ, ...)` and the table layout above. It used to be
+        // swapped, so a retained vertex whose prop_vert index exceeded the
+        // other operand's count missed the table and got a fresh property
+        // vertex at every triangle corner. Output change: property vertex
+        // counts (and get_mesh_gl vert/merge counts) drop for meshes with
+        // properties, e.g. a 578-vert normals sphere minus a disjoint small
+        // sphere goes 3,266 -> 578; positions and triangles are unchanged;
+        // chained Booleans may move property values by rounding (<1e-13).
+        // No expected test values moved; pinned by
+        // `boolean_keeps_retained_property_vertices_shared`
+        // (src/manifold_tests/properties.rs). manifold-sharp must mirror it.
         let pq_flag: i32 = if pq { 1 } else { 0 };
         let old_num_prop = if pq { num_prop_p } else { num_prop_q };
         let properties = if pq {
