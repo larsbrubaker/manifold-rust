@@ -328,3 +328,78 @@ fn convex_dilation_is_bit_identical_with_and_without_a_reporter_dilate() {
 fn convex_dilation_is_bit_identical_with_and_without_a_reporter_erode() {
     convex_dilation_is_bit_identical_with_and_without_a_reporter(true);
 }
+
+// ── Depth-first reduction on one thread ──
+// On one thread the tree reduces depth first (convex_dilation.rs
+// `reduce_depth_first`); `FORCE_BREADTH_FIRST` runs the breadth-first levels
+// instead, so the two orders can be compared on the same thread.
+
+/// A tree run on one thread (a one-thread pool in a `parallel` build, this
+/// thread otherwise), depth first or forced breadth first: its fingerprint,
+/// leaf count and peak live tree nodes, the hooks read on the thread that ran.
+fn tree_on_one_thread(
+    breadth_first: bool,
+    f: &(dyn Fn() -> Manifold + Sync),
+) -> (u64, usize, usize) {
+    use crate::convex_dilation::{FORCE_BREADTH_FIRST, LAST_HULL_COUNT, PEAK_LIVE_NODES};
+    let body = || {
+        FORCE_BREADTH_FIRST.with(|c| c.set(breadth_first));
+        let result = f();
+        FORCE_BREADTH_FIRST.with(|c| c.set(false));
+        // Erosion has one leaf per 16 hulls and no solid leaf.
+        let leaves = LAST_HULL_COUNT.with(|c| c.get()).div_ceil(16);
+        (
+            fingerprint(&result),
+            leaves,
+            PEAK_LIVE_NODES.with(|c| c.get()),
+        )
+    };
+    #[cfg(feature = "parallel")]
+    {
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .unwrap();
+        pool.install(body)
+    }
+    #[cfg(not(feature = "parallel"))]
+    {
+        body()
+    }
+}
+
+/// A cylinder of `segments` sides (4 * segments - 4 triangles) eroded by a
+/// ball: one hull per triangle, so its leaf count is set by `segments`.
+fn eroded_cylinder(segments: i32) -> Manifold {
+    Manifold::cylinder_centered(2.0, 1.0, -1.0, segments, true)
+        .try_erode_by_convex(&Manifold::sphere(0.3, 8), None, None)
+        .expect("a cylinder is eroded by a convex ball and must not be declined")
+}
+
+/// The odd-carry rule: for leaf counts that are not a power of two the
+/// breadth-first levels carry a last node up unchanged, and the depth-first
+/// stack must collapse in the same left/right order to match bit for bit.
+#[test]
+fn depth_first_matches_breadth_first_on_odd_leaf_counts() {
+    for (segments, expected_leaves) in [(20, 5), (26, 7), (50, 13)] {
+        let run = || eroded_cylinder(segments);
+        let (depth_first, leaves, _) = tree_on_one_thread(false, &run);
+        let (breadth_first, bf_leaves, _) = tree_on_one_thread(true, &run);
+        assert_eq!(leaves, expected_leaves, "{segments} segments");
+        assert_eq!(bf_leaves, expected_leaves, "{segments} segments");
+        assert_eq!(depth_first, breadth_first, "{expected_leaves} leaves");
+    }
+}
+
+/// One thread holds a stack of at most ceil(log2 L) + 1 nodes, where the
+/// breadth-first levels held every leaf plus the first level of unions.
+#[test]
+fn depth_first_holds_a_logarithmic_number_of_nodes() {
+    let run = || eroded_cylinder(130);
+    let (_, leaves, peak) = tree_on_one_thread(false, &run);
+    assert_eq!(leaves, 33);
+    let bound = leaves.next_power_of_two().trailing_zeros() as usize + 1;
+    assert!(peak <= bound, "peak {peak} live nodes, bound {bound}");
+    let (_, _, breadth_first_peak) = tree_on_one_thread(true, &run);
+    assert_eq!(breadth_first_peak, leaves + leaves / 2);
+}
