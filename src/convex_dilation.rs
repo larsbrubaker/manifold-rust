@@ -5,6 +5,10 @@
 // time. This answers the same question with the same hulls but a different
 // reduction — an ADDED entry point (`Manifold::try_dilate_by_convex` /
 // `try_erode_by_convex`); `minkowski::minkowski` is not routed through it.
+// One part has no sharp counterpart: the one-thread depth-first order of the
+// tree (`Tree::reduce_depth_first`, item 3 below) is a Rust-only addition for
+// memory. Its output is bit-identical to the breadth-first levels, so sharp
+// need not copy it, and a sync should not treat it as drift.
 //
 // ── Why a different reduction ───────────────────────────────────────────────
 // batch_boolean pops the largest-vertex mesh first, so within a batch the
@@ -31,7 +35,8 @@
 //
 // ── Determinism ─────────────────────────────────────────────────────────────
 // The leaf and level maps go through `maybe_par_map_ct(_progress)`, so the
-// `parallel` feature governs them (single-threaded on wasm and without it).
+// `parallel` feature governs them; on one thread (wasm, no `parallel`, a
+// one-thread pool) the Rust-only depth-first order replaces them.
 // Each worker writes its own slot and reads only the input meshes or the
 // previous, complete level. The engine is read once, before the tree. The
 // tree's shape is a function of the input alone, so a parallel run performs

@@ -383,10 +383,17 @@ fn eroded_cylinder(segments: i32) -> Manifold {
 fn depth_first_matches_breadth_first_on_odd_leaf_counts() {
     for (segments, expected_leaves) in [(20, 5), (26, 7), (50, 13)] {
         let run = || eroded_cylinder(segments);
-        let (depth_first, leaves, _) = tree_on_one_thread(false, &run);
-        let (breadth_first, bf_leaves, _) = tree_on_one_thread(true, &run);
+        let (depth_first, leaves, peak) = tree_on_one_thread(false, &run);
+        let (breadth_first, bf_leaves, bf_peak) = tree_on_one_thread(true, &run);
         assert_eq!(leaves, expected_leaves, "{segments} segments");
         assert_eq!(bf_leaves, expected_leaves, "{segments} segments");
+        // Each run really took the order it claims.
+        let bound = leaves.next_power_of_two().trailing_zeros() as usize + 1;
+        assert!(
+            peak <= bound,
+            "{leaves} leaves: depth-first peak {peak}, bound {bound}"
+        );
+        assert_eq!(bf_peak, leaves + leaves / 2, "{leaves} leaves");
         assert_eq!(depth_first, breadth_first, "{expected_leaves} leaves");
     }
 }
