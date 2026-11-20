@@ -271,3 +271,56 @@ fn flat_shell_whose_probe_lies_on_a_neighbours_edge_is_left_alone() {
     assert!(plan.flip[..12].iter().all(|&f| f));
     assert!(plan.flip[12..].iter().all(|&f| !f));
 }
+
+/// Box [lo, hi] as 12 outward-wound triangles, bottom (-z) face first, its
+/// first triangle (lo, (lo.x, hi.y, lo.z), (hi.x, lo.y, lo.z)); the top face
+/// is split along its (lo, hi) diagonal.
+fn box_tris_bottom_first(lo: [f64; 3], hi: [f64; 3]) -> Vec<[Vec3; 3]> {
+    let p =
+        |i: usize, j: usize, k: usize| v([lo[0], hi[0]][i], [lo[1], hi[1]][j], [lo[2], hi[2]][k]);
+    vec![
+        [p(0, 0, 0), p(0, 1, 0), p(1, 0, 0)],
+        [p(1, 0, 0), p(0, 1, 0), p(1, 1, 0)],
+        [p(0, 0, 1), p(1, 0, 1), p(1, 1, 1)],
+        [p(0, 0, 1), p(1, 1, 1), p(0, 1, 1)],
+        [p(0, 0, 0), p(1, 0, 0), p(1, 0, 1)],
+        [p(0, 0, 0), p(1, 0, 1), p(0, 0, 1)],
+        [p(0, 1, 0), p(0, 1, 1), p(1, 1, 1)],
+        [p(0, 1, 0), p(1, 1, 1), p(1, 1, 0)],
+        [p(0, 0, 0), p(0, 0, 1), p(0, 1, 1)],
+        [p(0, 0, 0), p(0, 1, 1), p(0, 1, 0)],
+        [p(1, 0, 0), p(1, 1, 0), p(1, 1, 1)],
+        [p(1, 0, 0), p(1, 1, 1), p(1, 0, 1)],
+    ]
+}
+
+#[test]
+fn shell_whose_probe_lies_on_another_shells_edge_is_left_alone() {
+    // An inverted unit cube resting on a slab [-1,2]² x [-1,0]. The cube's
+    // probe is its first face's centroid (1/3, 1/3, 0), which lies on the
+    // slab's top diagonal y = x, so its containment query defeats every ray
+    // direction; repair used to panic there. The cube's depth is unknown, so
+    // it is left alone: 0 flips, the answer the decided path gives too (it
+    // reads the cube as touching the slab from inside, depth 1, where an
+    // inverted shell is what the nesting wants).
+    let mut tris = flipped(&box_tris_bottom_first([0.0; 3], [1.0; 3]));
+    tris.extend(box_tris_bottom_first([-1.0, -1.0, -1.0], [2.0, 2.0, 0.0]));
+    let plan = plan_repair(&tris);
+    assert_eq!(plan.num_shells, 2);
+    assert_eq!(plan.flipped_shells, 0);
+    assert!(plan.flip.iter().all(|&f| !f));
+    assert!(!shells_well_nested(&tris));
+
+    // The same pair with the slab's top split along its other diagonal, so
+    // the probe is clear of every edge and containment is decided.
+    let mut moved = flipped(&box_tris_bottom_first([0.0; 3], [1.0; 3]));
+    let mut slab = box_tris_bottom_first([-1.0, -1.0, -1.0], [2.0, 2.0, 0.0]);
+    let (lo, hi) = (v(-1.0, -1.0, 0.0), v(2.0, 2.0, 0.0));
+    let (lo_hi, hi_lo) = (v(-1.0, 2.0, 0.0), v(2.0, -1.0, 0.0));
+    slab[2] = [lo, hi_lo, lo_hi];
+    slab[3] = [hi_lo, hi, lo_hi];
+    moved.extend(slab);
+    let decided = plan_repair(&moved);
+    assert_eq!(decided.num_shells, 2);
+    assert_eq!(decided.flipped_shells, 0);
+}
