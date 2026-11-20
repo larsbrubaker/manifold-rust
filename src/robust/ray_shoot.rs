@@ -188,7 +188,7 @@ pub fn winding_number_indexed(point: &R3, tris: &[[Vec3; 3]], index: &WindingInd
             return w;
         }
     }
-    unreachable!("all candidate ray directions degenerate — malformed input");
+    unreachable!("all candidate ray directions degenerate — point on the surface");
 }
 
 /// [`winding_number`] with caller-provided per-triangle boxes — batch query
@@ -205,7 +205,7 @@ pub fn winding_number_boxed(point: &R3, tris: &[[Vec3; 3]], boxes: &[crate::type
             return w;
         }
     }
-    unreachable!("all candidate ray directions degenerate — malformed input");
+    unreachable!("all candidate ray directions degenerate — point on the surface");
 }
 
 /// One direction's signed crossing count over the given (triangle, box)
@@ -332,9 +332,9 @@ fn winding_one_dir<'a, I: Iterator<Item = (&'a [Vec3; 3], &'a crate::types::Box)
 /// the piece's own plane never counts.
 ///
 /// `None` when every candidate direction grazes some triangle, which no
-/// choice of direction can avoid when `point` lies on the line through an
-/// edge of `tris`: every line through the point is then coplanar with that
-/// edge. A zero `outward` has no hemisphere and is `None` too. Real input
+/// choice of direction can avoid when `point` lies on an edge (the closed
+/// segment) of `tris`: every line through the point then meets that edge.
+/// A zero `outward` has no hemisphere and is `None` too. Real input
 /// reaches the first case — a MatterCAD part carried a flat four-face shell
 /// over three stacked f32 neighbours, the middle one the exact midpoint of
 /// the other two, so the centroid of one face sat on an edge of the faces
@@ -561,9 +561,9 @@ mod tests {
     }
 
     #[test]
-    fn point_on_an_edge_line_defeats_every_direction_without_panicking() {
-        // A face centroid on the line of a neighbouring face's edge: every
-        // line through it is coplanar with that edge. From the tea scoop's
+    fn point_on_an_edge_defeats_every_direction_without_panicking() {
+        // A face centroid on a neighbouring face's edge: every line through
+        // it meets that edge. From the tea scoop's
         // flat shell (see repair_tests.rs): A1 is the exact midpoint of A2
         // and A3, so centroid(A2, B, A3) lies on edge A1-B.
         let (x, y) = (201.47100830078125, 68.44290161132813);

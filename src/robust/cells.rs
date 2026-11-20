@@ -583,8 +583,8 @@ fn tri_boxes(tris: &[[Vec3; 3]]) -> Vec<crate::types::Box> {
 /// needs them.
 ///
 /// A cell is anchored from its first (piece, side) in piece order. When that
-/// piece's centroid defeats every ray direction (it lies on the line of an
-/// input edge, or the piece has no area), the cell's other bounding pieces
+/// piece's centroid defeats every ray direction (it lies on an input edge,
+/// or the piece has no area), the cell's other bounding pieces
 /// are tried in the same order. `false` when some cell has none that works:
 /// its winding is unknown, and the caller must refuse rather than drop it.
 pub fn seed_unreached(

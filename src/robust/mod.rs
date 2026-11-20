@@ -342,7 +342,9 @@ fn classify_and_assemble(
     crate::timing::print("robust: winding propagation", t_winding);
     // A cell no exact query could anchor has no winding to classify by; a
     // guess would silently keep or drop its material, so the result is an
-    // error status the caller sees as a refusal.
+    // error status. That is a refusal the caller sees when this boolean is
+    // the top-level result; an empty-operand fast path a level up can still
+    // drop the status (see PORTING_PLAN.md).
     let Some(wind) = wind else {
         let mut out = ManifoldImpl::new();
         out.make_empty(Error::InvalidConstruction);

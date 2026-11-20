@@ -208,8 +208,8 @@ fn classify_shell(geom: &ShellGeom) -> Option<Classified> {
             continue; // exactly degenerate: no sides to speak of
         }
         let probe = piece_centroid([&t[0], &t[1], &t[2]]);
-        // A centroid on the line of one of the shell's edges defeats every
-        // ray direction; another face's centroid will do.
+        // A centroid on an edge of another of the shell's faces defeats
+        // every ray direction; another face's centroid will do.
         let Some(w_out) =
             winding_off_surface(&probe, &n, &geom.tris_r, &geom.tris_f64, &geom.boxes)
         else {
@@ -307,7 +307,7 @@ fn analyze_with_token(
         if decided {
             containers[s] = contained_in;
         } else {
-            // The probe sits on the line of an edge of shell `o`, so its
+            // The probe sits on an edge of shell `o`, so this shell's
             // depth is unknown; a shell whose nesting is unknown is left
             // alone, like one whose orientation is.
             classified[s] = None;

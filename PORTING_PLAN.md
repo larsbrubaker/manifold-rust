@@ -96,6 +96,15 @@ in step.
   later-phase stretch overshoots by ~100 s at that budget, and the CDT's exact-rational
   sort cannot be interrupted. Needed: token checks in the parallel loops and the
   uncovered phases.
+- **Empty-operand fast paths drop an errored operand's status.** An errored impl is
+  empty, so the fast paths at the top of `robust::boolean_with_rule`
+  (`src/robust/mod.rs`) and `boolean3::boolean_with_token_and_stage` (`src/boolean3.rs`)
+  answer it as an empty operand: a union returns the other operand, a subtraction
+  returns its minuend, and the error is gone. That includes the
+  `Error::InvalidConstruction` refusal a robust boolean gives when no exact query can
+  anchor a cell (`classify_and_assemble`), when its result feeds a later boolean.
+  Needed: check the operands' status before the empty checks, as `split_by_plane`
+  already does under C++ #1659.
 - **`triangulate_pseudo` recurses** (`src/robust/cdt_constraints.rs`), so an
   arrangement of ~15 k points in one triangle risks the stack. Needed: an explicit work
   stack.
