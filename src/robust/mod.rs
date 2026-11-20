@@ -340,6 +340,14 @@ fn classify_and_assemble(
     let t_winding = crate::timing::start();
     let wind = cells::windings(&graph, &complex, [p_tris, q_tris]);
     crate::timing::print("robust: winding propagation", t_winding);
+    // A cell no exact query could anchor has no winding to classify by; a
+    // guess would silently keep or drop its material, so the result is an
+    // error status the caller sees as a refusal.
+    let Some(wind) = wind else {
+        let mut out = ManifoldImpl::new();
+        out.make_empty(Error::InvalidConstruction);
+        return out;
+    };
     if is_cancelled(token) {
         return cancelled_impl();
     }

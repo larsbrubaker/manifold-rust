@@ -330,13 +330,23 @@ fn winding_one_dir<'a, I: Iterator<Item = (&'a [Vec3; 3], &'a crate::types::Box)
 /// plane, the ε² term decides and the ray always leaves on the `dir` side —
 /// no crossing. Ray directions are restricted to the outward hemisphere so
 /// the piece's own plane never counts.
+///
+/// `None` when every candidate direction grazes some triangle, which no
+/// choice of direction can avoid when `point` lies on the line through an
+/// edge of `tris`: every line through the point is then coplanar with that
+/// edge. A zero `outward` has no hemisphere and is `None` too. Real input
+/// reaches the first case — a MatterCAD part carried a flat four-face shell
+/// over three stacked f32 neighbours, the middle one the exact midpoint of
+/// the other two, so the centroid of one face sat on an edge of the faces
+/// beside it — so callers answer `None` by probing from another point, or
+/// refuse, never by guessing.
 pub fn winding_off_surface(
     point: &R3,
     outward: &R3,
     tris: &[[R3; 3]],
     tris_f64: &[[Vec3; 3]],
     boxes: &[crate::types::Box],
-) -> i32 {
+) -> Option<i32> {
     use super::exact::approx::orient3d_a;
 
     debug_assert_eq!(tris.len(), boxes.len());
@@ -424,9 +434,9 @@ pub fn winding_off_surface(
                 _ => -1,
             };
         }
-        return winding;
+        return Some(winding);
     }
-    unreachable!("all candidate ray directions degenerate — malformed input");
+    None
 }
 
 /// Conservative check whether a zero Plücker sign can affect the crossing
@@ -548,6 +558,51 @@ mod tests {
         assert_eq!(winding_number(&in_wall, &solid), 1);
         assert_eq!(winding_number(&in_void, &solid), 0);
         assert_eq!(winding_number(&outside, &solid), 0);
+    }
+
+    #[test]
+    fn point_on_an_edge_line_defeats_every_direction_without_panicking() {
+        // A face centroid on the line of a neighbouring face's edge: every
+        // line through it is coplanar with that edge. From the tea scoop's
+        // flat shell (see repair_tests.rs): A1 is the exact midpoint of A2
+        // and A3, so centroid(A2, B, A3) lies on edge A1-B.
+        let (x, y) = (201.47100830078125, 68.44290161132813);
+        let a1 = v(x, y, 0.02100052870810032);
+        let a2 = v(x, y, 0.02100052684545517);
+        let a3 = v(x, y, 0.021000530570745468);
+        let b = v(201.50323486328125, 68.43170166015625, 0.022155586630105972);
+        let tris = [[a1, b, a2], [a2, a3, a1], [a3, b, a1], [a2, b, a3]];
+        let tris_r: Vec<[R3; 3]> = tris.iter().map(|t| t.map(R3::from_vec3)).collect();
+        let boxes: Vec<crate::types::Box> = tris.iter().map(tri_box_f64).collect();
+        let face = &tris_r[3];
+        let probe = piece_centroid([&face[0], &face[1], &face[2]]);
+        let n = super::super::exact::predicates::tri_normal_r(&face[0], &face[1], &face[2]);
+        assert_eq!(
+            winding_off_surface(&probe, &n, &tris_r, &tris, &boxes),
+            None
+        );
+        // A zero direction has no outward hemisphere to shoot into.
+        let zero = R3::from_vec3(v(0.0, 0.0, 0.0));
+        assert_eq!(
+            winding_off_surface(&probe, &zero, &tris_r, &tris, &boxes),
+            None
+        );
+        // Off a cube face the query still answers.
+        let cube = cube_tris(0.0, 2.0);
+        let cube_r: Vec<[R3; 3]> = cube.iter().map(|t| t.map(R3::from_vec3)).collect();
+        let cube_boxes: Vec<crate::types::Box> = cube.iter().map(tri_box_f64).collect();
+        let f = &cube_r[0];
+        let c = piece_centroid([&f[0], &f[1], &f[2]]);
+        let out = super::super::exact::predicates::tri_normal_r(&f[0], &f[1], &f[2]);
+        let inward = R3::new(-&out.x, -&out.y, -&out.z);
+        assert_eq!(
+            winding_off_surface(&c, &out, &cube_r, &cube, &cube_boxes),
+            Some(0)
+        );
+        assert_eq!(
+            winding_off_surface(&c, &inward, &cube_r, &cube, &cube_boxes),
+            Some(1)
+        );
     }
 
     #[test]

@@ -528,11 +528,14 @@ impl Windings {
 /// cell at zero shifts every winding by a constant, and `w ≥ 1` then
 /// excludes almost the whole model. Two Thingi10K unions collapsed from
 /// 51372 and 5856 triangles to 4 and 40 that way.
+///
+/// `None` when some cell could not be anchored: every piece bounding it
+/// defeated every ray direction (see [`seed_unreached`]).
 pub fn windings(
     graph: &IntersectionGraph,
     complex: &CellComplex,
     tris: [&[[Vec3; 3]]; 2],
-) -> Windings {
+) -> Option<Windings> {
     let rat = [to_rational(tris[0]), to_rational(tris[1])];
     let bx = [tri_boxes(tris[0]), tri_boxes(tris[1])];
     let mut out = Windings {
@@ -546,8 +549,8 @@ pub fn windings(
         tris,
         [&rat[0], &rat[1]],
         [&bx[0], &bx[1]],
-    );
-    out
+    )
+    .then_some(out)
 }
 
 fn to_rational(tris: &[[Vec3; 3]]) -> Vec<[R3; 3]> {
@@ -578,6 +581,12 @@ fn tri_boxes(tris: &[[Vec3; 3]]) -> Vec<crate::types::Box> {
 /// Returns immediately when everything is already known, so callers can hold
 /// off building the rational and bounding-box tables until this says it
 /// needs them.
+///
+/// A cell is anchored from its first (piece, side) in piece order. When that
+/// piece's centroid defeats every ray direction (it lies on the line of an
+/// input edge, or the piece has no area), the cell's other bounding pieces
+/// are tried in the same order. `false` when some cell has none that works:
+/// its winding is unknown, and the caller must refuse rather than drop it.
 pub fn seed_unreached(
     graph: &IntersectionGraph,
     complex: &CellComplex,
@@ -585,9 +594,9 @@ pub fn seed_unreached(
     tris_f64: [&[[Vec3; 3]]; 2],
     tris_r: [&[[R3; 3]]; 2],
     boxes: [&[crate::types::Box]; 2],
-) {
+) -> bool {
     if out.complete() {
-        return;
+        return true;
     }
     let adj = cell_adjacency(complex);
 
@@ -607,27 +616,53 @@ pub fn seed_unreached(
             continue;
         }
         let Some((pi, side)) = rep[c] else { continue };
-        let pv = graph.piece_verts(pi);
-        let point = super::ray_shoot::piece_centroid(pv);
-        let n = pv[1].sub(pv[0]).cross(&pv[2].sub(pv[0]));
-        let outward = if side == NORMAL {
-            n
-        } else {
-            R3::new(-&n.x, -&n.y, -&n.z)
-        };
-        let mut w = [0i32; 2];
-        for m in 0..2 {
-            w[m] = super::ray_shoot::winding_off_surface(
-                &point,
-                &outward,
-                tris_r[m],
-                tris_f64[m],
-                boxes[m],
-            );
-        }
+        let probe =
+            |(pi, side): (usize, usize)| probe_winding(graph, pi, side, tris_f64, tris_r, boxes);
+        // The first representative is the only one tried unless it fails,
+        // so every input it answered seeds exactly as before.
+        let w = probe((pi, side)).or_else(|| {
+            (pi..graph.pieces.len())
+                .flat_map(|pj| [(pj, NORMAL), (pj, ANTI)])
+                .filter(|&cand| cand != (pi, side) && complex.cell(cand.0, cand.1) == c)
+                .find_map(probe)
+        });
+        let Some(w) = w else { return false };
         seed(out, c, w);
         bfs(&adj, out, c);
     }
+    true
+}
+
+/// Both operands' windings just off `side` of piece `pi`, from its centroid;
+/// `None` when some ray query cannot decide (see
+/// [`super::ray_shoot::winding_off_surface`]).
+fn probe_winding(
+    graph: &IntersectionGraph,
+    pi: usize,
+    side: usize,
+    tris_f64: [&[[Vec3; 3]]; 2],
+    tris_r: [&[[R3; 3]]; 2],
+    boxes: [&[crate::types::Box]; 2],
+) -> Option<[i32; 2]> {
+    let pv = graph.piece_verts(pi);
+    let point = super::ray_shoot::piece_centroid(pv);
+    let n = pv[1].sub(pv[0]).cross(&pv[2].sub(pv[0]));
+    let outward = if side == NORMAL {
+        n
+    } else {
+        R3::new(-&n.x, -&n.y, -&n.z)
+    };
+    let mut w = [0i32; 2];
+    for m in 0..2 {
+        w[m] = super::ray_shoot::winding_off_surface(
+            &point,
+            &outward,
+            tris_r[m],
+            tris_f64[m],
+            boxes[m],
+        )?;
+    }
+    Some(w)
 }
 
 fn seed(out: &mut Windings, cell: usize, w: [i32; 2]) {

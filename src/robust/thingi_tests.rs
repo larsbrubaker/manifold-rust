@@ -132,7 +132,7 @@ fn assert_arrangement_consistent(a: &Manifold, b: &Manifold, what: &str) {
     let q = soup::impl_to_tris(b.as_impl());
     let graph = intersection_graph::build_graph(&p, &q);
     let complex = cells::build_cells(&graph);
-    let wind = cells::windings(&graph, &complex, [&p, &q]);
+    let wind = cells::windings(&graph, &complex, [&p, &q]).expect("every cell anchored");
     let bad = cells::inconsistent_walls(&complex, &wind);
     assert!(
         bad.is_empty(),

@@ -223,7 +223,8 @@ fn main() {
         let bad = intersection_graph::build_graph_with_token(&p, &q, None)
             .map(|graph| {
                 let complex = cells::build_cells(&graph);
-                let wind = cells::windings(&graph, &complex, [&p, &q]);
+                let wind =
+                    cells::windings(&graph, &complex, [&p, &q]).expect("every cell anchored");
                 cells::inconsistent_walls(&complex, &wind).len()
             })
             .unwrap_or(usize::MAX);

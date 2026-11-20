@@ -373,7 +373,8 @@ fn main() {
         let bad_walls = catch_unwind(AssertUnwindSafe(|| {
             let graph = intersection_graph::build_graph(&p_tris, &q_tris);
             let complex = cells::build_cells(&graph);
-            let wind = cells::windings(&graph, &complex, [&p_tris, &q_tris]);
+            let wind =
+                cells::windings(&graph, &complex, [&p_tris, &q_tris]).expect("every cell anchored");
             cells::inconsistent_walls(&complex, &wind).len()
         }))
         .unwrap_or(usize::MAX);

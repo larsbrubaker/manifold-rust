@@ -47,7 +47,7 @@ fn all_windings(
     p: &[[Vec3; 3]],
     q: &[[Vec3; 3]],
 ) -> Windings {
-    windings(graph, complex, [p, q])
+    windings(graph, complex, [p, q]).expect("every cell anchored")
 }
 
 /// Winding of the region just inside `mesh`'s surface, by looking at the

@@ -208,9 +208,19 @@ fn classify_shell(geom: &ShellGeom) -> Option<Classified> {
             continue; // exactly degenerate: no sides to speak of
         }
         let probe = piece_centroid([&t[0], &t[1], &t[2]]);
-        let w_out = winding_off_surface(&probe, &n, &geom.tris_r, &geom.tris_f64, &geom.boxes);
+        // A centroid on the line of one of the shell's edges defeats every
+        // ray direction; another face's centroid will do.
+        let Some(w_out) =
+            winding_off_surface(&probe, &n, &geom.tris_r, &geom.tris_f64, &geom.boxes)
+        else {
+            continue;
+        };
         let neg = R3::new(-&n.x, -&n.y, -&n.z);
-        let w_in = winding_off_surface(&probe, &neg, &geom.tris_r, &geom.tris_f64, &geom.boxes);
+        let Some(w_in) =
+            winding_off_surface(&probe, &neg, &geom.tris_r, &geom.tris_f64, &geom.boxes)
+        else {
+            continue;
+        };
         match (w_out, w_in) {
             // Normal side empty, anti side solid: wound outward.
             (0, 1) => {
@@ -281,13 +291,27 @@ fn analyze_with_token(
             return None;
         }
         let Some(c) = &classified[s] else { continue };
-        containers[s] = (0..num_shells)
-            .filter(|&o| o != s)
-            .filter(|&o| {
-                let g = &geoms[o];
-                winding_off_surface(&c.probe, &c.exterior, &g.tris_r, &g.tris_f64, &g.boxes) != 0
-            })
-            .collect();
+        let mut contained_in = Vec::new();
+        let mut decided = true;
+        for o in (0..num_shells).filter(|&o| o != s) {
+            let g = &geoms[o];
+            match winding_off_surface(&c.probe, &c.exterior, &g.tris_r, &g.tris_f64, &g.boxes) {
+                Some(0) => {}
+                Some(_) => contained_in.push(o),
+                None => {
+                    decided = false;
+                    break;
+                }
+            }
+        }
+        if decided {
+            containers[s] = contained_in;
+        } else {
+            // The probe sits on the line of an edge of shell `o`, so its
+            // depth is unknown; a shell whose nesting is unknown is left
+            // alone, like one whose orientation is.
+            classified[s] = None;
+        }
     }
 
     Some(Analysis {

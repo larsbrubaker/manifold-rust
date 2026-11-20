@@ -244,3 +244,30 @@ fn repair_is_available_before_any_boolean_and_fixes_union() {
         fixed.volume()
     );
 }
+
+/// A zero-volume shell from a MatterCAD part (the tea scoop's stored output
+/// mesh): four coplanar triangles over three vertically stacked f32
+/// neighbours A2 < A1 < A3 and a far vertex B. A1 is the exact midpoint of
+/// A2 and A3, so the centroid of face (A2, B, A3) lies exactly on edge A1-B
+/// of the two faces beside it, and every ray from that centroid is coplanar
+/// with that edge. Repair used to panic in `winding_off_surface` on it.
+fn tea_scoop_flat_shell() -> Vec<[Vec3; 3]> {
+    let (x, y) = (201.47100830078125, 68.44290161132813);
+    let a1 = v(x, y, 0.02100052870810032);
+    let a2 = v(x, y, 0.02100052684545517);
+    let a3 = v(x, y, 0.021000530570745468);
+    let b = v(201.50323486328125, 68.43170166015625, 0.022155586630105972);
+    vec![[a1, b, a2], [a2, a3, a1], [a3, b, a1], [a2, b, a3]]
+}
+
+#[test]
+fn flat_shell_whose_probe_lies_on_a_neighbours_edge_is_left_alone() {
+    // An inverted cube beside it must still be rewound.
+    let mut tris = flipped(&cube_tris(0.0, 2.0));
+    tris.extend(tea_scoop_flat_shell());
+    let plan = plan_repair(&tris);
+    assert_eq!(plan.num_shells, 2);
+    assert_eq!(plan.flipped_shells, 1);
+    assert!(plan.flip[..12].iter().all(|&f| f));
+    assert!(plan.flip[12..].iter().all(|&f| !f));
+}

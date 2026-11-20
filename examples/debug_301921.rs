@@ -101,7 +101,7 @@ fn main() {
 
     let graph = intersection_graph::build_graph(&p, &q);
     let complex = cells::build_cells(&graph);
-    let wind = cells::windings(&graph, &complex, [&p, &q]);
+    let wind = cells::windings(&graph, &complex, [&p, &q]).expect("every cell anchored");
     println!(
         "{} pieces, {} cells, complete {}",
         graph.pieces.len(),

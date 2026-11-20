@@ -274,7 +274,7 @@ fn main() {
     let t_cells = t0.elapsed().as_secs_f64();
 
     let t0 = Instant::now();
-    let wind = cells::windings(&graph, &complex, [&p_tris, &q_tris]);
+    let wind = cells::windings(&graph, &complex, [&p_tris, &q_tris]).expect("every cell anchored");
     let t_wind = t0.elapsed().as_secs_f64();
 
     let t0 = Instant::now();
