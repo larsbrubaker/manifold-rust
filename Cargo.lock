@@ -448,7 +448,7 @@ dependencies = [
 
 [[package]]
 name = "manifold-rust"
-version = "0.19.5"
+version = "0.19.6"
 dependencies = [
  "clipper2-rust",
  "criterion",
