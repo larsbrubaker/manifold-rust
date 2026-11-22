@@ -48,6 +48,10 @@ impl Manifold {
     /// and input face each output triangle lies on. [`Self::original_id`]
     /// stays -1 for an imported mesh (the input is the original, not this
     /// Manifold), and [`Self::as_original`] discards the face IDs.
+    ///
+    /// The imported [`Self::get_tolerance`] is `mesh.tolerance`, but at least
+    /// `f32::EPSILON * bbox.scale()`: single-precision positions are only that
+    /// exact, so Booleans treat smaller differences as rounding.
     pub fn from_mesh_gl(mesh: &MeshGL) -> Self {
         Self::from_mesh_impl(mesh, ImportMode::Strict, false, None)
     }
@@ -393,7 +397,15 @@ impl Manifold {
                         Ok(()) => {
                             imp.mesh_relation.original_id = -1;
                             imp.calculate_bbox();
-                            imp.set_epsilon(mesh.tolerance.to_f64(), false);
+                            // Single-precision soup gets the same f32
+                            // tolerance floor as the manifold path below.
+                            // Output change (manifold-sharp must mirror it):
+                            // an f32 soup used to report a `get_tolerance()`
+                            // of about 1e-12 * scale and now reports
+                            // 1.19e-7 * scale, and Booleans carry that
+                            // tolerance forward, so a later fast-engine
+                            // Boolean collapses edges at that size.
+                            imp.set_epsilon(mesh.tolerance.to_f64(), P::IS_SINGLE);
                             Self { imp }
                         }
                         Err(e) => Self::make_empty(e),
@@ -411,7 +423,24 @@ impl Manifold {
         // conflicts with is_manifold check ordering.
         imp.dedupe_prop_verts();
         imp.calculate_bbox();
-        imp.set_epsilon(mesh.tolerance.to_f64(), false);
+        // The mesh's tolerance raises epsilon and tolerance alike, and a
+        // single-precision mesh's tolerance is floored at an f32 step of its
+        // scale: its positions are only that exact, so differences below it
+        // are rounding, not shape.
+        //
+        // Output change (manifold-sharp must mirror it in its `MeshGL`
+        // import): the f32 floor is new. Without it a Boolean on f32 input
+        // treated the input as exact to 1e-12 of its scale and kept edges far
+        // shorter than an f32 step, needles whose corners coincide when the
+        // result is exported as a `MeshGL`. Evidence:
+        // `edge_op::tests::test_single_precision_import_tolerance_is_an_f32_step`
+        // and `test_union_leaves_no_edge_shorter_than_tolerance` (MatterCAD's
+        // thread-and-core union exported two such triangles; now none).
+        // Expected values that moved: Thingi10K #1147177, imported as single
+        // precision, reads 3202 verts, 6420 tris, genus 5 instead of 3206,
+        // 6424, genus 4 (`thingi_1147177_import_counts`). A `MeshGL64` import
+        // is unchanged.
+        imp.set_epsilon(mesh.tolerance.to_f64(), P::IS_SINGLE);
         // Supplied references keep their own coplanar groups (the flood fill
         // still sets the face normals).
         let kept: Vec<i32> = if keep_coplanar {

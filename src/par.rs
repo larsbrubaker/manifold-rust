@@ -25,7 +25,7 @@
 //                         vertex/face/halfedge/tangent gathers        100,000
 //                         (PAR_THRESHOLD; per-call n is verts, tris
 //                         or 3 * tris)
-//   edge_op.rs            edge-flag scans of `collapse_short_edges`,
+//   edge_op_flag_passes.rs edge-flag scans of `collapse_short_edges`,
 //                         `collapse_colinear_edges`, `swap_degenerates`
 //                         (filter; collapses/swaps stay sequential)  100,001 halfedges
 //                                                                    (FLAG_PAR_THRESHOLD)

@@ -560,17 +560,24 @@ fn thingi_51360_nonzero_rule_keeps_the_inverted_half() {
     );
 }
 
-/// Thingi10K #1147177 imports with the counts manifold-sharp pins
-/// (StlFixturesTests). Its weld leaves duplicate edges whose DedupeEdges pass
-/// used to repair stale entries and move corners (3201 verts, 6418 tris,
-/// genus 5); with stale entries skipped every corner stays put.
+/// Thingi10K #1147177 imports with these counts. Its weld leaves duplicate
+/// edges whose DedupeEdges pass used to repair stale entries and move corners
+/// (3201 verts, 6418 tris, genus 5); with stale entries skipped every corner stays put.
+/// Imported as single precision, its tolerance is floored at an f32 step of
+/// its scale (manifold_meshgl.rs), and the degenerate swaps at that tolerance
+/// remove one of its 13 shells: a flat tetrahedron of 4.9e-3 area and 1.4e-13
+/// volume, far thinner than an f32 step, so not a solid. That took it from
+/// 3206 verts, 6424 tris and genus 4 to these, with the volume unchanged to
+/// 1.4e-13 (the genus rises because the shell count falls). manifold-sharp's
+/// StlFixturesTests pins the old counts until it mirrors the floor.
 #[test]
 fn thingi_1147177_import_counts() {
     let m = import_stl_like_demo(MODEL_1147177);
     assert_eq!(m.status(), Error::NoError);
-    assert_eq!(m.num_vert(), 3206);
-    assert_eq!(m.num_tri(), 6424);
-    assert_eq!(m.genus(), 4);
+    assert_eq!(m.num_vert(), 3202);
+    assert_eq!(m.num_tri(), 6420);
+    assert_eq!(m.genus(), 5);
+    assert_eq!(m.decompose().len(), 12);
 }
 
 /// Thingi10K #939888 imports with the counts manifold-sharp pins

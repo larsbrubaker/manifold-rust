@@ -412,17 +412,17 @@ fn test_cpp_meshgl_round_trip() {
     );
 }
 
-/// C++ TEST(BooleanComplex, CraycloudBool) — subtract complements, simplify to empty
+/// C++ TEST(BooleanComplex, CraycloudBool) — subtract complements, simplify to empty.
+/// The difference is empty straight out of the Boolean: its short-edge collapse
+/// repeats (`edge_op::collapse_short_edges`), removing the needles one pass
+/// left for `simplify`.
 #[test]
 fn test_cpp_complex_craycloud() {
     let m1 = read_test_obj("Cray_left.obj");
     let m2 = read_test_obj("Cray_right.obj");
     let res = m1 - m2;
     assert_eq!(res.status(), Error::NoError);
-    assert!(
-        !res.is_empty(),
-        "CraycloudBool: difference should not be empty"
-    );
+    assert!(res.is_empty(), "CraycloudBool: got {} tris", res.num_tri());
     let simplified = res.as_original().simplify(0.0);
     assert!(
         simplified.is_empty(),

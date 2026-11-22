@@ -408,14 +408,20 @@ fn test_cpp_project() {
 // C++ OBJ-based boolean regression tests
 // ============================================================================
 
-/// C++ TEST(BooleanComplex, CraycloudBool)
+/// C++ TEST(BooleanComplex, CraycloudBool); the difference of complements is
+/// empty straight out of the Boolean, not only after `simplify`, because the
+/// short-edge collapse repeats (`edge_op::collapse_short_edges`).
 #[test]
 fn test_cpp_craycloud_bool() {
     let m1 = super::read_test_obj("Cray_left.obj");
     let m2 = super::read_test_obj("Cray_right.obj");
     let res = m1 - m2;
     assert_eq!(res.status(), crate::types::Error::NoError);
-    assert!(!res.is_empty(), "CraycloudBool result should not be empty");
+    assert!(
+        res.is_empty(),
+        "CraycloudBool result is empty, got {} tris",
+        res.num_tri()
+    );
     let simplified = res.as_original().simplify(0.0);
     assert!(
         simplified.is_empty(),

@@ -106,9 +106,10 @@ fn load_halfedge_fixture(text: &str) -> ManifoldImpl {
 ///
 /// That check is a deliberate divergence from C++ `DedupeEdges`, which repairs
 /// every entry it collected. It moved the import pins in `robust::thingi_tests`:
-/// Thingi10K #1147177 imports as 3206 verts / 6424 tris / genus 4 (was 3201 /
-/// 6418 / genus 5) and #939888 as 861 / 1718 (was 860 / 1716). manifold-sharp
-/// has the same check (`EdgeOp.Dedupe.cs`) and pins the same counts.
+/// Thingi10K #1147177 from 3201 verts / 6418 tris to 3206 / 6424 (its current
+/// counts are pinned in `thingi_1147177_import_counts`) and #939888 from
+/// 860 / 1716 to 861 / 1718. manifold-sharp has the same check
+/// (`EdgeOp.Dedupe.cs`).
 #[test]
 fn test_dedupe_edges_never_moves_a_triangle_corner() {
     let mut m = load_halfedge_fixture(DEDUPE_STALE_DUPLICATE);
@@ -278,4 +279,81 @@ fn test_orbit_owners_match_the_sequential_scan_on_orbits_longer_than_the_cap() {
     assert_eq!(longest, Some(n as usize));
     assert!(n as usize > super::orbits::ORBIT_WALK_CAP);
     assert_orbit_owners_match(halfedge);
+}
+
+/// The helix and core of a three-sided, one-turn thread (as a hole) from
+/// MatterCAD, whose roots lie within an f32 step of the core's corners.
+/// Every position is an f32 value, so the meshes load into a single-precision
+/// `MeshGL` exactly.
+const THREAD_CORE_UNION_THREAD: &str = include_str!("testdata/thread-core-union-thread.txt");
+const THREAD_CORE_UNION_CORE: &str = include_str!("testdata/thread-core-union-core.txt");
+
+fn load_single_precision_fixture(text: &str) -> crate::manifold::Manifold {
+    let mut lines = text.lines();
+    let header: Vec<&str> = lines.next().unwrap().split_whitespace().collect();
+    let (num_vert, num_tri) = (header[1].parse().unwrap(), header[2].parse().unwrap());
+    let mut mesh = crate::types::MeshGL {
+        num_prop: 3,
+        ..Default::default()
+    };
+    for line in lines.by_ref().take(num_vert) {
+        mesh.vert_properties
+            .extend(line.split_whitespace().map(|s| s.parse::<f32>().unwrap()));
+    }
+    for line in lines.take(num_tri) {
+        mesh.tri_verts
+            .extend(line.split_whitespace().map(|s| s.parse::<u32>().unwrap()));
+    }
+    crate::manifold::Manifold::from_mesh_gl(&mesh)
+}
+
+/// A single-precision mesh imports with its tolerance floored at an f32 step
+/// of its scale, while epsilon stays at the precision of the f64 arithmetic.
+#[test]
+fn test_single_precision_import_tolerance_is_an_f32_step() {
+    let core = load_single_precision_fixture(THREAD_CORE_UNION_CORE);
+    let scale = core.as_impl().bbox.scale();
+    assert_eq!(core.get_tolerance(), f64::from(f32::EPSILON) * scale);
+    assert!(core.as_impl().epsilon < core.get_tolerance() / 1000.0);
+}
+
+/// Every edge of the union is at least the tolerance long, and the union
+/// exported as a single-precision `MeshGL` has no triangle with two equal
+/// corners. The thread's root cuts the core within a billionth of its corner,
+/// leaving three new verts around one old one; one pass of the short-edge
+/// collapse merges the first two and leaves the third on a 1e-9 edge it had
+/// not flagged, a needle whose corners coincide once narrowed to f32.
+#[test]
+fn test_union_leaves_no_edge_shorter_than_tolerance() {
+    use crate::types::OpType;
+    let thread = load_single_precision_fixture(THREAD_CORE_UNION_THREAD);
+    let core = load_single_precision_fixture(THREAD_CORE_UNION_CORE);
+    let union = thread.boolean(&core, OpType::Add);
+    let m = union.as_impl();
+    let tolerance = m.tolerance;
+    let short: Vec<f64> = m
+        .halfedge
+        .iter()
+        .filter(|h| h.start_vert >= 0)
+        .map(|h| {
+            let d = m.vert_pos[h.end_vert as usize] - m.vert_pos[h.start_vert as usize];
+            dot(d, d).sqrt()
+        })
+        .filter(|&len| len < tolerance)
+        .collect();
+    assert!(short.is_empty(), "edges under {tolerance}: {short:?}");
+
+    let gl = union.get_mesh_gl(-1);
+    let np = gl.num_prop as usize;
+    let pos = |v: u32| &gl.vert_properties[v as usize * np..v as usize * np + 3];
+    let pinched = gl
+        .tri_verts
+        .chunks(3)
+        .filter(|t| pos(t[0]) == pos(t[1]) || pos(t[1]) == pos(t[2]) || pos(t[2]) == pos(t[0]))
+        .count();
+    assert_eq!(pinched, 0, "f32 triangles with coincident corners");
+
+    let expected =
+        thread.volume() + core.volume() - thread.boolean(&core, OpType::Intersect).volume();
+    assert!((union.volume() - expected).abs() < 1e-9 * expected);
 }
